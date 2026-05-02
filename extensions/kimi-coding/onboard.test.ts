@@ -19,8 +19,8 @@ describe("kimi coding onboard", () => {
     const provider = cfg.models?.providers?.kimi;
 
     expect(provider).toEqual({
-      api: "anthropic-messages",
-      baseUrl: "https://api.kimi.com/coding/",
+      api: "openai-completions",
+      baseUrl: "https://api.kimi.com/coding/v1",
       models: [
         {
           id: "kimi-for-coding",

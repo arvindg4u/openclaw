@@ -49,8 +49,8 @@ describe("Kimi implicit provider (#22409)", () => {
     const provider = await runKimiCatalogProvider({ apiKey: "test-key" });
 
     expect(provider).toEqual({
-      baseUrl: "https://api.kimi.com/coding/",
-      api: "anthropic-messages",
+      baseUrl: "https://api.kimi.com/coding/v1",
+      api: "openai-completions",
       headers: {
         "User-Agent": "claude-code/0.1.0",
       },
@@ -98,7 +98,7 @@ describe("Kimi implicit provider (#22409)", () => {
       },
     });
 
-    expect(provider.baseUrl).toBe("https://api.kimi.com/coding/");
+    expect(provider.baseUrl).toBe("https://api.kimi.com/coding/v1");
     expect(provider.headers).toEqual({ "User-Agent": "claude-code/0.1.0" });
   });
 });

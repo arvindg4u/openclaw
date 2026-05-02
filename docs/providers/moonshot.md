@@ -200,10 +200,10 @@ Choose your provider and follow the setup steps.
   </Tab>
 
   <Tab title="Kimi Coding">
-    **Best for:** code-focused tasks via the Kimi Coding endpoint.
+    **Best for:** code-focused tasks via the Kimi Coding endpoint, including image analysis (screenshots, diagrams, documents).
 
     <Note>
-    Kimi Coding uses a different API key and provider prefix (`kimi/...`) than Moonshot (`moonshot/...`). The stable API model ref is `kimi/kimi-for-coding`; legacy refs `kimi/kimi-code` and `kimi/k2p5` remain accepted and normalize to that API model id.
+    Kimi Coding uses a different API key and provider prefix (`kimi/...`) than Moonshot (`moonshot/...`). The stable API model ref is `kimi/kimi-for-coding`; legacy refs `kimi/kimi-code` and `kimi/k2p5` remain accepted and normalize to that API model id. Image input uses the OpenAI-compatible `/chat/completions` endpoint at `https://api.kimi.com/coding/v1`.
     </Note>
 
     <Steps>
