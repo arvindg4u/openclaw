@@ -8,7 +8,12 @@ import { buildOpenClawUserAgentFragment } from "./user-agent.js";
  */
 type TeamsSdkModules = {
   App: typeof import("@microsoft/teams.apps").App;
+  ExpressAdapter: typeof import("@microsoft/teams.apps").ExpressAdapter;
 };
+
+type ExpressAdapterCtorArg = ConstructorParameters<
+  typeof import("@microsoft/teams.apps").ExpressAdapter
+>[0];
 
 /**
  * Structural interface for the Teams SDK App — avoids tsgo resolution bugs
@@ -75,8 +80,24 @@ async function loadAzureIdentity(): Promise<AzureIdentityModule> {
 let sdkAppPromise: Promise<TeamsSdkModules> | null = null;
 
 async function loadSdkModules(): Promise<TeamsSdkModules> {
-  sdkAppPromise ??= import("@microsoft/teams.apps").then((m) => ({ App: m.App }));
+  sdkAppPromise ??= import("@microsoft/teams.apps").then((m) => ({
+    App: m.App,
+    ExpressAdapter: m.ExpressAdapter,
+  }));
   return sdkAppPromise;
+}
+
+/**
+ * Lazily construct an ExpressAdapter that the Teams SDK App can register its
+ * routes on. The dynamic import keeps the SDK bundle off the hot startup path
+ * when msteams is disabled; the typed return preserves the SDK's adapter
+ * contract through to `loadMSTeamsSdkWithAuth`.
+ */
+export async function createMSTeamsExpressAdapter(
+  serverOrApp: ExpressAdapterCtorArg,
+): Promise<InstanceType<typeof import("@microsoft/teams.apps").ExpressAdapter>> {
+  const { ExpressAdapter } = await loadSdkModules();
+  return new ExpressAdapter(serverOrApp);
 }
 
 /**
@@ -88,13 +109,11 @@ export type CreateMSTeamsAppOptions = {
    * mode), pass an ExpressAdapter so the SDK registers routes and handles
    * JWT validation. When omitted, the SDK creates a default ExpressAdapter
    * (no server starts until app.start() is called).
+   *
+   * Use {@link createMSTeamsExpressAdapter} to construct a properly-typed
+   * adapter from an Express application.
    */
-  /** Structural type for an HTTP server adapter (e.g. ExpressAdapter). */
-  httpServerAdapter?: {
-    registerRoute(method: string, path: string, handler: unknown): void;
-    start?(port: number | string): Promise<void>;
-    stop?(): Promise<void>;
-  };
+  httpServerAdapter?: import("@microsoft/teams.apps").IHttpServerAdapter;
   /**
    * Custom messaging endpoint path.
    * @default '/api/messages'

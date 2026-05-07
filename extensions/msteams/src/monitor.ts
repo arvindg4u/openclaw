@@ -20,7 +20,12 @@ import {
   resolveMSTeamsUserAllowlist,
 } from "./resolve-allowlist.js";
 import { getMSTeamsRuntime } from "./runtime.js";
-import { createMSTeamsTokenProvider, loadMSTeamsSdkWithAuth, type MSTeamsApp } from "./sdk.js";
+import {
+  createMSTeamsExpressAdapter,
+  createMSTeamsTokenProvider,
+  loadMSTeamsSdkWithAuth,
+  type MSTeamsApp,
+} from "./sdk.js";
 import { createMSTeamsSsoTokenStoreFs } from "./sso-token-store.js";
 import type { MSTeamsSsoDeps } from "./sso.js";
 import { resolveMSTeamsCredentials } from "./token.js";
@@ -245,11 +250,7 @@ export async function monitorMSTeamsProvider(
   // registers POST /api/messages (or configured path) and handles JWT
   // validation + body parsing internally.
   const { app } = await loadMSTeamsSdkWithAuth(creds, {
-    httpServerAdapter: new (
-      (await import("@microsoft/teams.apps")) as unknown as {
-        ExpressAdapter: new (app: unknown) => unknown;
-      }
-    ).ExpressAdapter(expressApp) as never,
+    httpServerAdapter: await createMSTeamsExpressAdapter(expressApp),
     messagingEndpoint: configuredPath,
   });
 
