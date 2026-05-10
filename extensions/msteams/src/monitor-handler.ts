@@ -61,7 +61,7 @@ async function isInvokeAuthorized(params: {
 
   const maybeInvokeName = includeInvokeName ? { name: context.activity.name } : undefined;
 
-  if (isDirectMessage && resolved.access.decision !== "allow") {
+  if (isDirectMessage && resolved.senderAccess.decision !== "allow") {
     deps.log.debug?.(deniedLogs.dm, {
       sender: senderId,
       conversationId,
@@ -84,7 +84,7 @@ async function isInvokeAuthorized(params: {
     return false;
   }
 
-  if (!isDirectMessage && !resolved.senderGroupAccess.allowed) {
+  if (!isDirectMessage && !resolved.senderAccess.allowed) {
     deps.log.debug?.(deniedLogs.group, {
       sender: senderId,
       conversationId,

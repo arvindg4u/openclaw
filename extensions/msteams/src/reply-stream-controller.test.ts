@@ -131,6 +131,30 @@ describe("createTeamsReplyStreamController", () => {
     expect(stream.close).not.toHaveBeenCalled();
   });
 
+  it("streams compact Teams progress lines when tool progress is enabled", async () => {
+    const stream = makeStream();
+    const ctrl = createTeamsReplyStreamController({
+      conversationType: "personal",
+      context: makeContext(stream),
+      feedbackLoopEnabled: false,
+      log: { debug: vi.fn() } as never,
+      msteamsConfig: {
+        streaming: {
+          mode: "progress",
+          progress: {
+            label: "Working",
+            maxLines: 1,
+          },
+        },
+      } as never,
+    });
+
+    await ctrl.pushProgressLine("tool: search");
+    await ctrl.pushProgressLine("tool: exec");
+
+    expect(stream.update).toHaveBeenLastCalledWith("- tool: exec");
+  });
+
   it("does not close a canceled stream in finalize", async () => {
     const stream = makeStream();
     const ctrl = makeController({ stream });
