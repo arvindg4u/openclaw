@@ -608,6 +608,33 @@ describe("sanitizeAssistantVisibleText", () => {
     expect(sanitizeAssistantVisibleText(input)).toBe("Visible answer");
   });
 
+  it("strips Codex file contents wrappers on the canonical user-visible path", () => {
+    const input = [
+      "Visible update",
+      "<file_contents path='.../HEARTBEAT.md' isStale=false isFullFile=true>",
+      " 1|# HEARTBEAT.md",
+      "</file_contents>",
+    ].join("\n");
+
+    expect(sanitizeAssistantVisibleText(input)).toBe("Visible update");
+  });
+
+  it("strips line-only protocol marker scaffolding", () => {
+    expect(sanitizeAssistantVisibleText("<tool_calls>\n<tool_calls>\n<tool_calls>")).toBe("");
+  });
+
+  it("preserves file contents wrappers inside fenced code", () => {
+    const input = [
+      "```xml",
+      "<file_contents path='sample.md'>",
+      " 1|# sample",
+      "</file_contents>",
+      "```",
+    ].join("\n");
+
+    expect(sanitizeAssistantVisibleText(input)).toBe(input);
+  });
+
   it("drops malformed reasoning before orphan close tags when final text follows", () => {
     expect(sanitizeAssistantVisibleText("private chain of thought </think> Visible answer")).toBe(
       "Visible answer",

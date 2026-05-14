@@ -784,6 +784,70 @@ describe("runHeartbeatOnce", () => {
     }
   });
 
+  it("preserves heartbeat media when fallback text sanitizes empty", async () => {
+    const tmpDir = await createCaseDir("hb-sanitized-media");
+    const storePath = path.join(tmpDir, "sessions.json");
+    const replySpy = vi.fn();
+    try {
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            workspace: tmpDir,
+            heartbeat: { every: "5m", target: "whatsapp" },
+          },
+        },
+        channels: { whatsapp: { allowFrom: ["*"] } },
+        session: { store: storePath },
+      };
+      const sessionKey = resolveMainSessionKey(cfg);
+
+      await fs.writeFile(
+        storePath,
+        JSON.stringify({
+          [sessionKey]: {
+            sessionId: "sid",
+            updatedAt: Date.now(),
+            lastChannel: "whatsapp",
+            lastTo: "120363401234567890@g.us",
+          },
+        }),
+      );
+
+      replySpy.mockResolvedValue({
+        text: [
+          "<file_contents path='.../HEARTBEAT.md' isStale=false isFullFile=true>",
+          " 1|# HEARTBEAT.md",
+          "</file_contents>",
+        ].join("\n"),
+        mediaUrl: "https://example.test/heartbeat.png",
+      });
+      const sendWhatsApp = vi
+        .fn<
+          (
+            to: string,
+            text: string,
+            opts?: Record<string, unknown>,
+          ) => Promise<{ messageId: string; toJid: string }>
+        >()
+        .mockResolvedValue({
+          messageId: "m1",
+          toJid: "jid",
+        });
+
+      await runHeartbeatOnce({
+        cfg,
+        deps: createHeartbeatDeps(sendWhatsApp, { getReplyFromConfig: replySpy }),
+      });
+
+      expect(sendWhatsApp).toHaveBeenCalledTimes(1);
+      expect(sendWhatsApp.mock.calls[0]?.[0]).toBe("120363401234567890@g.us");
+      expect(sendWhatsApp.mock.calls[0]?.[1]).toBe("");
+      expect(sendWhatsApp.mock.calls[0]?.[2]?.mediaUrl).toBe("https://example.test/heartbeat.png");
+    } finally {
+      replySpy.mockReset();
+    }
+  });
+
   it("uses per-agent heartbeat overrides and session keys", async () => {
     const tmpDir = await createCaseDir("hb-agent-overrides");
     const storePath = path.join(tmpDir, "sessions.json");

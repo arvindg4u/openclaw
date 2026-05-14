@@ -356,6 +356,61 @@ describe("runHeartbeatOnce ack handling", () => {
     });
   });
 
+  it.each([
+    {
+      title: "repeated tool-call marker scaffolding",
+      replyText: "<tool_calls>\n<tool_calls>\n<tool_calls>",
+      expectedText: undefined,
+    },
+    {
+      title: "file contents wrapper scaffolding",
+      replyText: [
+        "<file_contents path='.../HEARTBEAT.md' isStale=false isFullFile=true>",
+        " 1|# HEARTBEAT.md",
+        "</file_contents>",
+      ].join("\n"),
+      expectedText: undefined,
+    },
+    {
+      title: "mixed visible text and file contents wrapper scaffolding",
+      replyText: [
+        "Visible update",
+        "<file_contents path='/tmp/HEARTBEAT.md' isStale=false isFullFile=true>",
+        "secret-ish scaffold",
+        "</file_contents>",
+      ].join("\n"),
+      expectedText: "Visible update",
+    },
+  ])("sanitizes heartbeat fallback delivery for $title", async ({ replyText, expectedText }) => {
+    await withTempHeartbeatSandbox(async ({ tmpDir, storePath, replySpy }) => {
+      const cfg = await createSeededWhatsAppHeartbeatConfig({
+        tmpDir,
+        storePath,
+      });
+
+      replySpy.mockResolvedValue({ text: replyText });
+      const sendWhatsApp = createMessageSendSpy();
+
+      await runHeartbeatOnce({
+        cfg,
+        deps: {
+          ...makeWhatsAppDeps({ sendWhatsApp }),
+          getReplyFromConfig: replySpy,
+        },
+      });
+
+      if (expectedText === undefined) {
+        expect(sendWhatsApp).not.toHaveBeenCalled();
+        return;
+      }
+      expectWhatsAppMessageSend(sendWhatsApp, {
+        to: WHATSAPP_GROUP,
+        text: expectedText,
+        cfg,
+      });
+    });
+  });
+
   it("does not regress updatedAt when restoring heartbeat sessions", async () => {
     await withTempHeartbeatSandbox(async ({ tmpDir, storePath, replySpy }) => {
       const originalUpdatedAt = 1000;

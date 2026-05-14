@@ -85,6 +85,7 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "../shared/string-coerce.js";
+import { sanitizeAssistantVisibleText } from "../shared/text/assistant-visible-text.js";
 import { escapeRegExp } from "../utils.js";
 import { MAX_SAFE_TIMEOUT_DELAY_MS, resolveSafeTimeoutDelayMs } from "../utils/timer-delay.js";
 import { loadOrCreateDeviceIdentity } from "./device-identity.js";
@@ -784,7 +785,14 @@ function normalizeHeartbeatReply(
       hasMedia,
     };
   }
-  let finalText = stripped.text;
+  let finalText = sanitizeAssistantVisibleText(stripped.text);
+  if (!finalText && !hasMedia) {
+    return {
+      shouldSkip: true,
+      text: "",
+      hasMedia,
+    };
+  }
   if (responsePrefix && finalText && !finalText.startsWith(responsePrefix)) {
     finalText = `${responsePrefix} ${finalText}`;
   }
@@ -1803,14 +1811,13 @@ export async function runHeartbeatOnce(opts: {
       hasRelayableExecCompletion &&
       !normalized.text.trim() &&
       replyPayload?.text?.trim()
-        ? replyPayload.text.trim()
+        ? sanitizeAssistantVisibleText(replyPayload.text.trim())
         : null;
     if (execFallbackText) {
       normalized.text = execFallbackText;
       normalized.shouldSkip = false;
     }
-    const shouldSkipMain =
-      normalized.shouldSkip && !normalized.hasMedia && !hasRelayableExecCompletion;
+    const shouldSkipMain = normalized.shouldSkip && !normalized.hasMedia;
     if (shouldSkipMain && reasoningPayloads.length === 0) {
       await restoreHeartbeatUpdatedAt({
         storePath,

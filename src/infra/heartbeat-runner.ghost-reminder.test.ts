@@ -690,6 +690,69 @@ describe("Ghost reminder bug (issue #13317)", () => {
     });
   });
 
+  it("suppresses sanitized-empty exec-event fallback scaffolding", async () => {
+    await withTempHeartbeatSandbox(async ({ tmpDir, storePath }) => {
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            workspace: tmpDir,
+            heartbeat: {
+              every: "5m",
+              target: "last",
+            },
+          },
+        },
+        channels: { telegram: { allowFrom: ["*"] } },
+        session: { store: storePath },
+      };
+      const sessionKey = "agent:main:telegram:group:-1003774691294:topic:47";
+      await fs.writeFile(
+        storePath,
+        JSON.stringify({
+          [sessionKey]: {
+            sessionId: "sid",
+            updatedAt: Date.now(),
+            lastChannel: "telegram",
+            lastTo: "telegram:-1003774691294:topic:2175",
+            lastThreadId: 2175,
+          },
+        }),
+      );
+
+      const sendTelegram = vi.fn();
+      const getReplySpy = vi.fn().mockResolvedValue({
+        text: [
+          "<file_contents path='.../HEARTBEAT.md' isStale=false isFullFile=true>",
+          " 1|# HEARTBEAT.md",
+          "</file_contents>",
+        ].join("\n"),
+      });
+      enqueueSystemEvent("Exec completed (review-run, code 0) :: review-worker spawn finished", {
+        sessionKey,
+        trusted: false,
+        deliveryContext: {
+          channel: "telegram",
+          to: "telegram:-1003774691294:topic:47",
+          threadId: 47,
+        },
+      });
+
+      const result = await runHeartbeatOnce({
+        cfg,
+        agentId: "main",
+        sessionKey,
+        reason: "exec-event",
+        deps: {
+          getReplyFromConfig: getReplySpy,
+          telegram: sendTelegram,
+        },
+      });
+
+      expect(result.status).toBe("ran");
+      expect(sendTelegram).not.toHaveBeenCalled();
+    });
+  });
+
   it("suppresses metadata-only successful exec completions", async () => {
     await withTempHeartbeatSandbox(async ({ tmpDir, storePath }) => {
       const cfg: OpenClawConfig = {
