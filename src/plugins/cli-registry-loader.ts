@@ -8,11 +8,13 @@ import { loadOpenClawPluginCliRegistry, loadOpenClawPlugins } from "./loader.js"
 import { createEmptyPluginRegistry } from "./registry-empty.js";
 import type { PluginRegistry } from "./registry.js";
 import {
-  buildPluginRuntimeLoadOptions,
   createPluginRuntimeLoaderLogger,
-  resolvePluginRuntimeLoadContext,
   type PluginRuntimeLoadContext,
 } from "./runtime/load-context.js";
+import {
+  buildPluginRuntimeLoadOptionsWithEffect,
+  resolvePluginRuntimeLoadContextWithEffect,
+} from "./runtime/load-context-effect.js";
 import type {
   OpenClawPluginCliCommandDescriptor,
   OpenClawPluginCliContext,
@@ -57,7 +59,7 @@ function buildPluginCliLoaderParams(
   loaderOptions?: PluginCliLoaderOptions,
 ) {
   const onlyPluginIds = resolvePrimaryCommandManifestPluginIds(context, params?.primaryCommand);
-  return buildPluginRuntimeLoadOptions(context, {
+  return buildPluginRuntimeLoadOptionsWithEffect(context, {
     ...loaderOptions,
     ...(onlyPluginIds && onlyPluginIds.length > 0 ? { onlyPluginIds } : {}),
   });
@@ -133,7 +135,7 @@ export function resolvePluginCliLoadContext(params: {
   env?: NodeJS.ProcessEnv;
   logger: PluginLogger;
 }): PluginCliLoadContext {
-  return resolvePluginRuntimeLoadContext({
+  return resolvePluginRuntimeLoadContextWithEffect({
     config: params.cfg,
     env: params.env,
     logger: params.logger,
@@ -177,7 +179,7 @@ export async function loadPluginCliCommandRegistryWithContext(params: {
   return {
     ...params.context,
     registry: loadOpenClawPlugins(
-      buildPluginRuntimeLoadOptions(params.context, {
+      buildPluginRuntimeLoadOptionsWithEffect(params.context, {
         ...params.loaderOptions,
         ...(onlyPluginIds && onlyPluginIds.length > 0 ? { onlyPluginIds } : {}),
         activate: false,

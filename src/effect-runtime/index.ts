@@ -31,3 +31,11 @@ export async function runOpenClawEffect<A, E>(
   }
   return result.right;
 }
+
+export function runOpenClawEffectSync<A, E>(effect: OpenClawEffect<A, E, never>): A {
+  const result = Effect.runSync(Effect.either(effect));
+  if (Either.isLeft(result)) {
+    throw result.left;
+  }
+  return result.right;
+}
