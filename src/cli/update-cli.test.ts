@@ -40,7 +40,7 @@ const probeGateway = vi.fn();
 const pathExists = vi.fn();
 const syncPluginsForUpdateChannel = vi.fn();
 const updateNpmInstalledPlugins = vi.fn();
-const refreshPluginRegistryAfterConfigMutation = vi.fn(async () => undefined);
+const refreshPluginRegistryAfterConfigMutation = vi.fn(async (_params?: unknown) => undefined);
 const loadInstalledPluginIndexInstallRecords = vi.fn(
   async (params: { config?: OpenClawConfig } = {}) => params.config?.plugins?.installs ?? {},
 );
@@ -222,8 +222,8 @@ vi.mock("../plugins/installed-plugin-index-records.js", async (importOriginal) =
 });
 
 vi.mock("./plugins-registry-refresh.js", () => ({
-  refreshPluginRegistryAfterConfigMutation: (...args: unknown[]) =>
-    refreshPluginRegistryAfterConfigMutation(...args),
+  refreshPluginRegistryAfterConfigMutation: (params: unknown) =>
+    refreshPluginRegistryAfterConfigMutation(params),
 }));
 
 vi.mock("../daemon/service.js", () => ({
@@ -4248,7 +4248,7 @@ describe("update-cli", () => {
           },
         },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const preUpdateSourceConfig = {
       ...preUpdateAuthoredConfig,
       agents: {
@@ -4287,7 +4287,7 @@ describe("update-cli", () => {
           },
         },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const postDoctorConfig = {
       update: { channel: "stable" },
       agents: {
@@ -5215,7 +5215,7 @@ describe("update-cli", () => {
         },
         list: [{ $include: "./cron-agent.json5" }],
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const preUpdateSourceConfig = {
       update: { channel: "stable" },
       agents: {

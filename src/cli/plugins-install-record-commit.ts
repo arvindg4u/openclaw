@@ -90,8 +90,8 @@ export async function commitPluginInstallRecordsWithConfig(params: {
   nextConfig: OpenClawConfig;
   baseHash?: string;
   writeOptions?: ConfigWriteOptions;
-}): Promise<ConfigReplaceResult> {
-  const result = await commitPluginInstallRecordsWithWriter({
+}): Promise<ConfigReplaceResult | void> {
+  return await commitPluginInstallRecordsWithWriter({
     ...params,
     commit: async (nextConfig, writeOptions) => {
       return await replaceConfigFile({
@@ -101,10 +101,6 @@ export async function commitPluginInstallRecordsWithConfig(params: {
       });
     },
   });
-  if (!result) {
-    throw new Error("Plugin install record config commit did not return write metadata.");
-  }
-  return result;
 }
 
 export async function commitConfigWriteWithPendingPluginInstalls(params: {

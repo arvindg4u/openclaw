@@ -2466,7 +2466,7 @@ export async function updatePluginsAfterCoreUpdate(params: {
         nextConfig: pluginOnlyConfig,
         baseHash: writeBaseConfigSnapshot.hash,
       });
-      if (!pluginWriteResult.persistedHash) {
+      if (!pluginWriteResult?.persistedHash) {
         throw new Error("Plugin include update did not return a persisted config hash.");
       }
       await replaceConfigFile({
