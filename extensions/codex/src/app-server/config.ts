@@ -1,6 +1,10 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { hostname as readHostName } from "node:os";
+import {
+  resolveExecApprovalsFromFile,
+  type ExecApprovalsFile,
+} from "openclaw/plugin-sdk/infra-runtime";
 import { normalizeAgentId } from "openclaw/plugin-sdk/routing";
 import { z } from "zod";
 import type { CodexSandboxPolicy, CodexServiceTier } from "./protocol.js";
@@ -15,7 +19,7 @@ type CodexAppServerPolicyMode = "yolo" | "guardian";
 type OpenClawExecMode = "deny" | "allowlist" | "ask" | "auto" | "full";
 type OpenClawExecSecurity = "deny" | "allowlist" | "full";
 type OpenClawExecAsk = "off" | "on-miss" | "always";
-type OpenClawExecApprovalDefaultsForCodexAppServer = {
+type OpenClawExecApprovalFloorsForCodexAppServer = {
   security?: OpenClawExecSecurity;
   ask?: OpenClawExecAsk;
 };
@@ -1105,7 +1109,7 @@ export function resolveOpenClawExecModeForCodexAppServer(params: {
     security?: unknown;
     ask?: unknown;
   };
-  approvalDefaults?: OpenClawExecApprovalDefaultsForCodexAppServer;
+  approvals?: ExecApprovalsFile;
   config?: unknown;
   agentId?: string;
 }): OpenClawExecMode | undefined {
@@ -1119,7 +1123,7 @@ export function resolveOpenClawExecPolicyForCodexAppServer(params: {
     security?: unknown;
     ask?: unknown;
   };
-  approvalDefaults?: OpenClawExecApprovalDefaultsForCodexAppServer;
+  approvals?: ExecApprovalsFile;
   config?: unknown;
   agentId?: string;
 }): OpenClawExecPolicyForCodexAppServer {
@@ -1128,7 +1132,12 @@ export function resolveOpenClawExecPolicyForCodexAppServer(params: {
     agentId: params.agentId,
   });
   const overridePolicy = applyOpenClawExecPolicyLayer(basePolicy, params.execOverrides);
-  return applyOpenClawExecApprovalDefaults(overridePolicy, params.approvalDefaults);
+  const approvalFloors = resolveOpenClawExecApprovalFloorsForCodexAppServer({
+    approvals: params.approvals,
+    agentId: params.agentId,
+    policy: overridePolicy,
+  });
+  return applyOpenClawExecApprovalFloors(overridePolicy, approvalFloors);
 }
 
 function resolveEffectiveOpenClawExecModeForCodexAppServer(params: {
@@ -1195,19 +1204,35 @@ function applyOpenClawExecPolicyLayer(
   };
 }
 
-function applyOpenClawExecApprovalDefaults(
+function resolveOpenClawExecApprovalFloorsForCodexAppServer(params: {
+  approvals?: ExecApprovalsFile;
+  agentId?: string;
+  policy: OpenClawExecPolicy;
+}): OpenClawExecApprovalFloorsForCodexAppServer | undefined {
+  if (!params.approvals) {
+    return undefined;
+  }
+  return resolveExecApprovalsFromFile({
+    file: params.approvals,
+    agentId: params.agentId,
+    overrides: {
+      security: params.policy.security,
+      ask: params.policy.ask,
+    },
+  }).agent;
+}
+
+function applyOpenClawExecApprovalFloors(
   base: OpenClawExecPolicy,
-  approvalDefaults?: OpenClawExecApprovalDefaultsForCodexAppServer,
+  approvalFloors?: OpenClawExecApprovalFloorsForCodexAppServer,
 ): OpenClawExecPolicy {
-  if (!approvalDefaults) {
+  if (!approvalFloors) {
     return base;
   }
-  const nextSecurity = approvalDefaults.security
-    ? minOpenClawExecSecurity(base.security, approvalDefaults.security)
+  const nextSecurity = approvalFloors.security
+    ? minOpenClawExecSecurity(base.security, approvalFloors.security)
     : base.security;
-  const nextAsk = approvalDefaults.ask
-    ? maxOpenClawExecAsk(base.ask, approvalDefaults.ask)
-    : base.ask;
+  const nextAsk = approvalFloors.ask ? maxOpenClawExecAsk(base.ask, approvalFloors.ask) : base.ask;
   if (nextSecurity === base.security && nextAsk === base.ask) {
     return base;
   }

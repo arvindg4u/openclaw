@@ -949,7 +949,7 @@ export async function runCodexAppServerAttempt(
     pluginConfig,
     execPolicy: resolveOpenClawExecPolicyForCodexAppServer({
       execOverrides: params.execOverrides,
-      approvalDefaults: loadExecApprovals().defaults,
+      approvals: loadExecApprovals(),
       config: params.config,
       agentId: sessionAgentId,
     }),

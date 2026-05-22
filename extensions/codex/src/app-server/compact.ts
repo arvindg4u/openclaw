@@ -348,7 +348,7 @@ async function compactCodexNativeThread(
     execPolicy: resolveOpenClawExecPolicyForCodexAppServer({
       config: params.config,
       agentId: sessionAgentId,
-      approvalDefaults: loadExecApprovals().defaults,
+      approvals: loadExecApprovals(),
     }),
   });
   const binding = await readCodexAppServerBinding(params.sessionFile, { config: params.config });

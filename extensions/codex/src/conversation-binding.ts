@@ -613,7 +613,7 @@ function resolveConversationExecPolicy(params: {
       agentId,
       sessionKey: params.sessionKey,
     }),
-    approvalDefaults: loadExecApprovals().defaults,
+    approvals: loadExecApprovals(),
   });
 }
 

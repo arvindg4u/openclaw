@@ -211,7 +211,7 @@ export async function runCodexAppServerSideQuestion(
     config: params.cfg,
     agentId: sessionAgentId,
     execOverrides: resolveSideSessionExecOverrides(params.sessionEntry),
-    approvalDefaults: loadExecApprovals().defaults,
+    approvals: loadExecApprovals(),
   });
   const appServer = resolveCodexAppServerRuntimeOptions({
     pluginConfig,

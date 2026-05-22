@@ -1160,8 +1160,12 @@ allowed_sandbox_modes = ["read-only", "workspace-write"]
           },
         },
       },
-      approvalDefaults: {
-        security: "deny",
+      approvals: {
+        version: 1,
+        defaults: {
+          security: "deny",
+        },
+        agents: {},
       },
     });
 
@@ -1189,8 +1193,94 @@ allowed_sandbox_modes = ["read-only", "workspace-write"]
           },
         },
       },
-      approvalDefaults: {
-        ask: "always",
+      approvals: {
+        version: 1,
+        defaults: {
+          ask: "always",
+        },
+        agents: {},
+      },
+    });
+
+    expect(execPolicy.mode).toBe("ask");
+    expectRuntimePolicy(
+      resolveRuntimeForTest({
+        pluginConfig: {
+          appServer: {
+            mode: "yolo",
+            approvalPolicy: "never",
+            sandbox: "workspace-write",
+            approvalsReviewer: "auto_review",
+          },
+        },
+        execPolicy,
+      }),
+      {
+        approvalPolicy: "on-request",
+        sandbox: "danger-full-access",
+        approvalsReviewer: "user",
+      },
+    );
+  });
+
+  it("applies agent-scoped exec approval security floors before starting Codex app-server", () => {
+    const execPolicy = resolveOpenClawExecPolicyForCodexAppServer({
+      config: {
+        tools: {
+          exec: {
+            mode: "full",
+          },
+        },
+      },
+      agentId: "codex-agent",
+      approvals: {
+        version: 1,
+        defaults: {
+          security: "full",
+        },
+        agents: {
+          "codex-agent": {
+            security: "deny",
+          },
+        },
+      },
+    });
+
+    expect(execPolicy.mode).toBe("deny");
+    expect(() =>
+      resolveRuntimeForTest({
+        pluginConfig: {
+          appServer: {
+            mode: "yolo",
+            approvalPolicy: "never",
+            sandbox: "danger-full-access",
+          },
+        },
+        execPolicy,
+      }),
+    ).toThrow("Codex app-server local execution is not available when tools.exec.mode=deny");
+  });
+
+  it("applies agent-scoped exec approval ask floors before starting Codex app-server", () => {
+    const execPolicy = resolveOpenClawExecPolicyForCodexAppServer({
+      config: {
+        tools: {
+          exec: {
+            mode: "full",
+          },
+        },
+      },
+      agentId: "codex-agent",
+      approvals: {
+        version: 1,
+        defaults: {
+          ask: "off",
+        },
+        agents: {
+          "codex-agent": {
+            ask: "always",
+          },
+        },
       },
     });
 
