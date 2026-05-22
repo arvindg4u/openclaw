@@ -468,6 +468,7 @@ export async function runPreparedReply(
       allowed: elevatedAllowed,
       defaultLevel: resolvedElevatedLevel ?? "off",
     },
+    execPolicy: execOverrides,
   });
   let currentSystemSent = systemSent;
 

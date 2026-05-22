@@ -321,6 +321,32 @@ describe("runPreparedReply media-only handling", () => {
     });
   });
 
+  it.each([
+    { label: "exec mode", execOverrides: { mode: "deny" } },
+    { label: "legacy security", execOverrides: { security: "deny" } },
+  ] as const)(
+    "marks elevated full unavailable when $label denies host commands",
+    async ({ execOverrides }) => {
+      await runPreparedReply(
+        baseParams({
+          resolvedElevatedLevel: "full",
+          elevatedEnabled: true,
+          elevatedAllowed: true,
+          execOverrides,
+        }),
+      );
+
+      const call = requireRunReplyAgentCall();
+      expect(call.followupRun.run.bashElevated).toEqual({
+        enabled: true,
+        allowed: true,
+        defaultLevel: "full",
+        fullAccessAvailable: false,
+        fullAccessBlockedReason: "host-policy",
+      });
+    },
+  );
+
   it("propagates non-visible assistant silence for group runs", async () => {
     await runPreparedReply(baseParams());
 

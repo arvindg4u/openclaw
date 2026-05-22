@@ -1,11 +1,26 @@
-import type { ExecElevatedDefaults } from "../bash-tools.js";
+import type { ExecElevatedDefaults, ExecToolDefaults } from "../bash-tools.js";
 import type { resolveSandboxContext } from "../sandbox.js";
 import type { EmbeddedFullAccessBlockedReason, EmbeddedSandboxInfo } from "./types.js";
 
-export function resolveEmbeddedFullAccessState(params: { execElevated?: ExecElevatedDefaults }): {
+type EmbeddedFullAccessExecPolicy = Pick<ExecToolDefaults, "mode" | "security">;
+
+function execPolicyBlocksFullAccess(execPolicy?: EmbeddedFullAccessExecPolicy): boolean {
+  return execPolicy?.mode === "deny" || execPolicy?.security === "deny";
+}
+
+export function resolveEmbeddedFullAccessState(params: {
+  execElevated?: ExecElevatedDefaults;
+  execPolicy?: EmbeddedFullAccessExecPolicy;
+}): {
   available: boolean;
   blockedReason?: EmbeddedFullAccessBlockedReason;
 } {
+  if (execPolicyBlocksFullAccess(params.execPolicy)) {
+    return {
+      available: false,
+      blockedReason: "host-policy",
+    };
+  }
   if (params.execElevated?.fullAccessAvailable === true) {
     return { available: true };
   }
