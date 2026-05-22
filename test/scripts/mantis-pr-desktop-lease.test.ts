@@ -60,6 +60,7 @@ function runLeaseScript(
   comments:
     | Array<Record<string, unknown> | string>
     | Array<Array<Record<string, unknown> | string>> = [],
+  env: Record<string, string> = {},
 ) {
   const dir = makeTempDir();
   const binDir = path.join(dir, "bin");
@@ -76,11 +77,11 @@ function runLeaseScript(
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify({ tool: "gh", args }) + "\\n");
-const apiPath = args.find((arg) => arg.startsWith("repos/")) || "";
-if (args[0] === "pr" && args[1] === "view") {
-  console.log(JSON.stringify({ state: "OPEN", headRefOid: process.env.PR_HEAD_SHA || "new-head" }));
-  process.exit(0);
-}
+	const apiPath = args.find((arg) => arg.startsWith("repos/")) || "";
+	if (args[0] === "pr" && args[1] === "view") {
+	  console.log(JSON.stringify({ state: process.env.PR_STATE || "OPEN", headRefOid: process.env.PR_HEAD_SHA || "new-head" }));
+	  process.exit(0);
+	}
 if (args[0] === "api" && apiPath.includes("/comments?")) {
   console.log(process.env.PR_COMMENTS || "[]");
   process.exit(0);
@@ -106,18 +107,26 @@ process.exit(2);
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.CALLS_PATH, JSON.stringify({ tool: "crabbox", args }) + "\\n");
-if (args[0] === "inspect") {
-  console.log(JSON.stringify({ status: "running" }));
-  process.exit(0);
-}
-if (args[0] === "warmup") {
-  console.log("lease ready cbx_test123");
-  process.exit(0);
-}
-if (args[0] === "webvnc" && args[1] === "status") {
-  console.log("https://crabbox.example.test/portal/leases/cbx_test123/vnc#password=redacted");
-  process.exit(0);
-}
+	if (args[0] === "inspect") {
+	  console.log(process.env.INSPECT_STDOUT || JSON.stringify({ state: "active", status: "running" }));
+	  process.exit(0);
+	}
+	if (args[0] === "warmup") {
+	  if (process.env.WARMUP_STATUS) {
+	    console.error("warmup failed");
+	    process.exit(Number(process.env.WARMUP_STATUS));
+	  }
+	  console.log("lease ready cbx_test123");
+	  process.exit(0);
+	}
+	if (args[0] === "stop" && process.env.STOP_STATUS) {
+	  console.error("stop failed");
+	  process.exit(Number(process.env.STOP_STATUS));
+	}
+	if (args[0] === "webvnc" && args[1] === "status") {
+	  console.log(process.env.WEBVNC_STATUS_STDOUT || "portal bridge: connected=true viewers=0 observers=0 slots=2");
+	  process.exit(0);
+	}
 process.exit(0);
 `,
   );
@@ -133,9 +142,12 @@ process.exit(0);
       GITHUB_EVENT_PATH: eventPath,
       GITHUB_REPOSITORY: "openclaw/openclaw",
       GITHUB_ACTIONS: "",
+      MANTIS_PR_DESKTOP_LEASE_WEBVNC_READY_POLL_MS: "1",
+      MANTIS_PR_DESKTOP_LEASE_WEBVNC_READY_TIMEOUT_MS: "25",
       PATH: `${binDir}${path.delimiter}${process.env.PATH || ""}`,
       PR_COMMENTS: JSON.stringify(normalizeCommentsPayload(comments)),
       PR_HEAD_SHA: currentHead,
+      ...env,
     },
   });
 
@@ -267,6 +279,324 @@ describe("scripts/mantis/pr-desktop-lease", () => {
       tool: "crabbox",
       args: ["inspect", "--provider", "azure", "--target", "linux", "--id", "cbx_active", "--json"],
     });
+  });
+
+  it("does not reuse terminal Crabbox lease states", () => {
+    const releasedComment = [
+      "<!-- mantis-pr-desktop-lease:openclaw/openclaw:85136:linux -->",
+      "- Platform: `linux`",
+      "- Provider: `azure`",
+      "- Lease: `cbx_released`",
+      "- Expires: `2999-01-01T00:00:00.000Z`",
+      "Portal: https://crabbox.example.test/portal/leases/cbx_released",
+    ].join("\n");
+
+    const { calls, commentBody, result } = runLeaseScript(
+      {
+        action: "lease",
+        head_sha: currentHead,
+        item_number: "85136",
+        platform: "linux",
+        provider: "aws",
+        target_repo: "openclaw/openclaw",
+      },
+      [releasedComment],
+      { INSPECT_STDOUT: JSON.stringify({ ready: false, state: "released" }) },
+    );
+
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(calls).toContainEqual({
+      tool: "crabbox",
+      args: [
+        "inspect",
+        "--provider",
+        "azure",
+        "--target",
+        "linux",
+        "--id",
+        "cbx_released",
+        "--json",
+      ],
+    });
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        tool: "crabbox",
+        args: expect.arrayContaining(["warmup", "--provider", "aws"]),
+      }),
+    );
+    expect(commentBody).toContain("- Lease: `cbx_test123`");
+    expect(commentBody).not.toContain("already active");
+  });
+
+  it("replaces active leases from an older PR head", () => {
+    const staleComment = [
+      "<!-- mantis-pr-desktop-lease:openclaw/openclaw:85136:linux -->",
+      "- Platform: `linux`",
+      "- Provider: `azure`",
+      "- Lease: `cbx_stale`",
+      "- Expires: `2999-01-01T00:00:00.000Z`",
+      `- PR code: \`openclaw/openclaw#85136\` at \`${staleHead.slice(0, 12)}\``,
+      "Portal: https://crabbox.example.test/portal/leases/cbx_stale",
+    ].join("\n");
+
+    const { calls, commentBody, result } = runLeaseScript(
+      {
+        action: "lease",
+        head_sha: currentHead,
+        item_number: "85136",
+        platform: "linux",
+        provider: "aws",
+        target_repo: "openclaw/openclaw",
+      },
+      [staleComment],
+    );
+
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(calls).toContainEqual({
+      tool: "crabbox",
+      args: ["stop", "--provider", "azure", "cbx_stale"],
+    });
+    expect(calls).toContainEqual(
+      expect.objectContaining({
+        tool: "crabbox",
+        args: expect.arrayContaining(["warmup", "--provider", "aws"]),
+      }),
+    );
+    expect(commentBody).toContain("- Lease: `cbx_test123`");
+    expect(commentBody).toContain(currentHead.slice(0, 12));
+    expect(commentBody).not.toContain("already active");
+  });
+
+  it("marks the stale lease stopped before risky replacement warmup", () => {
+    const staleComment = [
+      "<!-- mantis-pr-desktop-lease:openclaw/openclaw:85136:linux -->",
+      "- Platform: `linux`",
+      "- Provider: `azure`",
+      "- Lease: `cbx_stale`",
+      "- Expires: `2999-01-01T00:00:00.000Z`",
+      `- PR code: \`openclaw/openclaw#85136\` at \`${staleHead.slice(0, 12)}\``,
+      "Portal: https://crabbox.example.test/portal/leases/cbx_stale",
+    ].join("\n");
+
+    const { calls, result } = runLeaseScript(
+      {
+        action: "lease",
+        head_sha: currentHead,
+        item_number: "85136",
+        platform: "linux",
+        provider: "aws",
+        target_repo: "openclaw/openclaw",
+      },
+      [staleComment],
+      { WARMUP_STATUS: "9" },
+    );
+
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(calls).toContainEqual({
+      tool: "crabbox",
+      args: ["stop", "--provider", "azure", "cbx_stale"],
+    });
+    expect(calls).toContainEqual({
+      tool: "gh",
+      args: [
+        "api",
+        "--method",
+        "PATCH",
+        "repos/openclaw/openclaw/issues/comments/1",
+        "-F",
+        expect.stringMatching(/^body=@/),
+      ],
+    });
+  });
+
+  it("does not create a replacement lease when stopping the stale lease fails", () => {
+    const staleComment = [
+      "<!-- mantis-pr-desktop-lease:openclaw/openclaw:85136:linux -->",
+      "- Platform: `linux`",
+      "- Provider: `azure`",
+      "- Lease: `cbx_stale`",
+      "- Expires: `2999-01-01T00:00:00.000Z`",
+      `- PR code: \`openclaw/openclaw#85136\` at \`${staleHead.slice(0, 12)}\``,
+      "Portal: https://crabbox.example.test/portal/leases/cbx_stale",
+    ].join("\n");
+
+    const { calls, commentBody, result } = runLeaseScript(
+      {
+        action: "lease",
+        head_sha: currentHead,
+        item_number: "85136",
+        platform: "linux",
+        provider: "aws",
+        target_repo: "openclaw/openclaw",
+      },
+      [staleComment],
+      { STOP_STATUS: "7" },
+    );
+
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(calls).toContainEqual({
+      tool: "crabbox",
+      args: ["stop", "--provider", "azure", "cbx_stale"],
+    });
+    expect(calls.some((call) => call.tool === "crabbox" && call.args[0] === "warmup")).toBe(false);
+    expect(commentBody).toContain("could not be stopped before replacement");
+    expect(commentBody).toContain("- Lease: `cbx_stale`");
+  });
+
+  it("does not post ready until WebVNC reports a connected portal bridge", () => {
+    const { commentBody, result } = runLeaseScript(
+      {
+        action: "lease",
+        head_sha: currentHead,
+        item_number: "85136",
+        platform: "mac",
+        provider: "aws",
+        target_repo: "openclaw/openclaw",
+        ttl_minutes: "60",
+      },
+      [],
+      { WEBVNC_STATUS_STDOUT: "portal bridge: connected=false viewers=0 observers=0 slots=2" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(commentBody).toContain("did not report portal bridge connected=true");
+    expect(commentBody).toContain("- Lease: `cbx_test123`");
+    expect(commentBody).not.toContain("desktop lease ready");
+  });
+
+  it("redacts standalone WebVNC passwords from readiness failures", () => {
+    const { commentBody, result } = runLeaseScript(
+      {
+        action: "lease",
+        head_sha: currentHead,
+        item_number: "85136",
+        platform: "mac",
+        provider: "aws",
+        target_repo: "openclaw/openclaw",
+        ttl_minutes: "60",
+      },
+      [],
+      {
+        WEBVNC_STATUS_STDOUT: [
+          "portal bridge: connected=false viewers=0 observers=0 slots=2",
+          "webvnc: https://crabbox.example.test/portal/leases/cbx_test123/vnc#password=supersecret",
+          "password: supersecret",
+        ].join("\n"),
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(commentBody).toContain("password: redacted");
+    expect(commentBody).not.toContain("supersecret");
+    expect(commentBody).not.toContain("#password=");
+  });
+
+  it("does not overwrite active lease comments for validation-only failures", () => {
+    const activeComment = [
+      "<!-- mantis-pr-desktop-lease:openclaw/openclaw:85136:mac -->",
+      "- Platform: `mac`",
+      "- Provider: `aws`",
+      "- Lease: `cbx_active`",
+      "- Expires: `2999-01-01T00:00:00.000Z`",
+      `- PR code: \`openclaw/openclaw#85136\` at \`${currentHead.slice(0, 12)}\``,
+      "Portal: https://crabbox.example.test/portal/leases/cbx_active",
+    ].join("\n");
+
+    const { calls, commentBody, result } = runLeaseScript(
+      {
+        action: "lease",
+        head_sha: staleHead,
+        item_number: "85136",
+        platform: "mac",
+        provider: "aws",
+        target_repo: "openclaw/openclaw",
+        ttl_minutes: "60",
+      },
+      [activeComment],
+    );
+
+    expect(result.status).toBe(0);
+    expect(commentBody).toContain(`PR head changed from ${staleHead} to ${currentHead}`);
+    expect(calls).toContainEqual({
+      tool: "gh",
+      args: [
+        "api",
+        "repos/openclaw/openclaw/issues/85136/comments",
+        "-F",
+        expect.stringMatching(/^body=@/),
+      ],
+    });
+    expect(
+      calls.some(
+        (call) =>
+          call.tool === "gh" && call.args.includes("repos/openclaw/openclaw/issues/comments/1"),
+      ),
+    ).toBe(false);
+  });
+
+  it("allows cleanup actions after the PR is closed", () => {
+    const activeComment = [
+      "<!-- mantis-pr-desktop-lease:openclaw/openclaw:85136:linux -->",
+      "- Platform: `linux`",
+      "- Provider: `azure`",
+      "- Lease: `cbx_active`",
+      "- Expires: `2999-01-01T00:00:00.000Z`",
+      `- PR code: \`openclaw/openclaw#85136\` at \`${currentHead.slice(0, 12)}\``,
+      "Portal: https://crabbox.example.test/portal/leases/cbx_active",
+    ].join("\n");
+
+    const { calls, commentBody, result } = runLeaseScript(
+      {
+        action: "stop",
+        item_number: "85136",
+        platform: "linux",
+        provider: "aws",
+        target_repo: "openclaw/openclaw",
+      },
+      [activeComment],
+      { PR_STATE: "CLOSED" },
+    );
+
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(calls).toContainEqual({
+      tool: "crabbox",
+      args: ["stop", "--provider", "azure", "cbx_active"],
+    });
+    expect(commentBody).toContain("Stopped the Mantis Crabbox linux desktop lease");
+  });
+
+  it("preserves reusable lease metadata when resetting WebVNC", () => {
+    const activeComment = [
+      "<!-- mantis-pr-desktop-lease:openclaw/openclaw:85136:linux -->",
+      "- Platform: `linux`",
+      "- Provider: `azure`",
+      "- Lease: `cbx_active`",
+      "- Expires: `2999-01-01T00:00:00.000Z`",
+      `- PR code: \`openclaw/openclaw#85136\` at \`${currentHead.slice(0, 12)}\``,
+      "Portal: https://crabbox.example.test/portal/leases/cbx_active",
+    ].join("\n");
+
+    const { commentBody, result } = runLeaseScript(
+      {
+        action: "reset-vnc",
+        item_number: "85136",
+        platform: "linux",
+        provider: "aws",
+        target_repo: "openclaw/openclaw",
+      },
+      [activeComment],
+    );
+
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(commentBody).toContain("Reset WebVNC");
+    expect(commentBody).toContain("- Expires: `2999-01-01T00:00:00.000Z`");
+    expect(commentBody).toContain(currentHead.slice(0, 12));
   });
 
   it("rejects provider and platform combinations that Crabbox cannot broker", () => {

@@ -67,4 +67,12 @@ describe("Mantis PR desktop lease workflow", () => {
     });
     expect(upload?.uses).toBe("actions/upload-artifact@v7");
   });
+
+  it("does not queue new-head lease replacement behind the live bridge job", () => {
+    const text = readFileSync(WORKFLOW, "utf8");
+
+    expect(text).toContain("github.event.inputs.head_sha || github.event.client_payload.head_sha");
+    expect(text).toContain("github.event.client_payload.head_sha || 'lease'");
+    expect(text).toContain("cancel-in-progress: false");
+  });
 });

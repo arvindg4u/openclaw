@@ -49,7 +49,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ format('mantis-pr-desktop-lease-{0}-{1}-{2}-{3}', github.event.inputs.target_repo || github.event.client_payload.target_repo || 'openclaw/openclaw', github.event.inputs.pr_number || github.event.client_payload.item_number || github.event.client_payload.pr_number || github.run_id, github.event.inputs.platform || github.event.client_payload.platform || 'linux', (github.event.inputs.action || github.event.client_payload.action || 'lease') == 'lease' && 'lease' || github.run_id) }}
+  group: ${{ format('mantis-pr-desktop-lease-{0}-{1}-{2}-{3}', github.event.inputs.target_repo || github.event.client_payload.target_repo || 'openclaw/openclaw', github.event.inputs.pr_number || github.event.client_payload.item_number || github.event.client_payload.pr_number || github.run_id, github.event.inputs.platform || github.event.client_payload.platform || 'linux', (github.event.inputs.action || github.event.client_payload.action || 'lease') == 'lease' && (github.event.inputs.head_sha || github.event.client_payload.head_sha || 'lease') || github.run_id) }}
   cancel-in-progress: false
 
 env:
