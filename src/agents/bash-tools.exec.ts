@@ -1425,7 +1425,13 @@ export function createExecTool(
       const hostPolicyAllowsFullBypass =
         (approvalDefaults?.security ?? "full") === "full" &&
         (approvalDefaults?.ask ?? "off") === "off";
-      if (elevatedRequested && elevatedMode === "full" && hostPolicyAllowsFullBypass) {
+      const modePolicyAllowsFullBypass = modePolicy.security === "full" && modePolicy.ask === "off";
+      if (
+        elevatedRequested &&
+        elevatedMode === "full" &&
+        modePolicyAllowsFullBypass &&
+        hostPolicyAllowsFullBypass
+      ) {
         security = "full";
       }
       // Keep local exec defaults in sync with exec-approvals.json when tools.exec.* is unset.
@@ -1433,7 +1439,10 @@ export function createExecTool(
       const hostAsk = maxAsk(modePolicy.ask, approvalDefaults?.ask ?? modePolicy.ask);
       let ask = maxAsk(hostAsk, requestedAsk ?? hostAsk);
       const bypassApprovals =
-        elevatedRequested && elevatedMode === "full" && hostPolicyAllowsFullBypass;
+        elevatedRequested &&
+        elevatedMode === "full" &&
+        modePolicyAllowsFullBypass &&
+        hostPolicyAllowsFullBypass;
       if (bypassApprovals) {
         ask = "off";
       }

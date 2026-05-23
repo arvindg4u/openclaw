@@ -238,6 +238,38 @@ describe("exec security floor", () => {
     expect(calls).toContain("exec.approval.request");
   });
 
+  it("honors normalized auto mode before elevated full bypass", async () => {
+    const autoReviewer = vi.fn<ExecAutoReviewer>(async () => ({
+      decision: "deny",
+      risk: "high",
+      rationale: "test reviewer denial",
+    }));
+    const tool = createExecTool({
+      host: "gateway",
+      mode: "auto",
+      safeBins: [],
+      autoReviewer,
+      elevated: { enabled: true, allowed: true, defaultLevel: "full" },
+    });
+
+    const result = await tool.execute("call-elevated-full-auto-mode", {
+      command: "pwd",
+      elevated: true,
+    });
+
+    expect(autoReviewer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "pwd",
+        host: "gateway",
+        reason: "approval-required",
+      }),
+    );
+    expect(result.content[0]?.type).toBe("text");
+    expect((result.content[0] as { text?: string }).text ?? "").toContain(
+      "exec auto-review denied command: test reviewer denial",
+    );
+  });
+
   it.each(["on-miss", "off"] as const)(
     "keeps auto review enabled when legacy ask=%s does not strengthen auto mode",
     async (ask) => {
