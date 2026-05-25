@@ -45,13 +45,17 @@ function startLatestScheduledTimersForDelay(
   count: number,
 ): Promise<unknown>[] {
   const matchingIndexes = setTimeoutSpy.mock.calls
-    .map((call, index) => ({ call, index }))
-    .filter(({ call }) => call[1] === delayMs)
-    .filter(({ call }) => String(call[0]).includes("runTextFragmentFlush"))
-    .map(({ index }) => index)
+    .map((call: Parameters<typeof setTimeout>, index: number) => ({ call, index }))
+    .filter(
+      ({ call }: { call: Parameters<typeof setTimeout>; index: number }) => call[1] === delayMs,
+    )
+    .filter(({ call }: { call: Parameters<typeof setTimeout>; index: number }) =>
+      String(call[0]).includes("runTextFragmentFlush"),
+    )
+    .map(({ index }: { call: Parameters<typeof setTimeout>; index: number }) => index)
     .slice(-count);
   expect(matchingIndexes).toHaveLength(count);
-  return matchingIndexes.map((index) => {
+  return matchingIndexes.map((index: number) => {
     clearTimeout(setTimeoutSpy.mock.results[index]?.value as ReturnType<typeof setTimeout>);
     const timer = setTimeoutSpy.mock.calls[index]?.[0] as (() => unknown) | undefined;
     expect(timer).toBeTypeOf("function");
@@ -62,7 +66,7 @@ function startLatestScheduledTimersForDelay(
 function spyOnManualTimers(): ReturnType<typeof vi.spyOn> {
   return vi.spyOn(globalThis, "setTimeout").mockImplementation((() => {
     return Symbol("telegram-test-timer") as unknown as ReturnType<typeof setTimeout>;
-  }) as typeof setTimeout);
+  }) as unknown as typeof setTimeout);
 }
 
 describe("telegram stickers", () => {
