@@ -747,8 +747,8 @@ describe("createPackedPluginSdkTypescriptSmokeProject", () => {
       expect(source).toContain('"openclaw/plugin-sdk/channel-entry-contract"');
       expect(source).toContain('"openclaw/plugin-sdk/config-contracts"');
       expect(source).toContain('"openclaw/plugin-sdk/runtime-env"');
-      expect(source).toContain("defineSingleProviderPluginEntry(providerOptions)");
-      expect(source).toContain("defineBundledChannelEntry({");
+      expect(source).toContain("type PublicPluginSdkModules = [");
+      expect(source).not.toContain("TelegramAccountConfig");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
