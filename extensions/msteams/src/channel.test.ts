@@ -118,6 +118,40 @@ describe("msteams config schema", () => {
     expect(res.success).toBe(false);
   });
 
+  it("accepts China cloud without a configured global serviceUrl", () => {
+    const res = MSTeamsConfigSchema.safeParse({
+      cloud: "China",
+    });
+
+    expect(res.success).toBe(true);
+  });
+
+  it("accepts Azure China Bot Framework serviceUrl hosts", () => {
+    const res = MSTeamsConfigSchema.safeParse({
+      cloud: "China",
+      serviceUrl: "https://msteams.botframework.azure.cn/teams",
+    });
+
+    expect(res.success).toBe(true);
+  });
+
+  it("rejects non-China serviceUrl hosts when China cloud is configured", () => {
+    const res = MSTeamsConfigSchema.safeParse({
+      cloud: "China",
+      serviceUrl: "https://smba.trafficmanager.net/teams",
+    });
+
+    expect(res.success).toBe(false);
+  });
+
+  it("rejects Azure China Bot Framework serviceUrl hosts without China cloud", () => {
+    const res = MSTeamsConfigSchema.safeParse({
+      serviceUrl: "https://msteams.botframework.azure.cn/teams",
+    });
+
+    expect(res.success).toBe(false);
+  });
+
   it("requires serviceUrl with non-public Teams clouds", () => {
     const res = MSTeamsConfigSchema.safeParse({
       cloud: "USGov",

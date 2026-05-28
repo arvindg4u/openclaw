@@ -158,6 +158,9 @@ export type MSTeamsApp = {
     getGraphToken(): Promise<unknown>;
     getBotToken(): Promise<unknown>;
   };
+  cloud?: {
+    graphScope?: string;
+  };
   api: {
     serviceUrl?: string;
     conversations: {
@@ -404,6 +407,11 @@ export function createMSTeamsTokenProvider(app: MSTeamsApp): MSTeamsTokenProvide
         scope.includes("graph.microsoft.us") ||
         scope.includes("microsoftgraph.chinacloudapi.cn")
       ) {
+        if (app.cloud?.graphScope?.includes("microsoftgraph.chinacloudapi.cn")) {
+          throw new Error(
+            "Microsoft Teams Graph operations are not supported for channels.msteams.cloud=China until Graph requests are routed through the Azure China Graph endpoint.",
+          );
+        }
         return tokenToString(await app.tokenManager.getGraphToken());
       }
       return tokenToString(await app.tokenManager.getBotToken());

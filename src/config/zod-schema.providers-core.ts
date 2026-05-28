@@ -1513,6 +1513,7 @@ const MSTEAMS_SERVICE_URL_HOST_ALLOWLIST = [
   "smba.infra.gcc.teams.microsoft.com",
   "smba.infra.gov.teams.microsoft.us",
   "smba.infra.dod.teams.microsoft.us",
+  "botframework.azure.cn",
 ] as const;
 
 function isAllowedMSTeamsServiceUrl(value: string): boolean {
@@ -1530,6 +1531,19 @@ function isAllowedMSTeamsServiceUrl(value: string): boolean {
   }
 }
 
+function isAzureChinaBotFrameworkServiceUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== "https:") {
+      return false;
+    }
+    const host = parsed.hostname.toLowerCase();
+    return host === "botframework.azure.cn" || host.endsWith(".botframework.azure.cn");
+  } catch {
+    return false;
+  }
+}
+
 export const MSTeamsConfigSchema = z
   .object({
     enabled: z.boolean().optional(),
@@ -1540,7 +1554,7 @@ export const MSTeamsConfigSchema = z
     appId: z.string().optional(),
     appPassword: SecretInputSchema.optional().register(sensitive),
     tenantId: z.string().optional(),
-    cloud: z.enum(["Public", "USGov", "USGovDoD"]).optional(),
+    cloud: z.enum(["Public", "USGov", "USGovDoD", "China"]).optional(),
     serviceUrl: z
       .string()
       .url()
@@ -1635,12 +1649,40 @@ export const MSTeamsConfigSchema = z
           "channels.msteams.sso.enabled=true requires channels.msteams.sso.connectionName to identify the Bot Framework OAuth connection",
       });
     }
-    if (value.cloud && value.cloud !== "Public" && !value.serviceUrl?.trim()) {
+    if (
+      value.cloud &&
+      value.cloud !== "Public" &&
+      value.cloud !== "China" &&
+      !value.serviceUrl?.trim()
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["serviceUrl"],
         message:
           "channels.msteams.cloud requires channels.msteams.serviceUrl for non-public Teams clouds",
+      });
+    }
+    if (
+      value.cloud === "China" &&
+      value.serviceUrl?.trim() &&
+      !isAzureChinaBotFrameworkServiceUrl(value.serviceUrl)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["serviceUrl"],
+        message:
+          "channels.msteams.cloud=China requires channels.msteams.serviceUrl to use an Azure China Bot Framework channel host",
+      });
+    }
+    if (
+      value.cloud !== "China" &&
+      value.serviceUrl?.trim() &&
+      isAzureChinaBotFrameworkServiceUrl(value.serviceUrl)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cloud"],
+        message: "Azure China Bot Framework serviceUrl hosts require channels.msteams.cloud=China",
       });
     }
 

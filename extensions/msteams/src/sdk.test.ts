@@ -180,6 +180,44 @@ describe("createMSTeamsApp", () => {
     expect(internals.cloud?.graphScope).toBe("https://graph.microsoft.us/.default");
   });
 
+  it("passes China cloud to the SDK App without requiring a configured serviceUrl", async () => {
+    const creds: MSTeamsCredentials = {
+      type: "secret",
+      appId: "test-app-id",
+      appPassword: "test-secret",
+      tenantId: "test-tenant",
+    };
+
+    const app = await createMSTeamsApp(creds, {
+      cloud: "China",
+    });
+
+    const internals = app as unknown as {
+      api?: { serviceUrl?: string };
+      cloud?: { botScope?: string; graphScope?: string };
+    };
+    // @microsoft/teams.apps still gives app-level sends its public serviceUrl
+    // default. OpenClaw proactive sends use stored reference serviceUrls instead.
+    expect(internals.api?.serviceUrl).toBe("https://smba.trafficmanager.net/teams");
+    expect(internals.cloud?.botScope).toBe("https://api.botframework.azure.cn/.default");
+    expect(internals.cloud?.graphScope).toBe("https://microsoftgraph.chinacloudapi.cn/.default");
+  });
+
+  it("fails closed for Graph tokens when China cloud is configured", async () => {
+    const creds: MSTeamsCredentials = {
+      type: "secret",
+      appId: "test-app-id",
+      appPassword: "test-secret",
+      tenantId: "test-tenant",
+    };
+    const app = await createMSTeamsApp(creds, { cloud: "China" });
+    const tokenProvider = createMSTeamsTokenProvider(app);
+
+    await expect(tokenProvider.getAccessToken("https://graph.microsoft.com")).rejects.toThrow(
+      /Graph operations are not supported .*cloud=China/,
+    );
+  });
+
   it("rejects configured serviceUrls outside the Bot Framework allowlist", async () => {
     const creds: MSTeamsCredentials = {
       type: "secret",
