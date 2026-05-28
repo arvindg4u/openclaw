@@ -9,7 +9,6 @@ export const KNIP_UNUSED_FILE_ALLOWLIST = [
   "src/state/openclaw-agent-db.paths.ts",
   "src/state/openclaw-agent-db.ts",
   "src/state/openclaw-agent-schema.generated.ts",
-  "extensions/acpx/src/runtime-internals/error-format.mjs",
   "extensions/acpx/src/runtime-internals/mcp-command-line.mjs",
   "extensions/acpx/src/runtime-internals/mcp-proxy.mjs",
   "extensions/canvas/src/host/a2ui-app/bootstrap.js",
