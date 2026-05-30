@@ -70,8 +70,8 @@ describe("doctor runtime tool schema checks", () => {
   it("reports active bundle MCP tool schemas that would be quarantined before a model turn", async () => {
     mocks.createBundleMcpToolRuntime.mockResolvedValueOnce({
       tools: [
-        bundleMcpTool("dofbot__healthy", { type: "object", properties: {} }),
-        bundleMcpTool("dofbot__dofbot_move_angles", {
+        bundleMcpTool("fuzzplugin__healthy", { type: "object", properties: {} }),
+        bundleMcpTool("fuzzplugin__fuzz_move_angles", {
           type: "array",
           items: { type: "number" },
         }),
@@ -83,7 +83,7 @@ describe("doctor runtime tool schema checks", () => {
       collectRuntimeToolSchemaFindings({
         mcp: {
           servers: {
-            dofbot: { command: "node", args: ["dofbot-mcp.mjs"] },
+            fuzzplugin: { command: "node", args: ["fuzzplugin-mcp.mjs"] },
           },
         },
       }),
@@ -91,10 +91,10 @@ describe("doctor runtime tool schema checks", () => {
       checkId: "core/doctor/runtime-tool-schemas",
       severity: "error",
       message:
-        "Agent main tool dofbot__dofbot_move_angles from plugin bundle-mcp has an unsupported input schema for runtime projection.",
+        "Agent main tool fuzzplugin__fuzz_move_angles from plugin bundle-mcp has an unsupported input schema for runtime projection.",
       path: "mcp.servers",
-      target: "dofbot__dofbot_move_angles",
-      requirement: 'dofbot__dofbot_move_angles.parameters.type must be "object"',
+      target: "fuzzplugin__fuzz_move_angles",
+      requirement: 'fuzzplugin__fuzz_move_angles.parameters.type must be "object"',
       fixHint:
         "Disable or update the offending MCP server/tool so its parameters are a JSON object schema, then rerun doctor.",
     });
@@ -106,9 +106,9 @@ describe("doctor runtime tool schema checks", () => {
       tools: [],
       diagnostics: [
         {
-          serverName: "dofbot",
-          safeServerName: "dofbot",
-          launchSummary: "node dofbot-mcp.mjs",
+          serverName: "fuzzplugin",
+          safeServerName: "fuzzplugin",
+          launchSummary: "node fuzzplugin-mcp.mjs",
           message: 'tools[0].inputSchema.type: Invalid input: expected "object"',
         },
       ],
@@ -119,7 +119,7 @@ describe("doctor runtime tool schema checks", () => {
       collectRuntimeToolSchemaFindings({
         mcp: {
           servers: {
-            dofbot: { command: "node", args: ["dofbot-mcp.mjs"] },
+            fuzzplugin: { command: "node", args: ["fuzzplugin-mcp.mjs"] },
           },
         },
       }),
@@ -127,8 +127,8 @@ describe("doctor runtime tool schema checks", () => {
       checkId: "core/doctor/runtime-tool-schemas",
       severity: "error",
       message:
-        'Configured MCP server "dofbot" could not expose runtime tools for schema validation.',
-      path: "mcp.servers.dofbot",
+        'Configured MCP server "fuzzplugin" could not expose runtime tools for schema validation.',
+      path: "mcp.servers.fuzzplugin",
       requirement: 'tools[0].inputSchema.type: Invalid input: expected "object"',
       fixHint:
         "Fix or disable the offending MCP server, then rerun doctor before relying on assistant tool startup.",
@@ -141,9 +141,9 @@ describe("doctor runtime tool schema checks", () => {
       tools: [],
       diagnostics: [
         {
-          serverName: "dofbot",
-          safeServerName: "dofbot",
-          launchSummary: "node dofbot-mcp.mjs",
+          serverName: "fuzzplugin",
+          safeServerName: "fuzzplugin",
+          launchSummary: "node fuzzplugin-mcp.mjs",
           message: 'tools[0].inputSchema.type: Invalid input: expected "object"',
         },
       ],
@@ -152,17 +152,17 @@ describe("doctor runtime tool schema checks", () => {
 
     await expect(
       collectRuntimeToolSchemaFindings({
-        tools: { allow: ["dofbot__healthy"] },
+        tools: { allow: ["fuzzplugin__healthy"] },
         mcp: {
           servers: {
-            dofbot: { command: "node", args: ["dofbot-mcp.mjs"] },
+            fuzzplugin: { command: "node", args: ["fuzzplugin-mcp.mjs"] },
           },
         },
       }),
     ).resolves.toContainEqual(
       expect.objectContaining({
         checkId: "core/doctor/runtime-tool-schemas",
-        path: "mcp.servers.dofbot",
+        path: "mcp.servers.fuzzplugin",
       }),
     );
   });
@@ -174,7 +174,7 @@ describe("doctor runtime tool schema checks", () => {
         {
           serverName: "my__server",
           safeServerName: "my__server",
-          launchSummary: "node dofbot-mcp.mjs",
+          launchSummary: "node fuzzplugin-mcp.mjs",
           message: 'tools[0].inputSchema.type: Invalid input: expected "object"',
         },
       ],
@@ -186,7 +186,7 @@ describe("doctor runtime tool schema checks", () => {
         tools: { allow: ["my__server__healthy"] },
         mcp: {
           servers: {
-            my__server: { command: "node", args: ["dofbot-mcp.mjs"] },
+            my__server: { command: "node", args: ["fuzzplugin-mcp.mjs"] },
           },
         },
       }),
@@ -203,9 +203,9 @@ describe("doctor runtime tool schema checks", () => {
       tools: [],
       diagnostics: [
         {
-          serverName: "dofbot",
-          safeServerName: "dofbot",
-          launchSummary: "node dofbot-mcp.mjs",
+          serverName: "fuzzplugin",
+          safeServerName: "fuzzplugin",
+          launchSummary: "node fuzzplugin-mcp.mjs",
           message: 'tools[0].inputSchema.type: Invalid input: expected "object"',
         },
       ],
@@ -217,14 +217,14 @@ describe("doctor runtime tool schema checks", () => {
         tools: { allow: ["*__healthy"] },
         mcp: {
           servers: {
-            dofbot: { command: "node", args: ["dofbot-mcp.mjs"] },
+            fuzzplugin: { command: "node", args: ["fuzzplugin-mcp.mjs"] },
           },
         },
       }),
     ).resolves.toContainEqual(
       expect.objectContaining({
         checkId: "core/doctor/runtime-tool-schemas",
-        path: "mcp.servers.dofbot",
+        path: "mcp.servers.fuzzplugin",
       }),
     );
   });
@@ -232,7 +232,7 @@ describe("doctor runtime tool schema checks", () => {
   it("reports unsupported schemas exposed only to a non-default configured agent", async () => {
     mocks.createOpenClawCodingTools.mockImplementation((options) =>
       options?.agentId === "worker"
-        ? [tool("dofbot_move_angles", { type: "array", items: { type: "number" } })]
+        ? [tool("fuzz_move_angles", { type: "array", items: { type: "number" } })]
         : [tool("healthy", { type: "object", properties: {} })],
     );
 
@@ -249,10 +249,10 @@ describe("doctor runtime tool schema checks", () => {
       checkId: "core/doctor/runtime-tool-schemas",
       severity: "error",
       message:
-        "Agent worker tool dofbot_move_angles has an unsupported input schema for runtime projection.",
-      path: "tools.dofbot_move_angles",
-      target: "dofbot_move_angles",
-      requirement: 'dofbot_move_angles.parameters.type must be "object"',
+        "Agent worker tool fuzz_move_angles has an unsupported input schema for runtime projection.",
+      path: "tools.fuzz_move_angles",
+      target: "fuzz_move_angles",
+      requirement: 'fuzz_move_angles.parameters.type must be "object"',
       fixHint:
         "Disable or update the offending plugin/tool so its parameters are a JSON object schema, then rerun doctor.",
     });
@@ -269,13 +269,13 @@ describe("doctor runtime tool schema checks", () => {
   it("skips ACP-only agents because they do not use embedded tool projection", async () => {
     mocks.createOpenClawCodingTools.mockImplementation((options) =>
       options?.agentId === "acp-worker"
-        ? [tool("dofbot_move_angles", { type: "array", items: { type: "number" } })]
+        ? [tool("fuzz_move_angles", { type: "array", items: { type: "number" } })]
         : [tool("healthy", { type: "object", properties: {} })],
     );
     mocks.createBundleMcpToolRuntime.mockImplementation(
       async (options: { workspaceDir: string }) => ({
         tools: options.workspaceDir.includes("acp")
-          ? [bundleMcpTool("dofbot__bad", { type: "array", items: { type: "number" } })]
+          ? [bundleMcpTool("fuzzplugin__bad", { type: "array", items: { type: "number" } })]
           : [],
         dispose: mocks.disposeBundleRuntime,
       }),
@@ -311,7 +311,7 @@ describe("doctor runtime tool schema checks", () => {
       async (options: { workspaceDir: string }) => ({
         tools: options.workspaceDir.includes("worker")
           ? [
-              bundleMcpTool("dofbot__dofbot_move_angles", {
+              bundleMcpTool("fuzzplugin__fuzz_move_angles", {
                 type: "array",
                 items: { type: "number" },
               }),
@@ -334,10 +334,10 @@ describe("doctor runtime tool schema checks", () => {
       checkId: "core/doctor/runtime-tool-schemas",
       severity: "error",
       message:
-        "Agent worker tool dofbot__dofbot_move_angles from plugin bundle-mcp has an unsupported input schema for runtime projection.",
+        "Agent worker tool fuzzplugin__fuzz_move_angles from plugin bundle-mcp has an unsupported input schema for runtime projection.",
       path: "mcp.servers",
-      target: "dofbot__dofbot_move_angles",
-      requirement: 'dofbot__dofbot_move_angles.parameters.type must be "object"',
+      target: "fuzzplugin__fuzz_move_angles",
+      requirement: 'fuzzplugin__fuzz_move_angles.parameters.type must be "object"',
       fixHint:
         "Disable or update the offending MCP server/tool so its parameters are a JSON object schema, then rerun doctor.",
     });
@@ -354,7 +354,7 @@ describe("doctor runtime tool schema checks", () => {
   it("does not report bundle MCP schemas filtered out by the final runtime tool policy", async () => {
     mocks.createBundleMcpToolRuntime.mockResolvedValueOnce({
       tools: [
-        bundleMcpTool("dofbot__dofbot_move_angles", {
+        bundleMcpTool("fuzzplugin__fuzz_move_angles", {
           type: "array",
           items: { type: "number" },
         }),
@@ -367,7 +367,7 @@ describe("doctor runtime tool schema checks", () => {
         tools: { deny: ["bundle-mcp"] },
         mcp: {
           servers: {
-            dofbot: { command: "node", args: ["dofbot-mcp.mjs"] },
+            fuzzplugin: { command: "node", args: ["fuzzplugin-mcp.mjs"] },
           },
         },
       }),
@@ -379,9 +379,9 @@ describe("doctor runtime tool schema checks", () => {
       tools: [],
       diagnostics: [
         {
-          serverName: "dofbot",
-          safeServerName: "dofbot",
-          launchSummary: "node dofbot-mcp.mjs",
+          serverName: "fuzzplugin",
+          safeServerName: "fuzzplugin",
+          launchSummary: "node fuzzplugin-mcp.mjs",
           message: 'tools[0].inputSchema.type: Invalid input: expected "object"',
         },
       ],
@@ -393,7 +393,7 @@ describe("doctor runtime tool schema checks", () => {
         tools: { deny: ["bundle-mcp"] },
         mcp: {
           servers: {
-            dofbot: { command: "node", args: ["dofbot-mcp.mjs"] },
+            fuzzplugin: { command: "node", args: ["fuzzplugin-mcp.mjs"] },
           },
         },
       }),
@@ -405,9 +405,9 @@ describe("doctor runtime tool schema checks", () => {
       tools: [],
       diagnostics: [
         {
-          serverName: "dofbot",
-          safeServerName: "dofbot",
-          launchSummary: "node dofbot-mcp.mjs",
+          serverName: "fuzzplugin",
+          safeServerName: "fuzzplugin",
+          launchSummary: "node fuzzplugin-mcp.mjs",
           message: 'tools[0].inputSchema.type: Invalid input: expected "object"',
         },
       ],
@@ -416,10 +416,10 @@ describe("doctor runtime tool schema checks", () => {
 
     await expect(
       collectRuntimeToolSchemaFindings({
-        tools: { deny: ["dofbot__*"] },
+        tools: { deny: ["fuzzplugin__*"] },
         mcp: {
           servers: {
-            dofbot: { command: "node", args: ["dofbot-mcp.mjs"] },
+            fuzzplugin: { command: "node", args: ["fuzzplugin-mcp.mjs"] },
           },
         },
       }),
