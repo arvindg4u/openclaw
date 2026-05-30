@@ -706,6 +706,7 @@ export const nodeHandlers: GatewayRequestHandlers = {
     await respondUnavailableOnThrow(respond, async () => {
       const result = await requestNodePairing({
         nodeId: p.nodeId,
+        deviceId: p.deviceId,
         displayName: p.displayName,
         platform: p.platform,
         version: p.version,
