@@ -51,6 +51,20 @@ function firstGatewayCall(): Record<string, unknown> {
   return callOpts;
 }
 
+async function withSharedGatewayToken<T>(token: string, fn: () => Promise<T>): Promise<T> {
+  const previous = process.env.OPENCLAW_GATEWAY_TOKEN;
+  process.env.OPENCLAW_GATEWAY_TOKEN = token;
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    } else {
+      process.env.OPENCLAW_GATEWAY_TOKEN = previous;
+    }
+  }
+}
+
 describe("exec approval transport timeout (#12098)", () => {
   const approvalTransportFloorMs = DEFAULT_EXEC_APPROVAL_TIMEOUT_MS + 10_000;
 
@@ -71,10 +85,12 @@ describe("exec approval transport timeout (#12098)", () => {
   });
 
   it("callGatewayCli uses backend auth for explicit loopback token calls", async () => {
-    await callGatewayCli("node.list", {
-      url: "ws://127.0.0.1:18789",
-      token: "shared-token",
-    } as never);
+    await withSharedGatewayToken("shared-token", async () => {
+      await callGatewayCli("node.list", {
+        url: "ws://127.0.0.1:18789",
+        token: "shared-token",
+      } as never);
+    });
 
     expect(callGatewaySpy).toHaveBeenCalledTimes(1);
     expect(firstGatewayCall()).toMatchObject({
@@ -86,10 +102,12 @@ describe("exec approval transport timeout (#12098)", () => {
   });
 
   it("callGatewayCli preserves CLI fallback scopes for unclassified direct loopback token calls", async () => {
-    await callGatewayCli("plugin.custom.unclassified", {
-      url: "ws://127.0.0.1:18789",
-      token: "shared-token",
-    } as never);
+    await withSharedGatewayToken("shared-token", async () => {
+      await callGatewayCli("plugin.custom.unclassified", {
+        url: "ws://127.0.0.1:18789",
+        token: "shared-token",
+      } as never);
+    });
 
     expect(callGatewaySpy).toHaveBeenCalledTimes(1);
     expect(firstGatewayCall()).toMatchObject({
@@ -102,15 +120,17 @@ describe("exec approval transport timeout (#12098)", () => {
   });
 
   it("callNodePairApprovalGatewayCli omits device identity for explicit loopback token calls", async () => {
-    await callNodePairApprovalGatewayCli(
-      "node.pair.list",
-      {
-        url: "ws://127.0.0.1:18789",
-        token: "shared-token",
-      } as never,
-      {},
-      { scopes: ["operator.pairing"] },
-    );
+    await withSharedGatewayToken("shared-token", async () => {
+      await callNodePairApprovalGatewayCli(
+        "node.pair.list",
+        {
+          url: "ws://127.0.0.1:18789",
+          token: "shared-token",
+        } as never,
+        {},
+        { scopes: ["operator.pairing"] },
+      );
+    });
 
     expect(callGatewaySpy).toHaveBeenCalledTimes(1);
     expect(firstGatewayCall()).toMatchObject({
@@ -119,6 +139,21 @@ describe("exec approval transport timeout (#12098)", () => {
       mode: "backend",
       deviceIdentity: null,
       scopes: ["operator.pairing"],
+    });
+  });
+
+  it("callGatewayCli keeps identity available when loopback token is not proven shared", async () => {
+    await callGatewayCli("node.list", {
+      url: "ws://127.0.0.1:18789",
+      token: "operator-device-token",
+    } as never);
+
+    expect(callGatewaySpy).toHaveBeenCalledTimes(1);
+    expect(firstGatewayCall()).toMatchObject({
+      method: "node.list",
+      clientName: "cli",
+      mode: "cli",
+      deviceIdentity: undefined,
     });
   });
 

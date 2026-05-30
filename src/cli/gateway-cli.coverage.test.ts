@@ -162,16 +162,18 @@ describe("gateway-cli coverage", () => {
   it("uses backend auth for explicit loopback token gateway calls", async () => {
     callGateway.mockClear();
 
-    await runGatewayCommand([
-      "gateway",
-      "call",
-      "health",
-      "--url",
-      "ws://127.0.0.1:18789",
-      "--token",
-      "shared-token",
-      "--json",
-    ]);
+    await withEnvOverride({ OPENCLAW_GATEWAY_TOKEN: "shared-token" }, async () => {
+      await runGatewayCommand([
+        "gateway",
+        "call",
+        "health",
+        "--url",
+        "ws://127.0.0.1:18789",
+        "--token",
+        "shared-token",
+        "--json",
+      ]);
+    });
 
     expect(callGateway).toHaveBeenCalledTimes(1);
     expect(firstMockArg(callGateway)).toMatchObject({
@@ -179,6 +181,29 @@ describe("gateway-cli coverage", () => {
       clientName: "gateway-client",
       mode: "backend",
       deviceIdentity: null,
+    });
+  });
+
+  it("keeps device identity available for unproven loopback token gateway calls", async () => {
+    callGateway.mockClear();
+
+    await runGatewayCommand([
+      "gateway",
+      "call",
+      "health",
+      "--url",
+      "ws://127.0.0.1:18789",
+      "--token",
+      "operator-device-token",
+      "--json",
+    ]);
+
+    expect(callGateway).toHaveBeenCalledTimes(1);
+    expect(firstMockArg(callGateway)).toMatchObject({
+      method: "health",
+      clientName: "cli",
+      mode: "cli",
+      deviceIdentity: undefined,
     });
   });
 

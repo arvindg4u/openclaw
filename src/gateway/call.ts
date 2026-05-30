@@ -404,13 +404,17 @@ function isLoopbackGatewayUrl(rawUrl: string): boolean {
 
 function shouldOmitDeviceIdentityForGatewayCall(params: {
   opts: CallGatewayBaseOptions;
+  config: OpenClawConfig;
   url: string;
   token?: string;
   password?: string;
 }): boolean {
   const mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;
   const clientName = params.opts.clientName ?? GATEWAY_CLIENT_NAMES.CLI;
-  const hasSharedAuth = Boolean(params.token || params.password);
+  const auth = resolveGatewayCallAuth(params.config);
+  const tokenMatchesSharedAuth =
+    Boolean(params.token) && auth.mode === "token" && auth.token === params.token;
+  const hasSharedAuth = Boolean(params.password || tokenMatchesSharedAuth);
   return (
     mode === GATEWAY_CLIENT_MODES.BACKEND &&
     clientName === GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT &&
@@ -421,6 +425,7 @@ function shouldOmitDeviceIdentityForGatewayCall(params: {
 
 function resolveDeviceIdentityForGatewayCall(params: {
   opts: CallGatewayBaseOptions;
+  config: OpenClawConfig;
   url: string;
   token?: string;
   password?: string;
@@ -1022,7 +1027,7 @@ async function callGatewayWithScopes<T = Record<string, unknown>>(
   const { token, password } = resolvedCredentials;
   const deviceIdentity =
     opts.deviceIdentity === undefined
-      ? resolveDeviceIdentityForGatewayCall({ opts, url, token, password })
+      ? resolveDeviceIdentityForGatewayCall({ opts, config: context.config, url, token, password })
       : opts.deviceIdentity;
   ensureGatewayCallCanAuthenticate({
     opts,

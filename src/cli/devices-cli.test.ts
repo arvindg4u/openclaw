@@ -168,18 +168,34 @@ function hasGatewayMethod(method: string): boolean {
   });
 }
 
+async function withSharedGatewayToken<T>(token: string, fn: () => Promise<T>): Promise<T> {
+  const previous = process.env.OPENCLAW_GATEWAY_TOKEN;
+  process.env.OPENCLAW_GATEWAY_TOKEN = token;
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    } else {
+      process.env.OPENCLAW_GATEWAY_TOKEN = previous;
+    }
+  }
+}
+
 describe("devices cli gateway auth", () => {
   it("omits persisted device identity for explicit loopback token auth", async () => {
     callGateway.mockResolvedValueOnce({ pending: [], paired: [] });
 
-    await runDevicesCommand([
-      "list",
-      "--url",
-      "ws://127.0.0.1:18789",
-      "--token",
-      "shared-token",
-      "--json",
-    ]);
+    await withSharedGatewayToken("shared-token", async () => {
+      await runDevicesCommand([
+        "list",
+        "--url",
+        "ws://127.0.0.1:18789",
+        "--token",
+        "shared-token",
+        "--json",
+      ]);
+    });
 
     expectGatewayCall(0, {
       method: "device.pair.list",
@@ -193,7 +209,9 @@ describe("devices cli gateway auth", () => {
   it("omits persisted device identity for implicit local token auth", async () => {
     callGateway.mockResolvedValueOnce({ pending: [], paired: [] });
 
-    await runDevicesCommand(["list", "--token", "shared-token", "--json"]);
+    await withSharedGatewayToken("shared-token", async () => {
+      await runDevicesCommand(["list", "--token", "shared-token", "--json"]);
+    });
 
     expectGatewayCall(0, {
       method: "device.pair.list",
@@ -219,6 +237,27 @@ describe("devices cli gateway auth", () => {
     expectGatewayCall(0, {
       method: "device.pair.list",
       token: "shared-token",
+      clientName: "cli",
+      mode: "cli",
+      deviceIdentity: undefined,
+    });
+  });
+
+  it("keeps device identity available for unproven loopback token auth", async () => {
+    callGateway.mockResolvedValueOnce({ pending: [], paired: [] });
+
+    await runDevicesCommand([
+      "list",
+      "--url",
+      "ws://127.0.0.1:18789",
+      "--token",
+      "operator-device-token",
+      "--json",
+    ]);
+
+    expectGatewayCall(0, {
+      method: "device.pair.list",
+      token: "operator-device-token",
       clientName: "cli",
       mode: "cli",
       deviceIdentity: undefined,

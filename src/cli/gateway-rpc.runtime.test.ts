@@ -22,6 +22,20 @@ vi.mock("./progress.js", () => ({
 
 const { callGatewayFromCliRuntime } = await import("./gateway-rpc.runtime.js");
 
+async function withSharedGatewayToken<T>(token: string, fn: () => Promise<T>): Promise<T> {
+  const previous = process.env.OPENCLAW_GATEWAY_TOKEN;
+  process.env.OPENCLAW_GATEWAY_TOKEN = token;
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    } else {
+      process.env.OPENCLAW_GATEWAY_TOKEN = previous;
+    }
+  }
+}
+
 describe("callGatewayFromCliRuntime", () => {
   beforeEach(() => {
     callGatewayMock.mockClear().mockResolvedValue({ ok: true });
@@ -66,9 +80,11 @@ describe("callGatewayFromCliRuntime", () => {
   });
 
   it("uses backend auth for explicit loopback token calls", async () => {
-    await callGatewayFromCliRuntime("health", {
-      url: "ws://127.0.0.1:18789",
-      token: "shared-token",
+    await withSharedGatewayToken("shared-token", async () => {
+      await callGatewayFromCliRuntime("health", {
+        url: "ws://127.0.0.1:18789",
+        token: "shared-token",
+      });
     });
 
     expect(callGatewayMock).toHaveBeenCalledWith(
@@ -83,9 +99,11 @@ describe("callGatewayFromCliRuntime", () => {
   });
 
   it("uses CLI fallback scopes for unclassified explicit loopback token calls", async () => {
-    await callGatewayFromCliRuntime("plugin.custom.unclassified", {
-      url: "ws://127.0.0.1:18789",
-      token: "shared-token",
+    await withSharedGatewayToken("shared-token", async () => {
+      await callGatewayFromCliRuntime("plugin.custom.unclassified", {
+        url: "ws://127.0.0.1:18789",
+        token: "shared-token",
+      });
     });
 
     expect(callGatewayMock).toHaveBeenCalledWith(
@@ -102,6 +120,23 @@ describe("callGatewayFromCliRuntime", () => {
           "operator.talk.secrets",
         ],
         deviceIdentity: null,
+      }),
+    );
+  });
+
+  it("keeps device identity available for unproven loopback token calls", async () => {
+    await callGatewayFromCliRuntime("health", {
+      url: "ws://127.0.0.1:18789",
+      token: "operator-device-token",
+    });
+
+    expect(callGatewayMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "health",
+        clientName: "cli",
+        mode: "cli",
+        scopes: undefined,
+        deviceIdentity: undefined,
       }),
     );
   });

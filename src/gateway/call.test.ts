@@ -426,6 +426,13 @@ describe("callGateway url resolution", () => {
 
   it("keeps direct-local backend shared-token auth independent of paired device state", async () => {
     setLocalLoopbackGatewayConfig();
+    getRuntimeConfig.mockReturnValue({
+      gateway: {
+        mode: "local",
+        bind: "loopback",
+        auth: { mode: "token", token: "explicit-token" },
+      },
+    });
 
     await callGateway({
       method: "health",
@@ -437,6 +444,21 @@ describe("callGateway url resolution", () => {
     expect(lastClientOptions?.clientName).toBe(GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT);
     expect(lastClientOptions?.mode).toBe(GATEWAY_CLIENT_MODES.BACKEND);
     expect(lastClientOptions?.deviceIdentity).toBeNull();
+  });
+
+  it("keeps device identity available for unproven backend loopback token auth", async () => {
+    setLocalLoopbackGatewayConfig();
+
+    await callGateway({
+      method: "health",
+      token: "operator-device-token",
+    });
+
+    expect(lastClientOptions?.url).toBe("ws://127.0.0.1:18789");
+    expect(lastClientOptions?.token).toBe("operator-device-token");
+    expect(lastClientOptions?.clientName).toBe(GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT);
+    expect(lastClientOptions?.mode).toBe(GATEWAY_CLIENT_MODES.BACKEND);
+    expect(lastClientOptions?.deviceIdentity).toEqual(deviceIdentityState.value);
   });
 
   it("fails before opening a websocket when backend token auth has no shared or paired credential", async () => {
@@ -745,6 +767,13 @@ describe("callGateway url resolution", () => {
 
   it("uses backend client metadata for explicit scoped default calls", async () => {
     setLocalLoopbackGatewayConfig();
+    getRuntimeConfig.mockReturnValue({
+      gateway: {
+        mode: "local",
+        bind: "loopback",
+        auth: { mode: "token", token: "explicit-token" },
+      },
+    });
 
     await callGateway({
       method: "sessions.delete",
