@@ -93,7 +93,8 @@ function resolveStartupEntryPath(env: GatewayServiceEnv, extension?: "cmd" | "vb
 function resolveStartupEntryPaths(env: GatewayServiceEnv): string[] {
   const primaryPath = resolveStartupEntryPath(env);
   const legacyCmdPath = resolveStartupEntryPath(env, "cmd");
-  return uniqueStrings([primaryPath, legacyCmdPath]);
+  const legacyVbsPath = resolveStartupEntryPath(env, "vbs");
+  return uniqueStrings([primaryPath, legacyCmdPath, legacyVbsPath]);
 }
 
 // `/TR` is parsed by schtasks itself, while the generated `gateway.cmd` line is parsed by cmd.exe.
