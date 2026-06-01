@@ -28,6 +28,8 @@ export function noteActiveSessionForShutdown(entry: ActiveSessionForShutdown): v
   if (!entry.sessionId) {
     return;
   }
+  // Re-noting the same durable session id replaces transcript/store metadata
+  // from resumed starts, so shutdown drains the freshest finalization payload.
   trackedSessions.set(entry.sessionId, entry);
 }
 
@@ -41,6 +43,8 @@ export function forgetActiveSessionForShutdown(sessionId: string | undefined): v
 
 /** Return a snapshot of sessions still awaiting shutdown finalization. */
 export function listActiveSessionsForShutdown(): ActiveSessionForShutdown[] {
+  // Return an array copy so drain callers can mutate their worklist without
+  // editing the process-local tracker while async hook delivery is in flight.
   return Array.from(trackedSessions.values());
 }
 
