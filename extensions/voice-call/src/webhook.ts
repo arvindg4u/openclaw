@@ -74,6 +74,7 @@ type WebhookHeaderGateResult =
       reason: string;
     };
 
+/** Sanitizes and bounds STT text before logs so transcripts cannot inject control output. */
 function sanitizeTranscriptForLog(value: string): string {
   const sanitized = value
     .replace(/\p{Cc}/gu, " ")
@@ -85,6 +86,7 @@ function sanitizeTranscriptForLog(value: string): string {
   return `${sanitized.slice(0, TRANSCRIPT_LOG_MAX_CHARS)}...`;
 }
 
+/** Stores a bounded realtime talk-event trail on the call without growing metadata unboundedly. */
 function appendRecentTalkEventMetadata(call: CallRecord, event: TalkEvent): void {
   const metadata = call.metadata ?? {};
   const recent = Array.isArray(metadata.recentTalkEvents)
@@ -129,6 +131,7 @@ function normalizeProxyIp(value: string | undefined): string | undefined {
   return normalized;
 }
 
+/** Resolves the original client IP from trusted proxy headers for media-stream rate limits. */
 function resolveForwardedClientIp(
   request: http.IncomingMessage,
   trustedProxyIPs: readonly string[],
@@ -157,6 +160,7 @@ function resolveForwardedClientIp(
   return realIp || undefined;
 }
 
+/** Converts provider parse output into a complete HTTP response payload. */
 function normalizeWebhookResponse(parsed: {
   statusCode?: number;
   providerResponseHeaders?: Record<string, string>;
@@ -882,6 +886,7 @@ export class VoiceCallWebhookServer {
     return cloneWebhookResponsePayload(await response);
   }
 
+  /** Rejects obviously unsigned carrier webhooks before reading attacker-controlled bodies. */
   private verifyPreAuthWebhookHeaders(headers: http.IncomingHttpHeaders): WebhookHeaderGateResult {
     if (this.config.skipSignatureVerification) {
       return { ok: true };
