@@ -13,6 +13,11 @@ import {
 } from "./http-utils.js";
 import { authorizeOperatorScopesForMethod } from "./method-scopes.js";
 
+/**
+ * Handles the shared POST+JSON Gateway endpoint prelude.
+ * Returns false for non-matching paths, undefined after writing a response, or
+ * the parsed body plus auth facts when the caller should continue.
+ */
 export async function handleGatewayPostJsonEndpoint(
   req: IncomingMessage,
   res: ServerResponse,
@@ -30,6 +35,8 @@ export async function handleGatewayPostJsonEndpoint(
     ) => string[];
   },
 ): Promise<false | { body: unknown; requestAuth: AuthorizedGatewayHttpRequest } | undefined> {
+  // Use a fixed URL base so path matching cannot be influenced by malformed or
+  // attacker-controlled Host headers.
   const url = new URL(req.url ?? "/", "http://localhost");
   if (url.pathname !== opts.pathname) {
     return false;
@@ -53,6 +60,8 @@ export async function handleGatewayPostJsonEndpoint(
   }
 
   if (opts.requiredOperatorMethod) {
+    // Enforce operator scope before reading the body so unauthorized callers do
+    // not spend body parsing budget or trigger payload diagnostics.
     const requestedScopes =
       opts.resolveOperatorScopes?.(req, requestAuth) ??
       resolveTrustedHttpOperatorScopes(req, requestAuth);
