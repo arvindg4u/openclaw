@@ -42,6 +42,8 @@ function readStringArray(record: Record<string, unknown>, key: string): string[]
   if (!Array.isArray(value)) {
     return undefined;
   }
+  // Snapshot arrays are display data. Coerce only string/number entries and drop empties so
+  // arbitrary config objects cannot leak through status output as JSON-ish strings.
   const normalized = normalizeStringEntries(
     value.map((entry) => (typeof entry === "string" || typeof entry === "number" ? entry : "")),
   );
@@ -77,6 +79,7 @@ export function resolveConfiguredFromCredentialStatuses(account: unknown): boole
   return sawCredentialStatus ? false : undefined;
 }
 
+/** Infers configured state only when every named required credential is non-missing. */
 export function resolveConfiguredFromRequiredCredentialStatuses(
   account: unknown,
   requiredKeys: CredentialStatusKey[],
