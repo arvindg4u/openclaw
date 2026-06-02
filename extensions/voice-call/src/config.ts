@@ -503,8 +503,11 @@ export const VoiceCallConfigSchema = z
   .strict();
 
 export type VoiceCallConfig = z.infer<typeof VoiceCallConfigSchema>;
+/** Voice-call config after applying an optional per-number inbound route override. */
 export type VoiceCallEffectiveConfigResult = {
+  /** Effective config for the call, with route overrides merged when matched. */
   config: VoiceCallConfig;
+  /** Canonical configured phone route key that matched the caller/dialed number. */
   numberRouteKey?: string;
 };
 type DeepPartial<T> = T extends SecretInput
@@ -514,12 +517,9 @@ type DeepPartial<T> = T extends SecretInput
     : T extends object
       ? { [K in keyof T]?: DeepPartial<T[K]> }
       : T;
+/** Partial config shape accepted at plugin boundaries before defaults and env fallbacks apply. */
 export type VoiceCallConfigInput = DeepPartial<VoiceCallConfig>;
 const TWILIO_AUTH_TOKEN_PATH = "plugins.entries.voice-call.config.twilio.authToken";
-
-// -----------------------------------------------------------------------------
-// Configuration Helpers
-// -----------------------------------------------------------------------------
 
 const DEFAULT_VOICE_CALL_CONFIG = VoiceCallConfigSchema.parse({});
 
@@ -569,6 +569,7 @@ function normalizePhoneRouteKey(phone: string | undefined): string {
   return phone?.replace(/\D/g, "") ?? "";
 }
 
+/** Resolves the canonical per-number route key for exact or normalized phone input. */
 export function resolveVoiceCallNumberRouteKey(
   config: Pick<VoiceCallConfig, "numbers">,
   phone: string | undefined,
@@ -592,6 +593,7 @@ export function resolveVoiceCallNumberRouteKey(
   );
 }
 
+/** Applies per-number route overrides while preserving global route registry and TTS defaults. */
 export function resolveVoiceCallEffectiveConfig(
   config: VoiceCallConfig,
   phoneOrRouteKey: string | undefined,
@@ -643,6 +645,7 @@ function sanitizeVoiceCallNumberRoutes(
   );
 }
 
+/** Resolves Twilio auth tokens from SecretInput while preserving clear config-path errors. */
 export function resolveTwilioAuthToken(
   config: Pick<VoiceCallConfig, "twilio">,
 ): string | undefined {
@@ -652,6 +655,7 @@ export function resolveTwilioAuthToken(
   });
 }
 
+/** Normalizes partial voice-call config by applying nested defaults that Zod cannot infer alone. */
 export function normalizeVoiceCallConfig(config: VoiceCallConfigInput): VoiceCallConfig {
   const defaults = cloneDefaultVoiceCallConfig();
   const serve = { ...defaults.serve, ...config.serve };
@@ -722,6 +726,7 @@ export function normalizeVoiceCallConfig(config: VoiceCallConfigInput): VoiceCal
   };
 }
 
+/** Builds the memory/session key for voice conversations based on configured session scope. */
 export function resolveVoiceCallSessionKey(params: {
   config: Pick<VoiceCallConfig, "sessionScope">;
   callId: string;
@@ -741,10 +746,7 @@ export function resolveVoiceCallSessionKey(params: {
   return normalizedPhone ? `voice:${normalizedPhone}` : `voice:${params.callId}`;
 }
 
-/**
- * Resolves the configuration by merging environment variables into missing fields.
- * Returns a new configuration object with environment variables applied.
- */
+/** Resolves config defaults plus provider environment fallbacks into the canonical runtime shape. */
 export function resolveVoiceCallConfig(config: VoiceCallConfigInput): VoiceCallConfig {
   const resolved = normalizeVoiceCallConfig(config);
 
@@ -795,9 +797,7 @@ export function resolveVoiceCallConfig(config: VoiceCallConfigInput): VoiceCallC
   return normalizeVoiceCallConfig(resolved);
 }
 
-/**
- * Validate that the configuration has all required fields for the selected provider.
- */
+/** Validates provider credentials and incompatible realtime/streaming policy combinations. */
 export function validateProviderConfig(config: VoiceCallConfig): {
   valid: boolean;
   errors: string[];
