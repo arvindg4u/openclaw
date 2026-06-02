@@ -4,6 +4,7 @@ import type { EmbeddedRunAttemptParams } from "./types.js";
 export type OrphanedTrailingUserPromptMergeParams = {
   prompt: string;
   trigger: EmbeddedRunAttemptParams["trigger"];
+  /** The current session leaf that would otherwise create consecutive user turns. */
   leafMessage: { content?: unknown };
 };
 
@@ -21,7 +22,11 @@ export type OrphanedTrailingUserPromptMergeResult = {
 
 export type MessageMergeStrategyId = "orphan-trailing-user-prompt";
 
-/** Runtime hook for resolving provider-hostile transcript tails before retrying. */
+/**
+ * Runtime hook for resolving provider-hostile transcript tails before retrying.
+ * The strategy object exists so tests can exercise runner behavior without
+ * depending on the default merge text.
+ */
 export type MessageMergeStrategy = {
   id: MessageMergeStrategyId;
   mergeOrphanedTrailingUserPrompt: (
@@ -52,7 +57,10 @@ function registerMessageMergeStrategy(strategy: MessageMergeStrategy): () => voi
   };
 }
 
-/** Installs a temporary message merge strategy and returns a restore callback. */
+/**
+ * Installs a temporary message merge strategy and returns a restore callback.
+ * Keep this test-only so production uses the canonical orphan-user merge path.
+ */
 export function registerMessageMergeStrategyForTest(strategy: MessageMergeStrategy): () => void {
   return registerMessageMergeStrategy(strategy);
 }
