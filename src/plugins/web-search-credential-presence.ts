@@ -33,6 +33,29 @@ function hasConfiguredPluginWebSearchCandidate(config: OpenClawConfig): boolean 
   });
 }
 
+function hasManifestPluginWebSearchEnvCredentialCandidate(params: {
+  plugin: PluginManifestRecord;
+  env: NodeJS.ProcessEnv;
+  origin?: PluginManifestRecord["origin"];
+}): boolean {
+  const { plugin } = params;
+  try {
+    if (params.origin && plugin.origin !== params.origin) {
+      return false;
+    }
+    if ((plugin.contracts?.webSearchProviders?.length ?? 0) === 0) {
+      return false;
+    }
+    const envVars = [
+      ...(plugin.setup?.providers ?? []).flatMap((provider) => provider.envVars ?? []),
+      ...Object.values(plugin.providerAuthEnvVars ?? {}).flat(),
+    ];
+    return envVars.some((envVar) => hasConfiguredCredentialValue(params.env[envVar]));
+  } catch {
+    return false;
+  }
+}
+
 function hasManifestWebSearchEnvCredentialCandidate(params: {
   config: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
@@ -45,19 +68,13 @@ function hasManifestWebSearchEnvCredentialCandidate(params: {
   return loadManifestMetadataSnapshot({
     config: params.config,
     env,
-  }).plugins.some((plugin) => {
-    if (params.origin && plugin.origin !== params.origin) {
-      return false;
-    }
-    if ((plugin.contracts?.webSearchProviders?.length ?? 0) === 0) {
-      return false;
-    }
-    const envVars = [
-      ...(plugin.setup?.providers ?? []).flatMap((provider) => provider.envVars ?? []),
-      ...Object.values(plugin.providerAuthEnvVars ?? {}).flat(),
-    ];
-    return envVars.some((envVar) => hasConfiguredCredentialValue(env[envVar]));
-  });
+  }).plugins.some((plugin) =>
+    hasManifestPluginWebSearchEnvCredentialCandidate({
+      plugin,
+      env,
+      origin: params.origin,
+    }),
+  );
 }
 
 export function hasConfiguredWebSearchCredential(params: {
