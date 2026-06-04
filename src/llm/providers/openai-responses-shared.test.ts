@@ -122,6 +122,115 @@ describe("convertResponsesTools", () => {
       convertResponsesTools([zeta, alpha]).map((tool) => expectResponsesFunctionTool(tool).name),
     ).toEqual(["alpha", "zeta"]);
   });
+
+  it("skips unreadable tool descriptors while preserving healthy tools", () => {
+    const broken = {
+      get name(): string {
+        const error = new Error("tool name unavailable");
+        error.toString = () => {
+          throw new Error("unprintable tool error");
+        };
+        throw error;
+      },
+      description: "Broken",
+      parameters: {},
+    } as Tool;
+    const healthy = {
+      name: "lookup_weather",
+      description: "Get forecast",
+      parameters: {},
+    } satisfies Tool;
+
+    const converted = convertResponsesTools([broken, healthy], { model: nativeOpenAIModel });
+
+    expect(converted).toEqual([
+      {
+        type: "function",
+        name: "lookup_weather",
+        description: "Get forecast",
+        strict: true,
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+          additionalProperties: false,
+        },
+      },
+    ]);
+  });
+
+  it("skips unreadable schemas without downgrading healthy strict tools", () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    const broken = {
+      name: "broken_schema",
+      description: "Broken",
+      parameters: proxy,
+    } as unknown as Tool;
+    const healthy = {
+      name: "lookup_weather",
+      description: "Get forecast",
+      parameters: {},
+    } satisfies Tool;
+
+    const converted = convertResponsesTools([broken, healthy], { model: nativeOpenAIModel });
+
+    expect(converted).toEqual([
+      {
+        type: "function",
+        name: "lookup_weather",
+        description: "Get forecast",
+        strict: true,
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+          additionalProperties: false,
+        },
+      },
+    ]);
+  });
+
+  it("keeps valid shared schemas while skipping cyclic schemas", () => {
+    const sharedProperty = { type: "string" };
+    const sharedSchema = {
+      type: "object",
+      properties: {
+        first: sharedProperty,
+        second: sharedProperty,
+      },
+      required: ["first", "second"],
+      additionalProperties: false,
+    } satisfies Tool["parameters"];
+    const cyclicSchema: Record<string, unknown> = { type: "object" };
+    cyclicSchema.properties = { self: cyclicSchema };
+
+    const converted = convertResponsesTools(
+      [
+        {
+          name: "cyclic_schema",
+          description: "Broken",
+          parameters: cyclicSchema,
+        } as Tool,
+        {
+          name: "shared_schema",
+          description: "Shared",
+          parameters: sharedSchema,
+        },
+      ],
+      { model: nativeOpenAIModel },
+    );
+
+    expect(converted).toEqual([
+      {
+        type: "function",
+        name: "shared_schema",
+        description: "Shared",
+        strict: true,
+        parameters: sharedSchema,
+      },
+    ]);
+  });
 });
 
 describe("convertResponsesMessages", () => {

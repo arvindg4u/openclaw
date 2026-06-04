@@ -3,8 +3,8 @@ import type { Tool as OpenAITool } from "openai/resources/responses/responses.js
 import { resolveOpenAIStrictToolSetting } from "../../agents/openai-strict-tool-setting.js";
 import {
   findOpenAIStrictToolSchemaDiagnostics,
+  isStrictOpenAIJsonSchemaCompatible,
   normalizeOpenAIStrictToolParameters,
-  resolveOpenAIStrictToolFlagForInventory,
 } from "../../agents/openai-tool-schema.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { Model, Tool } from "../types.js";
@@ -24,6 +24,15 @@ type ResponsesFunctionTool = {
   parameters: Record<string, unknown>;
   strict?: boolean | null;
 };
+type PreparedResponsesTool = {
+  index: number;
+  name: string;
+  description: string;
+  parameters: unknown;
+  looseParameters: Record<string, unknown>;
+  strictCompatible?: boolean;
+  strictParameters?: Record<string, unknown>;
+};
 
 // Converts OpenClaw tool schemas to OpenAI Responses tools, including strict-mode compatibility.
 const log = createSubsystemLogger("llm/openai-responses");
@@ -36,18 +45,17 @@ export function convertResponsesTools(
   options?: ConvertResponsesToolsOptions,
 ): OpenAITool[] {
   const strictSetting = resolveResponsesStrictToolSetting(options);
-  const strict = resolveResponsesStrictToolFlag(tools, strictSetting, options?.model);
+  const modelCompat = options?.model?.compat as OpenAIToolSchemaCompat;
+  const preparedTools = prepareResponsesTools(tools, strictSetting, modelCompat);
+  const strict = resolveResponsesStrictToolFlag(preparedTools, strictSetting, options?.model);
   // Sort tools before request construction so prompt-cache bytes stay deterministic.
-  return sortResponsesToolsByName(tools).map((tool) => {
+  return sortResponsesToolsByName(preparedTools).map((tool) => {
     const result: ResponsesFunctionTool = {
       type: "function",
       name: tool.name,
       description: tool.description,
-      parameters: normalizeOpenAIStrictToolParameters(
-        tool.parameters,
-        strict === true,
-        options?.model?.compat as OpenAIToolSchemaCompat,
-      ) as Record<string, unknown>,
+      parameters:
+        strict === true ? (tool.strictParameters ?? tool.looseParameters) : tool.looseParameters,
     };
     if (strict !== undefined) {
       result.strict = strict;
@@ -71,14 +79,105 @@ function resolveResponsesStrictToolSetting(
   return false;
 }
 
-function resolveResponsesStrictToolFlag(
+function prepareResponsesTools(
   tools: Tool[],
+  strictSetting: boolean | null | undefined,
+  modelCompat: OpenAIToolSchemaCompat | undefined,
+): PreparedResponsesTool[] {
+  const prepared: PreparedResponsesTool[] = [];
+  for (const [index, tool] of tools.entries()) {
+    let name: string;
+    let description: string;
+    let parameters: unknown;
+    try {
+      name = tool.name;
+      description = tool.description;
+      parameters = tool.parameters;
+    } catch (error) {
+      warnSkippedResponsesTool({ index, reason: "descriptor was unreadable", error });
+      continue;
+    }
+
+    let looseParameters: Record<string, unknown>;
+    try {
+      looseParameters = normalizeOpenAIStrictToolParameters(
+        parameters,
+        false,
+        modelCompat,
+      ) as Record<string, unknown>;
+    } catch (error) {
+      warnSkippedResponsesTool({
+        index,
+        name,
+        reason: "schema could not be normalized",
+        error,
+      });
+      continue;
+    }
+
+    if (strictSetting !== true) {
+      prepared.push({ index, name, description, parameters, looseParameters });
+      continue;
+    }
+
+    let strictCompatible: boolean;
+    try {
+      strictCompatible = isStrictOpenAIJsonSchemaCompatible(parameters);
+    } catch (error) {
+      warnSkippedResponsesTool({
+        index,
+        name,
+        reason: "schema could not be checked for strict mode",
+        error,
+      });
+      continue;
+    }
+
+    let strictParameters: Record<string, unknown> | undefined;
+    if (strictCompatible) {
+      try {
+        strictParameters = normalizeOpenAIStrictToolParameters(
+          parameters,
+          true,
+          modelCompat,
+        ) as Record<string, unknown>;
+      } catch (error) {
+        warnSkippedResponsesTool({
+          index,
+          name,
+          reason: "schema could not be normalized for strict mode",
+          error,
+        });
+        continue;
+      }
+    }
+
+    prepared.push({
+      index,
+      name,
+      description,
+      parameters,
+      looseParameters,
+      strictCompatible,
+      ...(strictParameters ? { strictParameters } : {}),
+    });
+  }
+  return prepared;
+}
+
+function resolveResponsesStrictToolFlag(
+  tools: PreparedResponsesTool[],
   strictSetting: boolean | null | undefined,
   model: Model | undefined,
 ): boolean | undefined {
-  const strict = resolveOpenAIStrictToolFlagForInventory(tools, strictSetting);
+  const strict =
+    strictSetting === true
+      ? tools.every((tool) => tool.strictCompatible === true)
+      : strictSetting === false
+        ? false
+        : undefined;
   if (strictSetting === true && strict === false && model && log.isEnabled("debug", "any")) {
-    const diagnostics = findOpenAIStrictToolSchemaDiagnostics(tools);
+    const diagnostics = getStrictToolSchemaDiagnostics(tools);
     if (shouldLogStrictToolDowngradeDiagnostic(diagnostics, model)) {
       const sample = diagnostics.slice(0, 5).map((entry) => ({
         tool: entry.toolName ?? `tool[${entry.toolIndex}]`,
@@ -98,6 +197,19 @@ function resolveResponsesStrictToolFlag(
     }
   }
   return strict;
+}
+
+function getStrictToolSchemaDiagnostics(
+  tools: PreparedResponsesTool[],
+): ReturnType<typeof findOpenAIStrictToolSchemaDiagnostics> {
+  try {
+    return findOpenAIStrictToolSchemaDiagnostics(tools);
+  } catch (error) {
+    log.warn(
+      `failed to inspect OpenAI Responses strict tool schemas: ${formatUnknownError(error)}`,
+    );
+    return [];
+  }
 }
 
 function shouldLogStrictToolDowngradeDiagnostic(
@@ -148,4 +260,24 @@ function sortResponsesToolsByName<T extends { name?: string; description?: strin
       compareToolText(left.name, right.name) ||
       compareToolText(left.description, right.description),
   );
+}
+
+function warnSkippedResponsesTool(params: {
+  index: number;
+  name?: string;
+  reason: string;
+  error: unknown;
+}): void {
+  const label = params.name ? `${params.name} (index ${params.index})` : `index ${params.index}`;
+  log.warn(
+    `skipping OpenAI Responses tool ${label}: ${params.reason}: ${formatUnknownError(params.error)}`,
+  );
+}
+
+function formatUnknownError(error: unknown): string {
+  try {
+    return String(error);
+  } catch {
+    return "<unprintable error>";
+  }
 }

@@ -26,6 +26,7 @@ import { calculateCost } from "../llm/model-utils.js";
 import { resolveAzureDeploymentNameFromMap } from "../llm/providers/azure-deployment-map.js";
 import { convertMessages } from "../llm/providers/openai-completions.js";
 import { clampOpenAIPromptCacheKey } from "../llm/providers/openai-prompt-cache.js";
+import { convertResponsesTools as convertOpenAIResponsesTools } from "../llm/providers/openai-responses-tools.js";
 import type { Api, Context, Model } from "../llm/types.js";
 import { createAssistantMessageEventStream } from "../llm/utils/event-stream.js";
 import { parseStreamingJson } from "../llm/utils/json-parse.js";
@@ -1274,33 +1275,6 @@ function convertResponsesMessages(
   return messages;
 }
 
-function convertResponsesTools(
-  tools: NonNullable<Context["tools"]>,
-  model: OpenAIModeModel,
-  options?: { strict?: boolean | null },
-): FunctionTool[] {
-  const strict = resolveOpenAIStrictToolFlagWithDiagnostics(tools, options?.strict, {
-    transport: "responses",
-    model,
-  });
-  return sortTransportToolsByName(tools).map((tool): FunctionTool => {
-    const result = {
-      type: "function" as const,
-      name: tool.name,
-      description: tool.description,
-      parameters: normalizeOpenAIStrictToolParameters(
-        tool.parameters,
-        strict === true,
-        model.compat,
-      ) as Record<string, unknown>,
-    } as FunctionTool;
-    if (strict !== undefined) {
-      result.strict = strict;
-    }
-    return result;
-  });
-}
-
 function resolveOpenAIStrictToolFlagWithDiagnostics(
   tools: NonNullable<Context["tools"]>,
   strictSetting: boolean | null | undefined,
@@ -2257,11 +2231,12 @@ export function buildOpenAIResponsesParams(
     params.service_tier = options.serviceTier;
   }
   if (context.tools) {
-    params.tools = convertResponsesTools(context.tools, model as OpenAIModeModel, {
+    params.tools = convertOpenAIResponsesTools(context.tools, {
+      model: model as OpenAIModeModel,
       strict: resolveOpenAIStrictToolSetting(model as OpenAIModeModel, {
         transport: "stream",
       }),
-    });
+    }) as FunctionTool[];
     if (options?.toolChoice) {
       params.tool_choice = options.toolChoice;
     }

@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import type { Api, Model } from "openclaw/plugin-sdk/llm";
+import type { Api, Model, Tool } from "openclaw/plugin-sdk/llm";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildOpenAIResponsesParams,
@@ -4606,6 +4606,69 @@ describe("openai transport stream", () => {
         required: [],
       },
     });
+  });
+
+  it("skips unreadable responses transport tools without downgrading healthy strict tools", () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    const brokenDescriptor = {
+      get name(): string {
+        throw new Error("tool name unavailable");
+      },
+      description: "Broken",
+      parameters: {},
+    } as Tool;
+    const brokenSchema = {
+      name: "broken_schema",
+      description: "Broken",
+      parameters: proxy,
+    } as unknown as Tool;
+
+    const params = buildOpenAIResponsesParams(
+      {
+        id: "gpt-5.4",
+        name: "GPT-5.4",
+        api: "openai-responses",
+        provider: "openai",
+        baseUrl: "https://api.openai.com/v1",
+        reasoning: true,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 200000,
+        maxTokens: 8192,
+      } satisfies Model<"openai-responses">,
+      {
+        systemPrompt: "system",
+        messages: [],
+        tools: [
+          brokenDescriptor,
+          brokenSchema,
+          {
+            name: "lookup_weather",
+            description: "Get forecast",
+            parameters: {},
+          },
+        ],
+      } as never,
+      undefined,
+    ) as {
+      tools?: Array<{ name?: string; strict?: boolean; parameters?: Record<string, unknown> }>;
+    };
+
+    expect(params.tools).toEqual([
+      {
+        type: "function",
+        name: "lookup_weather",
+        description: "Get forecast",
+        strict: true,
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+          additionalProperties: false,
+        },
+      },
+    ]);
   });
 
   it("passes explicit Responses tool_choice when tools are present", () => {
