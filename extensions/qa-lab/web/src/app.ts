@@ -21,7 +21,7 @@ import {
 
 function fetchQaLabRoute(path: string, init?: RequestInit): Promise<Response> {
   if (!path.startsWith("/") || path.startsWith("//")) {
-    throw new Error(`QA Lab web fetch path must be same-origin: ${path}`);
+    throw new Error();
   }
   return window.fetch(path, init);
 }
