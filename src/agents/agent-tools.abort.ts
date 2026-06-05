@@ -51,6 +51,21 @@ function combineAbortSignals(a?: AbortSignal, b?: AbortSignal): AbortSignal | un
   return controller.signal;
 }
 
+function readToolExecute(tool: AnyAgentTool): AnyAgentTool["execute"] | undefined {
+  try {
+    const execute = tool.execute;
+    return typeof execute === "function" ? execute : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function copyAbortWrappedToolMetadata(source: AnyAgentTool, target: AnyAgentTool): void {
+  copyPluginToolMeta(source, target);
+  copyChannelAgentToolMeta(source as never, target as never);
+  copyBeforeToolCallHookMarker(source, target);
+}
+
 /** Wrap a tool so every execute call observes the supplied run abort signal. */
 export function wrapToolWithAbortSignal(
   tool: AnyAgentTool,
@@ -59,22 +74,24 @@ export function wrapToolWithAbortSignal(
   if (!abortSignal) {
     return tool;
   }
-  const execute = tool.execute;
+  const execute = readToolExecute(tool);
   if (!execute) {
     return tool;
   }
-  const wrappedTool: AnyAgentTool = {
-    ...tool,
-    execute: async (toolCallId, params, signal, onUpdate) => {
-      const combined = combineAbortSignals(signal, abortSignal);
-      if (combined?.aborted) {
-        throwAbortError();
-      }
-      return await execute(toolCallId, params, combined, onUpdate);
-    },
+  const wrappedTool = Object.create(tool) as AnyAgentTool;
+  const wrappedExecute: AnyAgentTool["execute"] = async (toolCallId, params, signal, onUpdate) => {
+    const combined = combineAbortSignals(signal, abortSignal);
+    if (combined?.aborted) {
+      throwAbortError();
+    }
+    return await Reflect.apply(execute, tool, [toolCallId, params, combined, onUpdate]);
   };
-  copyPluginToolMeta(tool, wrappedTool);
-  copyChannelAgentToolMeta(tool as never, wrappedTool as never);
-  copyBeforeToolCallHookMarker(tool, wrappedTool);
+  Object.defineProperty(wrappedTool, "execute", {
+    value: wrappedExecute,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  copyAbortWrappedToolMetadata(tool, wrappedTool);
   return wrappedTool;
 }
