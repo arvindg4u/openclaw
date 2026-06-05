@@ -46,6 +46,17 @@ function pluginTool(name: string, description: string, pluginId = "fake-catalog"
   return tool;
 }
 
+function unreadableNameTool(): AnyAgentTool {
+  const tool = fakeTool("fake_unreadable", "Broken tool name");
+  Object.defineProperty(tool, "name", {
+    configurable: true,
+    get() {
+      throw new Error("broken tool name");
+    },
+  });
+  return tool;
+}
+
 function resultDetails(result: { details?: unknown }): Record<string, unknown> {
   if (!result.details || typeof result.details !== "object") {
     throw new Error("Expected result details");
@@ -303,6 +314,79 @@ describe("Tool Search", () => {
     expect(compacted.tools.map((tool) => tool.name)).toEqual(["fake_lookup_direct"]);
     expect(compacted.catalogRegistered).toBe(false);
     expect(compacted.catalogToolCount).toBe(0);
+  });
+
+  it("quarantines tools with unreadable names from catalog compaction", () => {
+    const config = {
+      tools: {
+        toolSearch: { enabled: true, mode: "tools" },
+      },
+    } as never;
+    const target = pluginTool("fake_safe_lookup", "Lookup fake records");
+    const compacted = applyToolSearchCatalog({
+      tools: [
+        fakeTool(TOOL_SEARCH_RAW_TOOL_NAME, "search"),
+        fakeTool(TOOL_DESCRIBE_RAW_TOOL_NAME, "describe"),
+        fakeTool(TOOL_CALL_RAW_TOOL_NAME, "call"),
+        unreadableNameTool(),
+        target,
+      ],
+      config,
+      sessionId: "session-unreadable-tool-name",
+    });
+
+    expect(compacted.tools.map((tool) => tool.name)).toEqual([
+      TOOL_SEARCH_RAW_TOOL_NAME,
+      TOOL_DESCRIBE_RAW_TOOL_NAME,
+      TOOL_CALL_RAW_TOOL_NAME,
+    ]);
+    expect(compacted.catalogToolCount).toBe(1);
+    expect(
+      testing.sessionCatalogs
+        .get("session:session-unreadable-tool-name")
+        ?.entries.map((entry) => entry.name),
+    ).toEqual(["fake_safe_lookup"]);
+
+    const directFallback = applyToolSearchCatalog({
+      tools: [unreadableNameTool(), pluginTool("fake_direct_lookup", "Direct fake records")],
+      config: {
+        tools: {
+          toolSearch: true,
+        },
+      } as never,
+      sessionId: "session-unreadable-direct-fallback",
+    });
+    expect(directFallback.tools.map((tool) => tool.name)).toEqual(["fake_direct_lookup"]);
+    expect(directFallback.catalogRegistered).toBe(false);
+
+    applyToolSearchCatalog({
+      tools: [fakeTool(TOOL_SEARCH_CODE_MODE_TOOL_NAME, "code mode")],
+      config: {
+        tools: {
+          toolSearch: true,
+        },
+      } as never,
+      sessionId: "session-unreadable-client",
+    });
+    const clientCompacted = addClientToolsToToolSearchCatalog({
+      tools: [
+        unreadableNameTool() as never,
+        fakeTool("client_safe_lookup", "Client safe lookup") as never,
+      ],
+      config: {
+        tools: {
+          toolSearch: true,
+        },
+      } as never,
+      sessionId: "session-unreadable-client",
+    });
+    expect(clientCompacted.tools).toEqual([]);
+    expect(clientCompacted.catalogToolCount).toBe(1);
+    expect(
+      testing.sessionCatalogs
+        .get("session:session-unreadable-client")
+        ?.entries.map((entry) => entry.name),
+    ).toEqual(["client_safe_lookup"]);
   });
 
   it("moves client tools into the same catalog when a session catalog exists", () => {
