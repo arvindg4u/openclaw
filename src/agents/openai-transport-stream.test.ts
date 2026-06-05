@@ -2590,6 +2590,39 @@ describe("openai transport stream", () => {
     }
   });
 
+  it("fails closed for dynamic chat completions response_format fields", () => {
+    const model = {
+      id: "gpt-5.4",
+      name: "GPT-5.4",
+      api: "openai-completions",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 200000,
+      maxTokens: 8192,
+    } satisfies Model<"openai-completions">;
+    const context = {
+      systemPrompt: "system",
+      messages: [{ role: "user", content: "hi", timestamp: 1 }],
+      tools: [],
+    } as never;
+    const responseFormat: Record<string, unknown> = { type: "json_schema" };
+    Object.defineProperty(responseFormat, "json_schema", {
+      enumerable: true,
+      get() {
+        throw new Error("raw chat response_format getter failed");
+      },
+    });
+
+    expect(() =>
+      buildOpenAICompletionsParams(model, context, {
+        responseFormat,
+      }),
+    ).toThrow("OpenAI Chat Completions responseFormat.json_schema uses unsupported dynamic field");
+  });
+
   it("does not build OpenRouter reasoning params for Hunter Alpha when reasoning is disabled", () => {
     const params = buildOpenAICompletionsParams(
       {
@@ -3221,6 +3254,96 @@ describe("openai transport stream", () => {
       const params = buildOpenAIResponsesParams(model, context, {}) as Record<string, unknown>;
       expect(params).not.toHaveProperty("text");
     }
+  });
+
+  it("copies only serializable responses json_schema response_format fields", () => {
+    const model = {
+      id: "gpt-5.4",
+      name: "GPT-5.4",
+      api: "openai-responses",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 200000,
+      maxTokens: 65_536,
+    } satisfies Model<"openai-responses">;
+    const context = {
+      systemPrompt: "system",
+      messages: [{ role: "user", content: "hi", timestamp: 1 }],
+      tools: [],
+    } as never;
+    const jsonSchema: Record<string, unknown> = {
+      name: "test",
+      schema: { type: "object" },
+    };
+    Object.defineProperty(jsonSchema, "hidden", {
+      enumerable: false,
+      value: "not serialized",
+    });
+    Object.defineProperty(jsonSchema, "__proto__", {
+      configurable: true,
+      enumerable: true,
+      value: "literal proto key",
+      writable: true,
+    });
+
+    const params = buildOpenAIResponsesParams(model, context, {
+      responseFormat: {
+        type: "json_schema",
+        json_schema: jsonSchema,
+      },
+    }) as { text?: { format?: Record<string, unknown> } };
+    const format = params.text?.format;
+
+    expect(format).toMatchObject({
+      name: "test",
+      schema: { type: "object" },
+      type: "json_schema",
+    });
+    expect(format && Object.hasOwn(format, "hidden")).toBe(false);
+    expect(format && Object.getPrototypeOf(format)).toBe(Object.prototype);
+    expect(Object.getOwnPropertyDescriptor(format, "__proto__")).toMatchObject({
+      enumerable: true,
+      value: "literal proto key",
+    });
+  });
+
+  it("fails closed for dynamic responses response_format fields", () => {
+    const model = {
+      id: "gpt-5.4",
+      name: "GPT-5.4",
+      api: "openai-responses",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 200000,
+      maxTokens: 65_536,
+    } satisfies Model<"openai-responses">;
+    const context = {
+      systemPrompt: "system",
+      messages: [{ role: "user", content: "hi", timestamp: 1 }],
+      tools: [],
+    } as never;
+    const jsonSchema: Record<string, unknown> = { name: "test" };
+    Object.defineProperty(jsonSchema, "schema", {
+      enumerable: true,
+      get() {
+        throw new Error("raw responses json_schema getter failed");
+      },
+    });
+
+    expect(() =>
+      buildOpenAIResponsesParams(model, context, {
+        responseFormat: {
+          type: "json_schema",
+          json_schema: jsonSchema,
+        },
+      }),
+    ).toThrow("OpenAI Responses responseFormat.json_schema.schema uses unsupported dynamic field");
   });
 
   it("preserves custom Codex-compatible responses params after payload hooks mutate them", () => {

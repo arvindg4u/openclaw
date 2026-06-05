@@ -2435,21 +2435,88 @@ function ensureOpenAICodexResponsesInput(messages: ResponseInput, context: Conte
   );
 }
 
+function copyOpenAIResponseFormatRecord(
+  record: Record<string, unknown>,
+  label: string,
+): Record<string, unknown> {
+  let descriptors: Record<string, PropertyDescriptor>;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(record);
+  } catch {
+    throw new Error(`${label} could not be inspected`);
+  }
+
+  const copy: Record<string, unknown> = {};
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (!descriptor.enumerable) {
+      continue;
+    }
+    if (!("value" in descriptor)) {
+      throw new Error(`${label}.${key} uses unsupported dynamic field`);
+    }
+    Object.defineProperty(copy, key, {
+      configurable: true,
+      enumerable: true,
+      value: descriptor.value,
+      writable: true,
+    });
+  }
+  return copy;
+}
+
+function setOpenAIResponseFormatField(
+  record: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(record, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+function resolveOpenAICompletionsResponseFormat(
+  responseFormat: Record<string, unknown>,
+): Record<string, unknown> {
+  const format = copyOpenAIResponseFormatRecord(
+    responseFormat,
+    "OpenAI Chat Completions responseFormat",
+  );
+  const jsonSchema = format.json_schema;
+  if (jsonSchema && typeof jsonSchema === "object" && !Array.isArray(jsonSchema)) {
+    setOpenAIResponseFormatField(
+      format,
+      "json_schema",
+      copyOpenAIResponseFormatRecord(
+        jsonSchema as Record<string, unknown>,
+        "OpenAI Chat Completions responseFormat.json_schema",
+      ),
+    );
+  }
+  return format;
+}
+
 function resolveOpenAIResponsesTextFormat(
   responseFormat: Record<string, unknown>,
 ): ResponseFormatTextConfig {
+  const format = copyOpenAIResponseFormatRecord(responseFormat, "OpenAI Responses responseFormat");
+  const jsonSchema = format.json_schema;
   if (
-    responseFormat.type === "json_schema" &&
-    responseFormat.json_schema &&
-    typeof responseFormat.json_schema === "object" &&
-    !Array.isArray(responseFormat.json_schema)
+    format.type === "json_schema" &&
+    jsonSchema &&
+    typeof jsonSchema === "object" &&
+    !Array.isArray(jsonSchema)
   ) {
-    return {
-      ...(responseFormat.json_schema as Record<string, unknown>),
-      type: "json_schema",
-    } as unknown as ResponseFormatTextConfig;
+    const flattened = copyOpenAIResponseFormatRecord(
+      jsonSchema as Record<string, unknown>,
+      "OpenAI Responses responseFormat.json_schema",
+    );
+    setOpenAIResponseFormatField(flattened, "type", "json_schema");
+    return flattened as unknown as ResponseFormatTextConfig;
   }
-  return responseFormat as unknown as ResponseFormatTextConfig;
+  return format as unknown as ResponseFormatTextConfig;
 }
 
 export function buildOpenAIResponsesParams(
@@ -4360,7 +4427,7 @@ export function buildOpenAICompletionsParams(
     params.top_p = options.topP;
   }
   if (options?.responseFormat !== undefined) {
-    params.response_format = options.responseFormat;
+    params.response_format = resolveOpenAICompletionsResponseFormat(options.responseFormat);
   }
   if (options?.frequencyPenalty !== undefined) {
     params.frequency_penalty = options.frequencyPenalty;
