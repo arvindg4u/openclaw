@@ -815,7 +815,7 @@ describe("runCopilotAttempt", () => {
     expect(
       ((sdk.createSession.mock.calls[0] as unknown[] | undefined)![0] as { tools?: unknown[] })
         .tools,
-    ).toBe(sdkTools);
+    ).toEqual(sdkTools);
   });
 
   it("F6: sessionRef is populated after createSession so the tool bridge's onYield can abort the live SDK session", async () => {
@@ -2352,6 +2352,11 @@ describe("runCopilotAttempt", () => {
       return cfg?.availableTools;
     }
 
+    function readSessionTools(call: unknown): readonly SdkTool[] | undefined {
+      const cfg = (call as unknown[] | undefined)?.[0] as { tools?: SdkTool[] };
+      return cfg?.tools;
+    }
+
     it("forwards exactly the bridged tool names when the bridge returns a narrow tool set", async () => {
       const sdk = makeFakeSdk();
       const pool = makeFakePool(sdk);
@@ -2361,6 +2366,43 @@ describe("runCopilotAttempt", () => {
       await runCopilotAttempt(makeParams(), { createToolBridge, pool });
 
       expect(readAvailableTools(sdk.createSession.mock.calls[0])).toEqual(["read", "edit"]);
+    });
+
+    it("skips unreadable bridged SDK tool metadata before session creation", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const sdk = makeFakeSdk();
+      const pool = makeFakePool(sdk);
+      const healthyTool = makeFakeSdkTool("read");
+      const unreadableNameTool = {
+        description: "bad name",
+        handler: async () => ({ resultType: "success", textResultForLlm: "ok" }),
+        get name(): string {
+          throw new Error("name exploded");
+        },
+        parameters: { type: "object" },
+      } as SdkTool;
+      const unreadableParametersTool = {
+        description: "bad parameters",
+        handler: async () => ({ resultType: "success", textResultForLlm: "ok" }),
+        name: "bad_parameters",
+        get parameters(): Record<string, unknown> {
+          throw new Error("parameters exploded");
+        },
+      } as SdkTool;
+      const sdkTools = [unreadableNameTool, unreadableParametersTool, healthyTool];
+      const createToolBridge = vi.fn(async () => ({ sdkTools, sourceTools: [] }));
+
+      await runCopilotAttempt(makeParams(), { createToolBridge, pool });
+
+      const createSessionCall = sdk.createSession.mock.calls[0];
+      expect(readAvailableTools(createSessionCall)).toEqual(["read"]);
+      expect(readSessionTools(createSessionCall)).toEqual([healthyTool]);
+      expect(warn).toHaveBeenCalledWith(
+        '[copilot-attempt] skipped invalid SDK tool "tool[0]": name is unreadable',
+      );
+      expect(warn).toHaveBeenCalledWith(
+        '[copilot-attempt] skipped invalid SDK tool "bad_parameters": parameters are unreadable',
+      );
     });
 
     it("forwards `[]` to the SDK when the bridge returns no tools (disable / raw / fully filtered)", async () => {

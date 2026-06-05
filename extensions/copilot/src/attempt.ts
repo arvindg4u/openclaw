@@ -739,6 +739,7 @@ function createSessionConfig(
   const hooks = createHooksBridge(params.hooksConfig);
   const infiniteSessions = createInfiniteSessionConfig(params.infiniteSessionConfig);
   const systemMessageContent = createSystemMessageContent(params, workspaceBootstrapInstructions);
+  const toolCatalog = buildCopilotSessionToolCatalog(sdkTools);
   return {
     model: sdkModelId,
     // Permission decisions for SDK built-in tool kinds (shell, write,
@@ -790,7 +791,7 @@ function createSessionConfig(
     // omitted. See compaction-bridge.ts.
     ...(infiniteSessions ? { infiniteSessions } : {}),
     reasoningEffort: params.reasoningEffort,
-    tools: sdkTools,
+    tools: toolCatalog.tools,
     // Restrict the SDK's tool catalog to exactly the bridged tool names
     // returned by `createCopilotToolBridge`. Without this, the SDK
     // would still expose its native read/write/shell/url/mcp/memory/
@@ -807,7 +808,7 @@ function createSessionConfig(
     // `@github/copilot-sdk/dist/types.d.ts:1198` (it picks
     // `availableTools`, so the spread into `resumeSession` covers
     // the resume path too).
-    availableTools: sdkTools.map((tool) => tool.name),
+    availableTools: toolCatalog.availableTools,
     workingDirectory:
       effectiveCwd ?? effectiveWorkspaceDir ?? readResolvedAttemptPath(params.workspaceDir),
     // When a task runs from a sub-cwd, keep SDK-native project docs
@@ -851,6 +852,50 @@ function createSessionConfig(
         }
       : {}),
   };
+}
+
+function buildCopilotSessionToolCatalog(sdkTools: readonly SdkTool[]): {
+  tools: SdkTool[];
+  availableTools: string[];
+} {
+  const tools: SdkTool[] = [];
+  const availableTools: string[] = [];
+  sdkTools.forEach((tool, index) => {
+    const name = readCopilotSdkToolName(tool);
+    if (!name) {
+      console.warn(
+        `[copilot-attempt] skipped invalid SDK tool "tool[${index}]": name is unreadable`,
+      );
+      return;
+    }
+    if (!canReadCopilotSdkToolParameters(tool)) {
+      console.warn(
+        `[copilot-attempt] skipped invalid SDK tool "${name}": parameters are unreadable`,
+      );
+      return;
+    }
+    tools.push(tool);
+    availableTools.push(name);
+  });
+  return { tools, availableTools };
+}
+
+function readCopilotSdkToolName(tool: SdkTool): string {
+  try {
+    const name = tool.name;
+    return typeof name === "string" && name.trim() ? name : "";
+  } catch {
+    return "";
+  }
+}
+
+function canReadCopilotSdkToolParameters(tool: SdkTool): boolean {
+  try {
+    void tool.parameters;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function createMessageOptions(
