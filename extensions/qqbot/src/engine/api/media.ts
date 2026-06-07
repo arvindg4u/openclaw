@@ -96,20 +96,6 @@ async function fetchDirectUploadDownload(
   const timeoutError = new Error("Direct-upload media URL fetch timed out");
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let dispatcher: Dispatcher | null = null;
-  dispatcher = await createDirectUploadDispatcher(url, lookupFn);
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => {
-      controller.abort(timeoutError);
-      reject(timeoutError);
-    }, DIRECT_UPLOAD_DOWNLOAD_TIMEOUT_MS);
-    unrefTimer(timeout);
-  });
-  const init: DispatcherAwareRequestInit = {
-    signal: controller.signal,
-    redirect: "error",
-    ...(dispatcher ? { dispatcher } : {}),
-  };
-  const downloadFetch = fetchWithRuntimeDispatcherOrMockedGlobal(url.toString(), init);
   let released = false;
   const release = async () => {
     if (released) {
@@ -122,6 +108,27 @@ async function fetchDirectUploadDownload(
     }
     await closeDispatcher(dispatcher);
   };
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort(timeoutError);
+      reject(timeoutError);
+    }, DIRECT_UPLOAD_DOWNLOAD_TIMEOUT_MS);
+    unrefTimer(timeout);
+  });
+  const downloadFetch = (async () => {
+    dispatcher = await createDirectUploadDispatcher(url, lookupFn);
+    if (controller.signal.aborted) {
+      await closeDispatcher(dispatcher);
+      dispatcher = null;
+      throw timeoutError;
+    }
+    const init: DispatcherAwareRequestInit = {
+      signal: controller.signal,
+      redirect: "error",
+      ...(dispatcher ? { dispatcher } : {}),
+    };
+    return await fetchWithRuntimeDispatcherOrMockedGlobal(url.toString(), init);
+  })();
   try {
     const response = await Promise.race([downloadFetch, timeoutPromise]);
     if (timeout) {

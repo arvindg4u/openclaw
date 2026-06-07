@@ -31,7 +31,7 @@ type LookupCallback = (
   family?: number,
 ) => void;
 
-type LookupResult = LookupAddress | LookupAddress[];
+type LookupResult = string | LookupAddress | LookupAddress[];
 const DISPATCHER_CLOSE_TIMEOUT_MS = 100;
 
 export class SsrFBlockedError extends Error {
@@ -420,9 +420,17 @@ function assertAllowedTrustedHostnameResolvedAddressesOrThrow(
   }
 }
 
-function normalizeLookupResults(results: LookupResult): readonly LookupAddress[] {
+function normalizeLookupResults(results: LookupResult, family?: number): readonly LookupAddress[] {
   if (Array.isArray(results)) {
     return results;
+  }
+  if (typeof results === "string") {
+    return [
+      {
+        address: results,
+        family: family === 4 || family === 6 ? family : results.includes(":") ? 6 : 4,
+      },
+    ];
   }
   return [results];
 }
@@ -514,7 +522,7 @@ function createPolicyCheckingLookup(policy?: SsrFPolicy): typeof dnsLookupCb {
         return;
       }
       try {
-        const results = normalizeLookupResults(address as LookupResult);
+        const results = normalizeLookupResults(address as LookupResult, family);
         if (!hostnameChecks.skipPrivateNetworkChecks) {
           assertAllowedResolvedAddressesOrThrow(results, policy);
         } else if (!isPrivateNetworkAllowedByPolicy(policy)) {

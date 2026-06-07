@@ -13,6 +13,23 @@ type ProviderRequestPolicyConfigMockResult = {
   };
 };
 
+type DispatcherPolicyMockResult =
+  | {
+      mode: "direct";
+      connect?: Record<string, unknown>;
+    }
+  | {
+      mode: "env-proxy";
+      connect?: Record<string, unknown>;
+      proxyTls?: Record<string, unknown>;
+    }
+  | {
+      mode: "explicit-proxy";
+      proxyUrl: string;
+      proxyTls?: Record<string, unknown>;
+    }
+  | undefined;
+
 const {
   buildProviderRequestDispatcherPolicyMock,
   fetchWithSsrFGuardMock,
@@ -61,16 +78,22 @@ const {
 
   return {
     buildProviderRequestDispatcherPolicyMock: vi.fn<
-      (_request?: unknown) => { mode: "direct" } | undefined
+      (_request?: unknown) => DispatcherPolicyMockResult
     >(() => undefined),
     fetchWithSsrFGuardMock: vi.fn(),
     captureHttpExchangeMock: vi.fn(),
     closeDispatcherMock: vi.fn(async (dispatcher: { close?: () => Promise<void> } | null) => {
       await dispatcher?.close?.();
     }),
-    createHttp1AgentMock: vi.fn(() => ({ close: vi.fn(async () => undefined) })),
-    createHttp1EnvHttpProxyAgentMock: vi.fn(() => ({ close: vi.fn(async () => undefined) })),
-    createHttp1ProxyAgentMock: vi.fn(() => ({ close: vi.fn(async () => undefined) })),
+    createHttp1AgentMock: vi.fn((_options?: unknown, _timeoutMs?: number) => ({
+      close: vi.fn(async () => undefined),
+    })),
+    createHttp1EnvHttpProxyAgentMock: vi.fn((_options?: unknown, _timeoutMs?: number) => ({
+      close: vi.fn(async () => undefined),
+    })),
+    createHttp1ProxyAgentMock: vi.fn((_options?: unknown, _timeoutMs?: number) => ({
+      close: vi.fn(async () => undefined),
+    })),
     createPinnedDispatcherMock: vi.fn(
       (
         pinned: { lookup: unknown },

@@ -23,6 +23,35 @@ const { getDefaultAutoSelectFamily, isWSL2SyncMock } = vi.hoisted(() => ({
   isWSL2SyncMock: vi.fn(() => false),
 }));
 
+const { dnsLookupMock } = vi.hoisted(() => ({
+  dnsLookupMock: vi.fn((hostname: string, optionsOrCallback: unknown, callback?: unknown) => {
+    const cb = (typeof optionsOrCallback === "function" ? optionsOrCallback : callback) as
+      | ((
+          err: NodeJS.ErrnoException | null,
+          address: string | Array<unknown>,
+          family?: number,
+        ) => void)
+      | undefined;
+    if (!cb) {
+      return;
+    }
+    const opts =
+      typeof optionsOrCallback === "object" && optionsOrCallback !== null
+        ? (optionsOrCallback as { all?: boolean })
+        : {};
+    if (hostname === "metadata.example.test") {
+      cb(null, opts.all ? [{ address: "127.0.0.1", family: 4 }] : "127.0.0.1", 4);
+      return;
+    }
+    cb(null, opts.all ? [{ address: "93.184.216.34", family: 4 }] : "93.184.216.34", 4);
+  }),
+}));
+
+vi.mock("node:dns", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:dns")>()),
+  lookup: dnsLookupMock,
+}));
+
 vi.mock("node:net", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:net")>()),
   getDefaultAutoSelectFamily,
@@ -44,6 +73,7 @@ beforeEach(() => {
   agentCtor.mockClear();
   envHttpProxyAgentCtor.mockClear();
   proxyAgentCtor.mockClear();
+  dnsLookupMock.mockClear();
   getDefaultAutoSelectFamily.mockReturnValue(true);
   isWSL2SyncMock.mockReturnValue(false);
   (globalThis as Record<string, unknown>)[TEST_UNDICI_RUNTIME_DEPS_KEY] = {
@@ -79,6 +109,16 @@ function createDispatcherWithPinnedOverride(lookup: PinnedHostname["lookup"]) {
   return (call?.[0] as { connect?: { lookup?: PinnedHostname["lookup"] } })?.connect?.lookup;
 }
 
+function expectPinnedLookup(
+  lookup: unknown,
+  expectedAddress = "149.154.167.220",
+): asserts lookup is PinnedHostname["lookup"] {
+  expect(lookup).toBeTypeOf("function");
+  const callback = vi.fn();
+  (lookup as PinnedHostname["lookup"])("api.telegram.org", callback);
+  expect(callback).toHaveBeenCalledWith(null, expectedAddress, 4);
+}
+
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`expected ${label}`);
@@ -110,13 +150,13 @@ describe("createPinnedDispatcher", () => {
         options?: { allowH2?: boolean; connect?: Record<string, unknown> };
       }
     ).options;
-    expect(dispatcherOptions?.connect?.lookup).toBe(lookup);
+    expectPinnedLookup(dispatcherOptions?.connect?.lookup);
     expect(dispatcherOptions?.connect?.autoSelectFamily).toBe(true);
     expect(dispatcherOptions?.connect?.autoSelectFamilyAttemptTimeout).toBe(300);
     expect(dispatcherOptions?.allowH2).toBe(false);
     expect(agentCtor).toHaveBeenCalledWith({
       connect: {
-        lookup,
+        lookup: expect.any(Function),
         autoSelectFamily: true,
         autoSelectFamilyAttemptTimeout: 300,
       },
@@ -141,7 +181,7 @@ describe("createPinnedDispatcher", () => {
 
     expect(agentCtor).toHaveBeenCalledWith({
       connect: {
-        lookup,
+        lookup: expect.any(Function),
         autoSelectFamily: false,
         autoSelectFamilyAttemptTimeout: 300,
       },
@@ -171,7 +211,7 @@ describe("createPinnedDispatcher", () => {
       connect: {
         autoSelectFamily: true,
         autoSelectFamilyAttemptTimeout: 300,
-        lookup,
+        lookup: expect.any(Function),
       },
       allowH2: false,
     });
@@ -197,7 +237,7 @@ describe("createPinnedDispatcher", () => {
       connect: {
         autoSelectFamily: false,
         autoSelectFamilyAttemptTimeout: 50,
-        lookup,
+        lookup: expect.any(Function),
       },
       allowH2: false,
     });
@@ -215,7 +255,7 @@ describe("createPinnedDispatcher", () => {
 
     expect(agentCtor).toHaveBeenCalledWith({
       connect: {
-        lookup,
+        lookup: expect.any(Function),
         autoSelectFamily: true,
         autoSelectFamilyAttemptTimeout: 300,
         timeout: 123_456,
@@ -238,19 +278,15 @@ describe("createPinnedDispatcher", () => {
     expect(originalLookup).not.toHaveBeenCalled();
   });
 
-  it("keeps the override bound to the matching hostname only", () => {
-    const originalLookupMock = vi.fn(
-      (_hostname: string, callback: (err: null, address: string, family: number) => void) => {
-        callback(null, "93.184.216.34", 4);
-      },
-    );
-    const originalLookup = originalLookupMock as unknown as PinnedHostname["lookup"];
+  it("checks string fallback DNS results before allowing fallback hosts", () => {
+    const originalLookup = vi.fn() as unknown as PinnedHostname["lookup"];
     const lookup = createDispatcherWithPinnedOverride(originalLookup);
     const callback = vi.fn();
-    lookup?.("example.com", callback);
+    lookup?.("metadata.example.test", callback);
 
-    expect(originalLookupMock).toHaveBeenCalledWith("example.com", expect.any(Function));
-    expect(callback).toHaveBeenCalledWith(null, "93.184.216.34", 4);
+    expect(dnsLookupMock).toHaveBeenCalledWith("metadata.example.test", expect.any(Function));
+    expect(callback).toHaveBeenCalledWith(expect.any(Error), []);
+    expect(originalLookup).not.toHaveBeenCalled();
   });
 
   it("rejects pinned override addresses that violate SSRF policy", () => {
@@ -298,7 +334,7 @@ describe("createPinnedDispatcher", () => {
       connect: {
         autoSelectFamily: true,
         autoSelectFamilyAttemptTimeout: 300,
-        lookup,
+        lookup: expect.any(Function),
       },
       clientFactory: expect.any(Function),
       allowH2: false,
@@ -335,7 +371,7 @@ describe("createPinnedDispatcher", () => {
       allowH2: false,
       requestTls: {
         autoSelectFamily: false,
-        lookup,
+        lookup: expect.any(Function),
       },
     });
   });
@@ -366,7 +402,7 @@ describe("createPinnedDispatcher", () => {
       clientFactory: expect.any(Function),
       requestTls: {
         autoSelectFamily: false,
-        lookup,
+        lookup: expect.any(Function),
       },
       proxyTls: {
         autoSelectFamily: true,

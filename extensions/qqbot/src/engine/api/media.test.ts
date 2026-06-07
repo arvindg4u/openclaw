@@ -178,6 +178,30 @@ describe("MediaApi.uploadMedia direct URL uploads", () => {
     }
   });
 
+  it("bounds stalled direct-upload DNS setup before reading URL bodies", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.restoreAllMocks();
+      vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected"));
+      const lookupFn = (() => new Promise(() => {})) as unknown as LookupFn;
+
+      const downloadPromise = downloadDirectUploadUrl(
+        "https://slow-dns.example.com/assets/photo.png",
+        { lookupFn },
+      );
+      const rejection = expect(downloadPromise).rejects.toThrow(
+        "Direct-upload media URL fetch timed out",
+      );
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await rejection;
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      expect(readResponseWithLimitMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("rejects URL bodies that keep trickling under the idle timeout", async () => {
     vi.useFakeTimers();
     try {
@@ -196,8 +220,8 @@ describe("MediaApi.uploadMedia direct URL uploads", () => {
         { url: "https://cdn.example.com/assets/slow.bin" },
       );
 
-      for (let i = 0; i < 5 && readResponseWithLimitMock.mock.calls.length === 0; i += 1) {
-        await Promise.resolve();
+      for (let i = 0; i < 20 && readResponseWithLimitMock.mock.calls.length === 0; i += 1) {
+        await vi.advanceTimersByTimeAsync(0);
       }
       expect(readResponseWithLimitMock).toHaveBeenCalledOnce();
 
@@ -340,10 +364,10 @@ describe("MediaApi.uploadMedia direct URL uploads", () => {
   it("rejects direct URL hosts that resolve to private addresses before fetch", async () => {
     vi.restoreAllMocks();
     const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected"));
-    const lookupFn: LookupFn = async () => ({
+    const lookupFn = (async () => ({
       address: "127.0.0.1",
       family: 4,
-    });
+    })) as unknown as LookupFn;
 
     await expect(
       downloadDirectUploadUrl("https://cdn.example.com/assets/photo.png", { lookupFn }),
