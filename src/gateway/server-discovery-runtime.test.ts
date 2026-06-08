@@ -273,6 +273,30 @@ describe("startGatewayDiscovery", () => {
     expect(advertised).toEqual(["receiver-ok"]);
   });
 
+  it("allows unknown-discovery-service as an explicit discovery service id", async () => {
+    useDevelopmentDiscoveryEnv();
+
+    const service = makeDiscoveryService({
+      id: "unknown-discovery-service",
+      pluginId: "custom-discovery-plugin",
+    });
+    const logs = makeLogs();
+
+    const result = await startGatewayDiscovery({
+      machineDisplayName: "Lab Mac",
+      port: 18789,
+      wideAreaDiscoveryEnabled: false,
+      tailscaleMode: "serve",
+      mdnsMode: "full",
+      gatewayDiscoveryServices: [service],
+      logDiscovery: logs,
+    });
+
+    expect(service.service.advertise).toHaveBeenCalledTimes(1);
+    expect(logs.warn).not.toHaveBeenCalled();
+    await result.bonjourStop?.();
+  });
+
   it("omits invalid SSH discovery ports", async () => {
     await expectSshPortOmitted("2222abc");
   });
