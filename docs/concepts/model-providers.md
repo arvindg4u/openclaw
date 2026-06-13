@@ -397,7 +397,7 @@ Kimi K2 model IDs:
 
 ### Kimi coding
 
-Kimi Coding uses Moonshot AI's Anthropic-compatible endpoint:
+Kimi Coding uses Moonshot AI's OpenAI-compatible coding endpoint:
 
 - Provider: `kimi`
 - Auth: `KIMI_API_KEY`

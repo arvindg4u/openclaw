@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeTrimmedStringList } from "@openclaw/normalization-core/string-normalization";
 import type { LegacyConfigRule } from "../config/legacy.shared.js";
@@ -244,6 +245,13 @@ export function collectRelevantDoctorPluginIds(raw: unknown): string[] {
     }
   }
 
+  const modelProviders = asNullableRecord(asNullableRecord(root.models)?.providers);
+  if (modelProviders) {
+    for (const providerId of Object.keys(modelProviders)) {
+      ids.add(normalizeProviderId(providerId));
+    }
+  }
+
   if (hasLegacyElevenLabsTalkFields(root)) {
     ids.add("elevenlabs");
   }
@@ -277,6 +285,13 @@ export function collectRelevantDoctorPluginIdsForTouchedPaths(params: {
         return collectRelevantDoctorPluginIds(params.raw);
       }
       ids.add(third);
+      continue;
+    }
+    if (first === "models") {
+      if (second !== "providers" || !third) {
+        return collectRelevantDoctorPluginIds(params.raw);
+      }
+      ids.add(normalizeProviderId(third));
       continue;
     }
     if (first === "talk" && hasLegacyElevenLabsTalkFields(root)) {

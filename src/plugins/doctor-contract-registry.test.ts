@@ -360,6 +360,11 @@ describe("doctor-contract-registry module loader", () => {
               "memory-wiki": {},
             },
           },
+          models: {
+            providers: {
+              Kimi: {},
+            },
+          },
           talk: {
             voiceId: "legacy-voice",
           },
@@ -367,10 +372,11 @@ describe("doctor-contract-registry module loader", () => {
         touchedPaths: [
           ["channels", "discord", "token"],
           ["plugins", "entries", "memory-wiki", "enabled"],
+          ["models", "providers", "Kimi", "api"],
           ["talk", "voiceId"],
         ],
       }),
-    ).toEqual(["discord", "elevenlabs", "memory-wiki"]);
+    ).toEqual(["discord", "elevenlabs", "kimi", "memory-wiki"]);
   });
 
   it("falls back to the full doctor-id set when touched paths are too broad", () => {
@@ -386,9 +392,14 @@ describe("doctor-contract-registry module loader", () => {
               "memory-wiki": {},
             },
           },
+          models: {
+            providers: {
+              kimi: {},
+            },
+          },
         },
         touchedPaths: [["channels"]],
       }),
-    ).toEqual(["discord", "memory-wiki", "telegram"]);
+    ).toEqual(["discord", "kimi", "memory-wiki", "telegram"]);
   });
 });

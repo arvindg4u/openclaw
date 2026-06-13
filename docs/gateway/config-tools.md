@@ -640,7 +640,7 @@ Interactive custom-provider onboarding infers image input for common vision mode
     }
     ```
 
-    Anthropic-compatible, built-in provider. Shortcut: `openclaw onboard --auth-choice kimi-code-api-key`.
+    OpenAI-compatible, built-in provider. Shortcut: `openclaw onboard --auth-choice kimi-code-api-key`.
 
   </Accordion>
   <Accordion title="Local models (LM Studio)">
