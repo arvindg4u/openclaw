@@ -2,10 +2,10 @@
  * Policy promotion for Codex app-server runs that can safely use OpenClaw tool
  * approvals.
  */
-import {
-  type CodexAppServerRuntimeOptions,
-  type CodexPluginConfig,
-  type OpenClawExecPolicyForCodexAppServer,
+import type {
+  CodexAppServerRuntimeOptions,
+  CodexPluginConfig,
+  OpenClawExecPolicyForCodexAppServer,
 } from "./config.js";
 
 /**

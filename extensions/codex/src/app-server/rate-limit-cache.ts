@@ -116,7 +116,7 @@ function mergeRateLimitUpdate(current: JsonValue | undefined, update: JsonObject
     };
   }
   return {
-    ...(currentEnvelope ?? {}),
+    ...currentEnvelope,
     rateLimits: nextPrimary,
     ...(nextByLimitId ? { rateLimitsByLimitId: nextByLimitId } : {}),
   };

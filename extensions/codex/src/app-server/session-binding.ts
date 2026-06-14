@@ -619,12 +619,14 @@ export function createCodexAppServerBindingStore(
       const owned = leaseContext.getStore();
       const existingOwner = owned?.get(key);
       if (existingOwner) {
-        if (existingOwner.failure) {
-          throw existingOwner.failure;
+        const failureBeforeRun = existingOwner.failure;
+        if (failureBeforeRun) {
+          throw failureBeforeRun;
         }
         const result = await run();
-        if (existingOwner.failure) {
-          throw existingOwner.failure;
+        const failureAfterRun = existingOwner.failure;
+        if (failureAfterRun) {
+          throw failureAfterRun;
         }
         return result;
       }
@@ -832,7 +834,9 @@ function readTimestamp(value: unknown): string | undefined {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 /** Returns true when an auth profile uses native Codex/OpenAI app-server auth. */

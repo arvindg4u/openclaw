@@ -116,7 +116,7 @@ export async function requestCodexAppServerJson<T = JsonValue | undefined>(param
               ? clientLease.abandon
               : async () =>
                   await client.closeAndWait({ exitTimeoutMs: 2_000, forceKillDelayMs: 250 }),
-            request: params.requestParams as unknown as CodexThreadResumeParams,
+            request: params.requestParams as CodexThreadResumeParams,
             timeoutMs: requestTimeoutMs,
             signal: abortController.signal,
           })

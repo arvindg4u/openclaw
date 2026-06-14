@@ -371,14 +371,14 @@ describe("codex conversation binding", () => {
     const notificationHandlers = new Set<
       (notification: CodexServerNotification) => Promise<void> | void
     >();
-    const requestHandlers = new Set<(request: unknown) => Promise<unknown> | unknown>();
+    const requestHandlers = new Set<(request: unknown) => unknown>();
     const addNotificationHandler = vi.fn(
       (handler: (notification: CodexServerNotification) => Promise<void> | void) => {
         notificationHandlers.add(handler);
         return () => notificationHandlers.delete(handler);
       },
     );
-    const addRequestHandler = vi.fn((handler: (request: unknown) => Promise<unknown> | unknown) => {
+    const addRequestHandler = vi.fn((handler: (request: unknown) => unknown) => {
       requestHandlers.add(handler);
       return () => requestHandlers.delete(handler);
     });

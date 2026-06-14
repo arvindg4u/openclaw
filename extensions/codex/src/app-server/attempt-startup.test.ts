@@ -365,7 +365,9 @@ describe("startCodexAttemptThread", () => {
     await answerInitialize(harness);
     const peer = await peerPromise;
     expect(peer.client).toBe(harness.client);
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
 
     expect(startSpy).toHaveBeenCalledTimes(1);
     expect(

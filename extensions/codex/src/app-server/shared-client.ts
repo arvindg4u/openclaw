@@ -384,7 +384,14 @@ async function waitForClientAcquireStage<T>(
   }
   const signal = options.signal;
   return await new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason);
+    const abort = () => {
+      const reason = signal.reason;
+      reject(
+        reason instanceof Error
+          ? reason
+          : new Error("codex app-server client acquisition aborted", { cause: reason }),
+      );
+    };
     signal.addEventListener("abort", abort, { once: true });
     bounded.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
   });

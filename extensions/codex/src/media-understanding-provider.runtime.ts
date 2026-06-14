@@ -29,11 +29,11 @@ import {
   assertCodexThreadStartResponse,
   assertCodexTurnStartResponse,
 } from "./app-server/protocol-validators.js";
-import {
-  type CodexThreadStartParams,
-  type CodexTurnStartParams,
-  type CodexUserInput,
-  type JsonValue,
+import type {
+  CodexThreadStartParams,
+  CodexTurnStartParams,
+  CodexUserInput,
+  JsonValue,
 } from "./app-server/protocol.js";
 import { buildCodexRuntimeThreadConfig } from "./app-server/runtime-thread-config.js";
 import {
@@ -349,7 +349,7 @@ async function waitForMediaClientLease(
 ): Promise<CodexAppServerClientLease> {
   if (signal.aborted) {
     void operation.then(retireLateMediaClientLease, () => undefined);
-    throw signal.reason;
+    throw mediaClientError(signal.reason, "Codex media client acquisition aborted");
   }
   return await new Promise<CodexAppServerClientLease>((resolve, reject) => {
     let settled = false;
@@ -359,7 +359,7 @@ async function waitForMediaClientLease(
       }
       settled = true;
       signal.removeEventListener("abort", abort);
-      reject(signal.reason);
+      reject(mediaClientError(signal.reason, "Codex media client acquisition aborted"));
     };
     signal.addEventListener("abort", abort, { once: true });
     void operation.then(
@@ -372,16 +372,20 @@ async function waitForMediaClientLease(
         signal.removeEventListener("abort", abort);
         resolve(lease);
       },
-      (error) => {
+      (error: unknown) => {
         if (settled) {
           return;
         }
         settled = true;
         signal.removeEventListener("abort", abort);
-        reject(error);
+        reject(mediaClientError(error, "Codex media client acquisition failed"));
       },
     );
   });
+}
+
+function mediaClientError(value: unknown, message: string): Error {
+  return value instanceof Error ? value : new Error(message, { cause: value });
 }
 
 async function retireLateMediaClientLease(lease: CodexAppServerClientLease): Promise<void> {

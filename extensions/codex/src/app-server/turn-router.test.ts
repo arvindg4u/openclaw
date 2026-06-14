@@ -281,7 +281,7 @@ describe("CodexAppServerTurnRouter", () => {
     const started = new Promise<void>((resolve) => {
       notificationStarted = resolve;
     });
-    const neverFinishes = new Promise<void>(() => undefined);
+    const neverFinishes = new Promise<void>(() => {});
     const route = getCodexAppServerTurnRouter(harness.client).reserveThread({
       threadId: "thread-release-tail",
       onNotification: async () => {
@@ -934,5 +934,7 @@ async function waitForResponse(harness: ClientHarness, id: number | string): Pro
 }
 
 async function settleInput(): Promise<void> {
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
 }

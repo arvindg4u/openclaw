@@ -190,7 +190,7 @@ export class CodexNativeSubagentMonitor {
     this.disposed = true;
     this.removeNotificationHandler();
     this.removeCloseHandler();
-    for (const childState of [...this.childStates.values()]) {
+    for (const childState of this.childStates.values()) {
       // Terminal delivery no longer needs app-server. Keep its bounded retry
       // alive if idle-pool eviction closes this client between attempts.
       if (childState.terminal && childState.pendingCompletion) {

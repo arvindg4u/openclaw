@@ -88,7 +88,9 @@ function multiplexTestClientHandlers(client: CodexAppServerClient): void {
   const addNotificationHandler = client.addNotificationHandler.bind(client);
   const addRequestHandler = client.addRequestHandler.bind(client);
   addNotificationHandler(async (notification) => {
-    await Promise.all([...notificationHandlers].map((handler) => handler(notification)));
+    await Promise.all(
+      [...notificationHandlers].map((handler) => Promise.resolve(handler(notification))),
+    );
   });
   addRequestHandler(async (request) => {
     for (const handler of requestHandlers) {
@@ -416,7 +418,9 @@ export function createAppServerHarness(
       timeout: appServerHarnessWait.timeout,
     });
     return async (notification: CodexServerNotification) => {
-      await Promise.all([...notificationHandlers].map((handler) => handler(notification)));
+      await Promise.all(
+        [...notificationHandlers].map((handler) => Promise.resolve(handler(notification))),
+      );
     };
   };
   const sendNotification = async (notification: CodexServerNotification) => {

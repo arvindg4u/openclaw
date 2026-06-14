@@ -308,7 +308,7 @@ describe("requestCodexAppServerJson sandbox guard", () => {
 
   it("does not let isolated teardown extend the caller deadline", async () => {
     const request = vi.fn(async () => ({ data: [] }));
-    const closeAndWait = vi.fn(async () => await new Promise<void>(() => undefined));
+    const closeAndWait = vi.fn(async () => await new Promise<void>(() => {}));
     sharedClientMocks.createIsolatedCodexAppServerClient.mockResolvedValue({
       request,
       closeAndWait,

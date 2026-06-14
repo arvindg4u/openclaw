@@ -187,7 +187,6 @@ class ClientTurnRouter implements CodexAppServerTurnRouter {
       this.nativeTurnCompletionWatchers.get(threadId) ?? new Set<NativeTurnCompletionWatcher>();
     this.nativeTurnCompletionWatchers.set(threadId, watchers);
     let settled = false;
-    let timeout!: ReturnType<typeof setTimeout>;
     const finish = (completed: boolean) => {
       if (settled) {
         return;
@@ -205,7 +204,7 @@ class ClientTurnRouter implements CodexAppServerTurnRouter {
     };
     const watcher = { turnId, finish, touch };
     watchers.add(watcher);
-    timeout = setTimeout(() => finish(false), Math.max(1, options.timeoutMs));
+    const timeout = setTimeout(() => finish(false), Math.max(1, options.timeoutMs));
     timeout.unref?.();
     return { completion, cancel: () => finish(false) };
   }
@@ -215,11 +214,11 @@ class ClientTurnRouter implements CodexAppServerTurnRouter {
       return;
     }
     this.disposed = true;
-    for (const route of [...this.routes.values()]) {
+    for (const route of this.routes.values()) {
       this.release(route, new Error("codex app-server turn router closed"));
     }
     for (const watchers of this.nativeTurnCompletionWatchers.values()) {
-      for (const watcher of [...watchers]) {
+      for (const watcher of watchers) {
         watcher.finish(false);
       }
     }

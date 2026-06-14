@@ -738,7 +738,7 @@ describe("runCodexAppServerSideQuestion", () => {
   it("releases a pending notification flush when the side question is aborted", async () => {
     const client = createFakeClient();
     const abortController = new AbortController();
-    const onAssistantMessageStart = vi.fn(() => new Promise<void>(() => undefined));
+    const onAssistantMessageStart = vi.fn(() => new Promise<void>(() => {}));
     client.request.mockImplementation(async (method: string) => {
       if (method === "thread/fork") {
         return threadResult("side-thread");

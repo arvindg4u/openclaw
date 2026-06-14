@@ -226,7 +226,7 @@ function createStartedThreadHarness(
   const notificationHandlers = new Set<
     (notification: CodexServerNotification) => Promise<void> | void
   >();
-  const requestHandlers = new Set<(request: unknown) => Promise<unknown> | unknown>();
+  const requestHandlers = new Set<(request: unknown) => unknown>();
   const request = vi.fn(async (method: string, params?: unknown) => {
     requests.push({ method, params });
     const override = await requestImpl(method, params);
@@ -250,7 +250,7 @@ function createStartedThreadHarness(
       notificationHandlers.add(handler);
       return () => notificationHandlers.delete(handler);
     },
-    addRequestHandler: (handler: (request: unknown) => Promise<unknown> | unknown) => {
+    addRequestHandler: (handler: (request: unknown) => unknown) => {
       requestHandlers.add(handler);
       return () => requestHandlers.delete(handler);
     },
@@ -259,14 +259,18 @@ function createStartedThreadHarness(
   setCodexAppServerClientFactoryForTest(async () => client);
 
   const notify = async (notification: CodexServerNotification) => {
-    await Promise.all([...notificationHandlers].map((handler) => handler(notification)));
+    await Promise.all(
+      [...notificationHandlers].map((handler) => Promise.resolve(handler(notification))),
+    );
   };
 
   return {
     client,
     requests,
-    async handleServerRequest(request: unknown) {
-      const responses = await Promise.all([...requestHandlers].map((handler) => handler(request)));
+    async handleServerRequest(serverRequest: unknown) {
+      const responses = await Promise.all(
+        [...requestHandlers].map((handler) => Promise.resolve(handler(serverRequest))),
+      );
       return responses[0];
     },
     async waitForMethod(method: string) {
@@ -979,7 +983,9 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
     await harness.waitForMethod("turn/interrupt");
     const runSettled = vi.fn();
     void run.then(runSettled, runSettled);
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
     expect(runSettled).not.toHaveBeenCalled();
     expect(abandonClient).not.toHaveBeenCalled();
 

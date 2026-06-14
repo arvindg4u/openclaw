@@ -66,7 +66,7 @@ function createClient() {
       );
     },
     close() {
-      for (const handler of [...closeHandlers]) {
+      for (const handler of closeHandlers) {
         handler();
       }
     },
@@ -1290,7 +1290,9 @@ describe("CodexNativeSubagentMonitor", () => {
     registerParent(monitor, "current-parent", "agent:main:discord:channel:C123");
     registerParent(monitor, "foreign-parent", "agent:main:other");
     await vi.waitFor(() => expect(client.request).toHaveBeenCalledTimes(1));
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
 
     expect(runtime.deliverAgentHarnessTaskCompletion).not.toHaveBeenCalled();
     client.close();

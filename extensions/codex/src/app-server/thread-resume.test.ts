@@ -43,10 +43,11 @@ function resumeResponse(threadId: string, restoredTurns = 0) {
   };
 }
 
-function createClient(request: (params: unknown) => unknown | Promise<unknown>) {
+function createClient(requestImpl: (params: unknown) => unknown) {
   const handlers = new Set<(notification: CodexServerNotification) => void>();
+  const request = vi.fn(async (_method: string, params: unknown) => await requestImpl(params));
   const client = {
-    request: vi.fn(async (_method: string, params: unknown) => await request(params)),
+    request,
     addNotificationHandler: vi.fn((handler: (notification: CodexServerNotification) => void) => {
       handlers.add(handler);
       return () => handlers.delete(handler);
@@ -54,6 +55,7 @@ function createClient(request: (params: unknown) => unknown | Promise<unknown>) 
   } as unknown as CodexAppServerClient;
   return {
     client,
+    request,
     emit(notification: CodexServerNotification) {
       for (const handler of handlers) {
         handler(notification);
@@ -129,8 +131,7 @@ describe("resumeCodexAppServerThread", () => {
   });
 
   it("restores native usage by temporarily including turns", async () => {
-    let harness!: ReturnType<typeof createClient>;
-    harness = createClient(async () => {
+    const harness = createClient(async () => {
       queueMicrotask(() =>
         harness.emit({
           method: "thread/tokenUsage/updated",
@@ -157,7 +158,7 @@ describe("resumeCodexAppServerThread", () => {
     ).resolves.toMatchObject({
       nativeContextUsage: { currentTokens: 12_000, modelContextWindow: 258_400 },
     });
-    expect(harness.client.request).toHaveBeenCalledWith(
+    expect(harness.request).toHaveBeenCalledWith(
       "thread/resume",
       { threadId: "thread-1", excludeTurns: false },
       {},

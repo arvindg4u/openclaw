@@ -347,7 +347,7 @@ describe("Codex app-server main thread cleanup", () => {
     const notificationHandlers = new Set<
       (notification: CodexServerNotification) => Promise<void> | void
     >();
-    const requestHandlers = new Set<(request: unknown) => Promise<unknown> | unknown>();
+    const requestHandlers = new Set<(request: unknown) => unknown>();
     let turnIndex = 0;
     const request = vi.fn(async (method: string) => {
       if (method === "thread/start" || method === "thread/resume") {
@@ -365,7 +365,7 @@ describe("Codex app-server main thread cleanup", () => {
         return () => notificationHandlers.delete(handler);
       },
     );
-    const addRequestHandler = vi.fn((handler: (request: unknown) => Promise<unknown> | unknown) => {
+    const addRequestHandler = vi.fn((handler: (request: unknown) => unknown) => {
       requestHandlers.add(handler);
       return () => requestHandlers.delete(handler);
     });

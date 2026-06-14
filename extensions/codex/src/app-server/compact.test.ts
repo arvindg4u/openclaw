@@ -202,7 +202,7 @@ describe("maybeCompactCodexAppServerSession", () => {
     );
 
     expectCompactStart(fake.request);
-    expect(fake.client["addNotificationHandler"]).toHaveBeenCalledTimes(1);
+    expect(fake.addNotificationHandler).toHaveBeenCalledTimes(1);
     expect(fake.request.mock.calls.map(([method]) => method)).toEqual([
       "thread/resume",
       "thread/compact/start",
@@ -1657,13 +1657,14 @@ function createFakeCodexClient(options: { autoStart?: boolean; autoComplete?: bo
   client: CodexAppServerClient;
   request: ReturnType<typeof vi.fn<CodexAppServerClient["request"]>>;
   close: ReturnType<typeof vi.fn>;
+  addNotificationHandler: ReturnType<typeof vi.fn>;
   emit: (notification: CodexServerNotification) => void;
-  handleRequest: (method: string, handler: (params: unknown) => unknown | Promise<unknown>) => void;
+  handleRequest: (method: string, handler: (params: unknown) => unknown) => void;
 } {
   const handlers = new Set<(notification: CodexServerNotification) => void>();
   const closeHandlers = new Set<() => void>();
   const requestHandlers = new Set<() => undefined>();
-  const requestOverrides = new Map<string, (params: unknown) => unknown | Promise<unknown>>();
+  const requestOverrides = new Map<string, (params: unknown) => unknown>();
   let emit = (_notification: CodexServerNotification): void => undefined;
   const request = vi.fn<CodexAppServerClient["request"]>(
     async (method: string, params: unknown) => {
@@ -1751,6 +1752,7 @@ function createFakeCodexClient(options: { autoStart?: boolean; autoComplete?: bo
     } as unknown as CodexAppServerClient,
     request,
     close,
+    addNotificationHandler,
     emit,
     handleRequest(method, handler): void {
       requestOverrides.set(method, handler);

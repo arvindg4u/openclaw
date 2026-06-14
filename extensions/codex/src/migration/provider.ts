@@ -35,7 +35,7 @@ export function buildCodexMigrationProvider(
     },
     async prepareApply(ctx) {
       const { prepareTargetCodexAppServer } = await import("./apply.js");
-      return await prepareTargetCodexAppServer(ctx);
+      return prepareTargetCodexAppServer(ctx);
     },
     async apply(ctx, plan?: MigrationPlan) {
       const { applyCodexMigrationPlan } = await import("./apply.js");

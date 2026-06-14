@@ -275,7 +275,9 @@ describe("shared Codex app-server client", () => {
       }),
     ).rejects.toThrow("codex app-server preparation timed out");
     finishManagedResolution();
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
 
     expect(startSpy).not.toHaveBeenCalled();
   });
@@ -294,7 +296,9 @@ describe("shared Codex app-server client", () => {
       "codex app-server preparation timed out",
     );
     finishManagedResolution();
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
 
     expect(startSpy).not.toHaveBeenCalled();
   });
@@ -362,7 +366,7 @@ describe("shared Codex app-server client", () => {
     const harness = createClientHarness();
     vi.spyOn(CodexAppServerClient, "start").mockReturnValue(harness.client);
     mocks.applyCodexAppServerAuthProfile.mockImplementationOnce(
-      async () => await new Promise<undefined>(() => undefined),
+      async () => await new Promise<undefined>(() => {}),
     );
 
     const clientPromise = createIsolatedCodexAppServerClient({ timeoutMs: 100 });
@@ -668,7 +672,7 @@ describe("shared Codex app-server client", () => {
       authProfileId: null,
       agentDir: "/tmp/openclaw-agent-4",
     });
-    await sendInitializeResult(harnesses[4]!, "openclaw/0.125.0 (macOS; test)");
+    await sendInitializeResult(harnesses[4], "openclaw/0.125.0 (macOS; test)");
     (await newestLeasePromise).release();
 
     expect(harnesses[0]?.process.stdin.destroyed).toBe(false);
@@ -1035,7 +1039,9 @@ describe("shared Codex app-server client", () => {
     }).then(() => {
       shutdownSettled = true;
     });
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
     expect(shutdownSettled).toBe(false);
 
     finishRetirement();
