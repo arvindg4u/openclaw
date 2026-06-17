@@ -217,7 +217,7 @@ prepare_sync_head() {
   if ! git merge-base --is-ancestor origin/main HEAD; then
     git rebase origin/main
     rebased=true
-    "$PWD/scripts/pr" prepare-gates "$pr"
+    prepare_gates "$pr"
     checkout_prep_branch "$pr"
   fi
 
