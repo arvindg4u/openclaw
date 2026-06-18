@@ -97,18 +97,18 @@ describe("legacy memory search config migrate", () => {
     });
 
     expect((res.config as Record<string, unknown> | undefined)?.memorySearch).toBeUndefined();
-    expect(res.config?.agents?.defaults?.memorySearch?.store).toEqual({
+    expect(res.config?.agents?.defaults?.memory?.search?.store).toEqual({
       fts: { tokenizer: "trigram" },
       vector: { enabled: false },
     });
-    expect(res.config?.agents?.list?.[0]?.memorySearch?.store).toEqual({
+    expect(res.config?.agents?.list?.[0]?.memory?.search?.store).toEqual({
       vector: { enabled: true },
     });
     expect(res.changes).toContain(
-      "Removed agents.defaults.memorySearch.store.path; memory indexes now use each agent database.",
+      "Removed agents.defaults.memory.search.store.path; memory indexes now use each agent database.",
     );
     expect(res.changes).toContain(
-      "Removed agents.list[0].memorySearch.store.path; memory indexes now use each agent database.",
+      "Removed agents.list[0].memory.search.store.path; memory indexes now use each agent database.",
     );
   });
 

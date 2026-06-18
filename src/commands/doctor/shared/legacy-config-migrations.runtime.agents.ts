@@ -94,14 +94,14 @@ const LEGACY_MEMORY_SEARCH_STORE_PATH_RULES: LegacyConfigRule[] = [
       'memorySearch.store.path is legacy; memory indexes now live in each agent database. Run "openclaw doctor --fix".',
   },
   {
-    path: ["agents", "defaults", "memorySearch", "store", "path"],
+    path: ["agents", "defaults", "memory", "search", "store", "path"],
     message:
-      'agents.defaults.memorySearch.store.path is legacy; memory indexes now live in each agent database. Run "openclaw doctor --fix".',
+      'agents.defaults.memory.search.store.path is legacy; memory indexes now live in each agent database. Run "openclaw doctor --fix".',
   },
   {
     path: ["agents", "list"],
     message:
-      'agents.list[].memorySearch.store.path is legacy; memory indexes now live in each agent database. Run "openclaw doctor --fix".',
+      'agents.list[].memory.search.store.path is legacy; memory indexes now live in each agent database. Run "openclaw doctor --fix".',
     match: hasAgentListMemorySearchStorePath,
   },
 ];
@@ -478,7 +478,9 @@ function hasMemorySearchStorePath(value: unknown): boolean {
 function hasAgentListMemorySearchStorePath(value: unknown): boolean {
   return (
     Array.isArray(value) &&
-    value.some((agent) => hasMemorySearchStorePath(getRecord(agent)?.memorySearch))
+    value.some((agent) =>
+      hasMemorySearchStorePath(getRecord(getRecord(agent)?.memory)?.search),
+    )
   );
 }
 
@@ -1537,12 +1539,10 @@ export const LEGACY_CONFIG_MIGRATIONS_RUNTIME_AGENTS: LegacyConfigMigrationSpec[
     describe: "Remove legacy memory search sidecar index paths",
     legacyRules: LEGACY_MEMORY_SEARCH_STORE_PATH_RULES,
     apply: (raw, changes) => {
-      removeLegacyMemorySearchStorePath(getRecord(raw.memorySearch), "memorySearch", changes);
-
       const agents = getRecord(raw.agents);
       removeLegacyMemorySearchStorePath(
-        getRecord(getRecord(agents?.defaults)?.memorySearch),
-        "agents.defaults.memorySearch",
+        getRecord(getRecord(getRecord(agents?.defaults)?.memory)?.search),
+        "agents.defaults.memory.search",
         changes,
       );
 
@@ -1551,8 +1551,8 @@ export const LEGACY_CONFIG_MIGRATIONS_RUNTIME_AGENTS: LegacyConfigMigrationSpec[
       }
       for (const [index, agent] of agents.list.entries()) {
         removeLegacyMemorySearchStorePath(
-          getRecord(getRecord(agent)?.memorySearch),
-          `agents.list[${index}].memorySearch`,
+          getRecord(getRecord(getRecord(agent)?.memory)?.search),
+          `agents.list[${index}].memory.search`,
           changes,
         );
       }
