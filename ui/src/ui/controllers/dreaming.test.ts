@@ -417,6 +417,31 @@ describe("dreaming controller", () => {
     expect(state.wikiImportInsightsLoading).toBe(false);
   });
 
+  it("loads wiki import insights for the selected agent", async () => {
+    const { state, request } = createState();
+    state.selectedAgentId = "research";
+    state.hello = {
+      type: "hello-ok",
+      protocol: 4,
+      auth: { role: "operator", scopes: [] },
+      features: { methods: ["wiki.importInsights"] },
+    };
+    state.configSnapshot = {
+      hash: "hash-1",
+      config: { plugins: { entries: { "memory-wiki": { enabled: true } } } },
+    };
+    request.mockResolvedValue({
+      sourceType: "chatgpt",
+      totalItems: 1,
+      totalClusters: 0,
+      clusters: [],
+    });
+
+    await loadWikiImportInsights(state);
+
+    expect(request).toHaveBeenCalledWith("wiki.importInsights", { agentId: "research" });
+  });
+
   it("falls back to config gating for wiki import insights when methods are not advertised", async () => {
     const { state, request } = createState();
     state.configSnapshot = {
@@ -584,6 +609,32 @@ describe("dreaming controller", () => {
     ]);
     expect(state.wikiMemoryPalaceError).toBeNull();
     expect(state.wikiMemoryPalaceLoading).toBe(false);
+  });
+
+  it("loads the wiki memory palace for the selected agent", async () => {
+    const { state, request } = createState();
+    state.selectedAgentId = "research";
+    state.hello = {
+      type: "hello-ok",
+      protocol: 4,
+      auth: { role: "operator", scopes: [] },
+      features: { methods: ["wiki.palace"] },
+    };
+    state.configSnapshot = {
+      hash: "hash-1",
+      config: { plugins: { entries: { "memory-wiki": { enabled: true } } } },
+    };
+    request.mockResolvedValue({
+      totalItems: 0,
+      totalClaims: 0,
+      totalQuestions: 0,
+      totalContradictions: 0,
+      clusters: [],
+    });
+
+    await loadWikiMemoryPalace(state);
+
+    expect(request).toHaveBeenCalledWith("wiki.palace", { agentId: "research" });
   });
 
   it("derives legacy wiki memory palace page counts from clusters", async () => {
