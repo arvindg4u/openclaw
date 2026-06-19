@@ -475,6 +475,7 @@ describe("tui session actions", () => {
         inputTokens: 1,
         outputTokens: 2,
         totalTokens: 3,
+        totalTokensFresh: true,
         updatedAt: 500,
       },
     });
@@ -492,6 +493,7 @@ describe("tui session actions", () => {
     expect(state.sessionInfo.inputTokens).toBeNull();
     expect(state.sessionInfo.outputTokens).toBeNull();
     expect(state.sessionInfo.totalTokens).toBeNull();
+    expect(state.sessionInfo.totalTokensFresh).toBeUndefined();
     expect(listSessions).not.toHaveBeenCalled();
   });
 
