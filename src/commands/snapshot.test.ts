@@ -11,6 +11,8 @@ import {
   snapshotVerifyCommand,
 } from "./snapshot.js";
 
+const SNAPSHOT_ARTIFACT_FILES = ["database.sqlite", "manifest.json"];
+
 let workspaceDir: string;
 let previousOpenClawStateDir: string | undefined;
 
@@ -167,6 +169,89 @@ describe("snapshot cli", () => {
     expect(runtime.errors).toEqual([]);
   });
 
+  it("restores a copied snapshot artifact from a named OpenClaw database", async () => {
+    const runtime = createRuntimeCapture();
+    const stateDir = path.join(workspaceDir, "state-root");
+    const dbPath = path.join(stateDir, "state", "openclaw.sqlite");
+    const repositoryPath = path.join(workspaceDir, "snapshots");
+    const syncedSnapshotPath = path.join(workspaceDir, "synced", "snapshot");
+    const restorePath = path.join(workspaceDir, "hydrated", "openclaw.sqlite");
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    await fs.mkdir(path.dirname(dbPath), { recursive: true });
+
+    const liveDb = new DatabaseSync(dbPath);
+    try {
+      liveDb.exec(`
+        PRAGMA journal_mode = WAL;
+        PRAGMA user_version = 42;
+        CREATE TABLE entries (value TEXT NOT NULL);
+        INSERT INTO entries (value) VALUES ('portable-state');
+      `);
+
+      await expect(
+        snapshotCreateCommand(
+          { target: "global", repository: repositoryPath, json: true },
+          runtime,
+        ),
+      ).resolves.toBe(0);
+
+      const createReport = JSON.parse(runtime.logs.shift() ?? "{}") as {
+        snapshotPath?: string;
+        manifest?: { artifact?: { path?: string }; database?: { id?: string } };
+      };
+      expect(createReport.manifest?.artifact?.path).toBe("database.sqlite");
+      expect(createReport.manifest?.database?.id).toBe("global");
+      expect(createReport.snapshotPath).toBeTruthy();
+
+      await expect(readSortedDir(createReport.snapshotPath ?? "")).resolves.toEqual(
+        SNAPSHOT_ARTIFACT_FILES,
+      );
+      await expect(fs.stat(`${dbPath}-wal`)).resolves.toBeTruthy();
+      await expect(fs.stat(`${dbPath}-shm`)).resolves.toBeTruthy();
+      await fs.cp(createReport.snapshotPath ?? "", syncedSnapshotPath, { recursive: true });
+    } finally {
+      liveDb.close();
+    }
+
+    await expect(readSortedDir(syncedSnapshotPath)).resolves.toEqual(SNAPSHOT_ARTIFACT_FILES);
+    await fs.mkdir(path.dirname(restorePath), { recursive: true });
+    await fs.writeFile(`${restorePath}-wal`, "stale wal sidecar");
+    await fs.writeFile(`${restorePath}-shm`, "stale shm sidecar");
+
+    await expect(
+      snapshotRestoreCommand(syncedSnapshotPath, { target: restorePath, json: true }, runtime),
+    ).resolves.toBe(0);
+
+    const restoreReport = JSON.parse(runtime.logs.shift() ?? "{}") as {
+      ok?: boolean;
+      targetPath?: string;
+      manifest?: { database?: { id?: string; userVersion?: number } };
+    };
+    expect(restoreReport).toMatchObject({
+      ok: true,
+      targetPath: restorePath,
+      manifest: {
+        database: {
+          id: "global",
+          userVersion: 42,
+        },
+      },
+    });
+    await expect(fileExists(`${restorePath}-wal`)).resolves.toBe(false);
+    await expect(fileExists(`${restorePath}-shm`)).resolves.toBe(false);
+
+    const restored = new DatabaseSync(restorePath, { readOnly: true });
+    try {
+      expect(restored.prepare("PRAGMA integrity_check").all()).toEqual([{ integrity_check: "ok" }]);
+      expect(restored.prepare("SELECT value FROM entries").all()).toEqual([
+        { value: "portable-state" },
+      ]);
+    } finally {
+      restored.close();
+    }
+    expect(runtime.errors).toEqual([]);
+  });
+
   it("rejects ambiguous snapshot source selectors", async () => {
     const runtime = createRuntimeCapture();
 
@@ -196,6 +281,31 @@ async function createSqliteDatabase(dbPath: string, value: string): Promise<void
   } finally {
     db.close();
   }
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  return fs
+    .stat(filePath)
+    .then(() => true)
+    .catch((error: unknown) => {
+      if (isNodeErrorCode(error, "ENOENT")) {
+        return false;
+      }
+      throw error;
+    });
+}
+
+async function readSortedDir(dirPath: string): Promise<string[]> {
+  return (await fs.readdir(dirPath)).toSorted();
+}
+
+function isNodeErrorCode(error: unknown, code: string): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    typeof (error as NodeJS.ErrnoException).code === "string" &&
+    (error as NodeJS.ErrnoException).code === code
+  );
 }
 
 function createRuntimeCapture(): RuntimeEnv & {
