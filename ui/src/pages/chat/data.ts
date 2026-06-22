@@ -74,12 +74,6 @@ import type {
   ModelCatalogEntry,
 } from "../../ui/types.ts";
 import type { SessionsListResult } from "../../ui/types.ts";
-import type {
-  ChatAttachment,
-  ChatQueueItem,
-  ChatQueueSkillWorkshopRevision,
-  ChatSessionRefreshTarget,
-} from "../../ui/ui-types.ts";
 import { isRenderableControlUiAvatarUrl } from "../../ui/views/agents-utils.ts";
 import {
   applyChatHistorySessionInfo,
@@ -102,6 +96,12 @@ import {
   type ChatState,
   isGatewayMethodAdvertised,
 } from "./gateway.ts";
+import type {
+  ChatAttachment,
+  ChatQueueItem,
+  ChatQueueSkillWorkshopRevision,
+  ChatSessionRefreshTarget,
+} from "./types.ts";
 
 export type ChatHost = ChatInputHistoryState & {
   client: GatewayBrowserClient | null;
