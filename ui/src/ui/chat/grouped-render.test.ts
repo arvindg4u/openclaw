@@ -37,7 +37,7 @@ vi.mock("../markdown.ts", () => ({
   toStreamingPlainTextHtml: streamingTextRenderMock,
 }));
 
-vi.mock("../icons.ts", () => ({
+vi.mock("../../components/icons.ts", () => ({
   icons: {},
 }));
 
