@@ -77,6 +77,48 @@ describe("defineToolPlugin", () => {
     });
   });
 
+  it("passes execution context to concrete tool handlers", async () => {
+    const observedContexts: unknown[] = [];
+    const entry = defineToolPlugin({
+      id: "context-tools",
+      name: "Context Tools",
+      description: "Observe execution context.",
+      tools: (tool) => [
+        tool({
+          name: "context_echo",
+          description: "Echo context.",
+          parameters: Type.Object({}),
+          execute(_params, _config, context) {
+            observedContexts.push(context);
+            return "ok";
+          },
+        }),
+      ],
+    });
+    const captured = createCapturedPluginRegistration({ id: "context-tools" });
+    const executionContext = {
+      agentId: "agent-main",
+      sessionKey: "agent:main:rovoclaw:default:direct:cli",
+      sessionId: "session-123",
+      runId: "run-123",
+      deliveryContext: {
+        channel: "rovoclaw",
+        to: "direct:original",
+      },
+    };
+
+    entry.register(captured.api);
+    await captured.tools[0].execute("call-1", {}, undefined, undefined, executionContext);
+
+    expect(observedContexts).toEqual([
+      expect.objectContaining({
+        ...executionContext,
+        api: captured.api,
+        toolCallId: "call-1",
+      }),
+    ]);
+  });
+
   it("passes optional tools through to runtime registration and metadata", () => {
     const entry = defineToolPlugin({
       id: "optional-tools",

@@ -145,6 +145,11 @@ local proof.
     Use `definePluginEntry` for non-channel plugins. Channel plugins use
     `defineChannelPluginEntry`.
 
+    Tool handlers may accept an optional fifth execution-context argument when
+    they need runtime-owned facts for the current call. The context includes the
+    active `runId`, effective `sessionKey`, ephemeral `sessionId`, owning
+    `agentId`, and ambient `deliveryContext` when those values are available.
+
   </Step>
 
   <Step title="Test the runtime">

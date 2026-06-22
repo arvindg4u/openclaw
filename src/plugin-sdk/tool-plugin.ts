@@ -1,6 +1,10 @@
 // Tool plugin contracts describe plugin-provided tools, schemas, and invocation hooks.
 import { Type, type Static, type TSchema } from "typebox";
-import type { AgentToolResult, AgentToolUpdateCallback } from "../agents/runtime/index.js";
+import type {
+  AgentToolExecutionContext,
+  AgentToolResult,
+  AgentToolUpdateCallback,
+} from "../agents/runtime/index.js";
 import { jsonResult, textResult } from "../agents/tools/common.js";
 import type { PluginManifestActivation } from "../plugins/manifest.js";
 import type { JsonSchemaObject } from "../shared/json-schema.types.js";
@@ -18,7 +22,7 @@ const EMPTY_TOOL_PLUGIN_CONFIG_SCHEMA = Type.Object({}, { additionalProperties: 
 export const toolPluginMetadataSymbol = Symbol.for("openclaw.plugin-sdk.tool-plugin.metadata");
 
 /** Runtime context supplied to a concrete tool plugin execution handler. */
-export type ToolPluginExecutionContext = {
+export type ToolPluginExecutionContext = AgentToolExecutionContext & {
   /** Plugin runtime API for tool implementations that need OpenClaw services. */
   api: OpenClawPluginApi;
   /** Abort signal for the current tool call. */
@@ -218,9 +222,10 @@ export function defineToolPlugin<TConfigSchema extends TSchema | undefined = und
             label: tool.label,
             description: tool.description,
             parameters: tool.parameters,
-            execute: async (toolCallId, params, signal, onUpdate) =>
+            execute: async (toolCallId, params, signal, onUpdate, executionContext) =>
               wrapToolPluginResult(
                 await execute(params, config, {
+                  ...(executionContext ?? {}),
                   api,
                   signal,
                   toolCallId,

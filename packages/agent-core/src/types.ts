@@ -455,6 +455,32 @@ export interface AgentToolResult<T> {
 /** Callback used by tools to stream partial execution updates. */
 export type AgentToolUpdateCallback<T = unknown> = (partialResult: AgentToolResult<T>) => void;
 
+/** Normalized delivery target associated with the active tool call, when known. */
+export type AgentToolDeliveryContext = {
+  /** Channel/plugin id that owns the delivery target. */
+  channel?: string;
+  /** Channel-local destination id. */
+  to?: string;
+  /** Optional channel account/workspace id. */
+  accountId?: string;
+  /** Optional thread/topic id nested under `to`. */
+  threadId?: string | number;
+};
+
+/** Runtime-owned facts for one concrete tool execution. */
+export type AgentToolExecutionContext = object & {
+  /** Agent that owns the run. */
+  agentId?: string;
+  /** Effective session key used by the active run. */
+  sessionKey?: string;
+  /** Ephemeral session UUID, regenerated on /new and /reset. */
+  sessionId?: string;
+  /** Stable run identifier for this agent invocation. */
+  runId?: string;
+  /** Ambient delivery route for the current inbound/outbound conversation. */
+  deliveryContext?: AgentToolDeliveryContext;
+};
+
 /** Tool definition used by the agent runtime. */
 export interface AgentTool<
   TParameters extends TSchema = TSchema,
@@ -473,6 +499,7 @@ export interface AgentTool<
     params: Static<TParameters>,
     signal?: AbortSignal,
     onUpdate?: AgentToolUpdateCallback<TDetails>,
+    context?: AgentToolExecutionContext,
   ) => Promise<AgentToolResult<TDetails>>;
   /**
    * Per-tool execution mode override.

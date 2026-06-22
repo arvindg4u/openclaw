@@ -60,6 +60,7 @@ import {
 import type { SkillSnapshot, SkillTelemetrySource } from "../skills/types.js";
 import { resolveSkillWorkshopToolApproval } from "../skills/workshop/policy.js";
 import { isPlainObject, truncateUtf16Safe } from "../utils.js";
+import type { DeliveryContext } from "../utils/delivery-context.types.js";
 import {
   adjustedParamsByToolCallId,
   buildAdjustedParamsKey,
@@ -109,6 +110,8 @@ export type HookContext = {
   /** Ephemeral session UUID — regenerated on /new and /reset. */
   sessionId?: string;
   runId?: string;
+  /** Ambient delivery route associated with the active tool call. */
+  deliveryContext?: DeliveryContext;
   trace?: DiagnosticTraceContext;
   channelId?: string;
   /** Originating channel for approval delivery routing; mirrors exec approval turn-source fields. */

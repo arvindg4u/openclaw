@@ -163,6 +163,57 @@ describe("agent tool definition adapter", () => {
     expect(prepareBeforeToolCallParams).toHaveBeenCalledOnce();
     expect(execute).toHaveBeenCalledOnce();
   });
+
+  it("passes run session and delivery context to runtime tool execution", async () => {
+    const execute = vi.fn(async () => ({
+      content: [{ type: "text" as const, text: "done" }],
+      details: {},
+    }));
+    const tool = {
+      name: "context_probe",
+      label: "Context Probe",
+      description: "observes runtime context",
+      parameters: Type.Object({}),
+      execute,
+    } satisfies AgentTool;
+    const hookContext = {
+      agentId: "agent-main",
+      sessionKey: "agent:main:rovoclaw:default:direct:cli",
+      sessionId: "session-123",
+      runId: "run-123",
+      deliveryContext: {
+        channel: "rovoclaw",
+        to: "direct:original",
+        accountId: "workspace-1",
+        threadId: "thread-1",
+      },
+    };
+    const [definition] = toToolDefinitions([tool], hookContext);
+    if (!definition) {
+      throw new Error("missing context probe definition");
+    }
+
+    await definition.execute("call-context", {}, undefined, undefined, extensionContext);
+
+    expect(execute).toHaveBeenCalledWith(
+      "call-context",
+      {},
+      undefined,
+      undefined,
+      expect.objectContaining({
+        agentId: "agent-main",
+        sessionKey: "agent:main:rovoclaw:default:direct:cli",
+        sessionId: "session-123",
+        runId: "run-123",
+        deliveryContext: {
+          channel: "rovoclaw",
+          to: "direct:original",
+          accountId: "workspace-1",
+          threadId: "thread-1",
+        },
+      }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

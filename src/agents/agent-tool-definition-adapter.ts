@@ -23,7 +23,12 @@ import {
 } from "./code-mode-control-tools.js";
 import { sanitizeForConsole } from "./console-sanitize.js";
 import type { ClientToolDefinition } from "./embedded-agent-runner/run/params.js";
-import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "./runtime/index.js";
+import type {
+  AgentTool,
+  AgentToolExecutionContext,
+  AgentToolResult,
+  AgentToolUpdateCallback,
+} from "./runtime/index.js";
 import type { ToolDefinition } from "./sessions/index.js";
 import { normalizeToolName } from "./tool-policy.js";
 import { jsonResult, payloadTextResult } from "./tools/common.js";
@@ -59,6 +64,21 @@ const TOOL_ERROR_PARAM_PREVIEW_MAX_CHARS = 600;
 const TOOL_ERROR_EXEC_COMMAND_HASH_CHARS = 16;
 const SENSITIVE_EXEC_ENV_VALUE = "[omitted exec env value]";
 const EXEC_COMMAND_PARAM_KEYS = new Set(["command", "cmd"]);
+
+function buildAgentToolExecutionContext(
+  hookContext?: HookContext,
+): AgentToolExecutionContext | undefined {
+  if (!hookContext) {
+    return undefined;
+  }
+  return {
+    ...(hookContext.agentId ? { agentId: hookContext.agentId } : {}),
+    ...(hookContext.sessionKey ? { sessionKey: hookContext.sessionKey } : {}),
+    ...(hookContext.sessionId ? { sessionId: hookContext.sessionId } : {}),
+    ...(hookContext.runId ? { runId: hookContext.runId } : {}),
+    ...(hookContext.deliveryContext ? { deliveryContext: hookContext.deliveryContext } : {}),
+  };
+}
 
 type ClientToolCallRecorder =
   | ((toolName: string, params: Record<string, unknown>) => void)
@@ -423,7 +443,13 @@ export function toToolDefinitions(
             });
             recordAdjustedParamsForToolCall(toolCallId, executeParams, hookContext?.runId);
           }
-          const rawResult = await tool.execute(toolCallId, executeParams, signal, onUpdate);
+          const rawResult = await tool.execute(
+            toolCallId,
+            executeParams,
+            signal,
+            onUpdate,
+            buildAgentToolExecutionContext(hookContext),
+          );
           const result = normalizeToolExecutionResult({
             toolName: normalizedName,
             result: rawResult,

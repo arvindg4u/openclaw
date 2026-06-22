@@ -27,6 +27,7 @@ import { logWarn } from "../logger.js";
 import { getPluginToolMeta } from "../plugins/tools.js";
 import { createLazyImportLoader } from "../shared/lazy-promise.js";
 import type { SkillSnapshot } from "../skills/types.js";
+import { normalizeDeliveryContext } from "../utils/delivery-context.js";
 import { resolveGatewayMessageChannel } from "../utils/message-channel.js";
 import { resolveAgentConfig } from "./agent-scope.js";
 import { wrapToolWithAbortSignal } from "./agent-tools.abort.js";
@@ -1218,6 +1219,12 @@ export function createOpenClawCodingTools(options?: {
   options?.recordToolPrepStage?.("schema-normalization");
   const turnSourceChannel = options?.messageChannel ?? options?.messageProvider;
   const turnSourceTo = options?.currentMessagingTarget ?? options?.currentChannelId;
+  const toolDeliveryContext = normalizeDeliveryContext({
+    channel: resolveGatewayMessageChannel(turnSourceChannel),
+    to: options?.messageTo ?? turnSourceTo,
+    accountId: options?.agentAccountId,
+    threadId: options?.messageThreadId ?? options?.currentThreadTs,
+  });
   const hookContext = {
     agentId,
     ...(options?.config ? { config: options.config } : {}),
@@ -1230,6 +1237,7 @@ export function createOpenClawCodingTools(options?: {
     sessionKey: options?.sessionKey,
     sessionId: options?.sessionId,
     runId: options?.runId,
+    ...(toolDeliveryContext ? { deliveryContext: toolDeliveryContext } : {}),
     channelId: options?.hookChannelId ?? options?.currentChannelId,
     ...(turnSourceChannel ? { turnSourceChannel } : {}),
     ...(turnSourceTo ? { turnSourceTo } : {}),

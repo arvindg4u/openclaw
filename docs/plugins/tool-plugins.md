@@ -151,6 +151,14 @@ Factories are still for fixed tool names. Use `definePluginEntry` directly when
 the plugin computes tool names dynamically or combines tools with hooks,
 services, providers, commands, or other runtime surfaces.
 
+Factory context is construction-time state. Use it to decide whether the tool
+exists for the run or to bind stable helpers. Per-call state belongs in the
+execution context: static tool-plugin `execute` handlers receive it as fields on
+their third `context` argument, and factory-created `AgentTool.execute`
+handlers receive it as the optional fifth argument. The execution context
+includes `runId`, effective `sessionKey`, `sessionId`, `agentId`, and
+`deliveryContext` when OpenClaw knows those values.
+
 ## Return values
 
 `defineToolPlugin` wraps plain return values into the OpenClaw tool-result

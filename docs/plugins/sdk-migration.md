@@ -238,9 +238,11 @@ releases.
     `api.runtime.config.writeConfigFile(...)` directly. Prefer config that was
     already passed into the active call path. Long-lived handlers that need the
     current process snapshot can use `api.runtime.config.current()`. Long-lived
-    agent tools should use the tool context's `ctx.getRuntimeConfig()` inside
-    `execute` so a tool created before a config write still sees the refreshed
-    runtime config.
+    factory-created agent tools should use the tool factory context's
+    `ctx.getRuntimeConfig()` inside `execute` so a tool created before a config
+    write still sees the refreshed runtime config. For per-call run, session, or
+    delivery facts, use the tool execution context rather than closing over the
+    factory context.
 
     Config writes must go through the transactional helpers and choose an
     after-write policy:

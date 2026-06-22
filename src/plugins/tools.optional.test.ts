@@ -606,6 +606,46 @@ describe("resolvePluginTools optional tools", () => {
     ]);
   });
 
+  it("forwards execution context through plugin tool scope wrappers", async () => {
+    const execute = vi.fn(
+      async (
+        _toolCallId: string,
+        _params: unknown,
+        _signal?: AbortSignal,
+        _onUpdate?: unknown,
+        _context?: unknown,
+      ) => ({ content: [{ type: "text" as const, text: "ok" }] }),
+    );
+    setRegistry([
+      {
+        pluginId: "context-owner",
+        optional: false,
+        source: "/tmp/context-owner.js",
+        names: ["context_probe"],
+        factory: () => ({
+          ...makeTool("context_probe"),
+          execute,
+        }),
+      },
+    ]);
+    const [tool] = resolvePluginTools(createResolveToolsParams({ context: createContext() }));
+    const executionContext = {
+      runId: "run-context",
+      sessionKey: "agent:main:rovoclaw:default:direct:cli",
+      deliveryContext: { channel: "rovoclaw", to: "direct:original" },
+    };
+
+    await tool?.execute("call-context", {}, undefined, undefined, executionContext);
+
+    expect(execute).toHaveBeenCalledWith(
+      "call-context",
+      {},
+      undefined,
+      undefined,
+      executionContext,
+    );
+  });
+
   it("wraps every array tool callback and restores caller scope after errors", async () => {
     const context = createContext();
     const observed: Array<{ name: string; pluginId?: string; pluginSource?: string }> = [];
@@ -2023,11 +2063,19 @@ describe("resolvePluginTools optional tools", () => {
   });
 
   it("caches plugin tool descriptors and uses the runtime only on execution", async () => {
+    const observedExecutionContexts: unknown[] = [];
     const factory = vi.fn((rawCtx: unknown) => {
       const ctx = rawCtx as { sessionId?: string };
       return {
         ...makeTool("cached_tool"),
-        async execute() {
+        async execute(
+          _toolCallId: string,
+          _params: unknown,
+          _signal?: AbortSignal,
+          _onUpdate?: unknown,
+          executionContext?: unknown,
+        ) {
+          observedExecutionContexts.push(executionContext);
           return { content: [{ type: "text", text: ctx.sessionId ?? "missing" }] };
         },
       };
@@ -2059,9 +2107,17 @@ describe("resolvePluginTools optional tools", () => {
     expect(second[0]).not.toBe(first[0]);
     expect(loadOpenClawPluginsMock).not.toHaveBeenCalled();
 
-    await expect(second[0]?.execute("call", {}, undefined)).resolves.toEqual({
+    const executionContext = {
+      runId: "run-cached",
+      sessionKey: "agent:main:rovoclaw:default:direct:cli",
+      deliveryContext: { channel: "rovoclaw", to: "direct:original" },
+    };
+    await expect(
+      second[0]?.execute("call", {}, undefined, undefined, executionContext),
+    ).resolves.toEqual({
       content: [{ type: "text", text: "same" }],
     });
+    expect(observedExecutionContexts).toEqual([executionContext]);
     expect(factory).toHaveBeenCalledTimes(2);
   });
 
