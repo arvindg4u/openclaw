@@ -1,16 +1,16 @@
 import type { SettingsAppHost, SettingsHost } from "../app/app-host.ts";
 import { scheduleChatScroll } from "../ui/app-scroll.ts";
-import {
-  loadDreamDiary,
-  loadDreamingStatus,
-  loadWikiImportInsights,
-  loadWikiMemoryPalace,
-} from "../ui/controllers/dreaming.ts";
 import { loadModelAuthStatusState } from "../ui/controllers/model-auth-status.ts";
 import { normalizeAgentId, parseAgentSessionKey } from "../ui/session-key.ts";
 import { loadAgents } from "./agents/data.ts";
 import { refreshChat } from "./chat/data.ts";
 import { loadConfig, loadConfigSchema } from "./config/data.ts";
+import {
+  loadDreamDiary,
+  loadDreamingStatus,
+  loadWikiImportInsights,
+  loadWikiMemoryPalace,
+} from "./dreams/data.ts";
 import { loadSessions } from "./sessions/data.ts";
 import { loadUsage } from "./usage/data.ts";
 
