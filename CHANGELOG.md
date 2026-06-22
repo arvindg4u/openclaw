@@ -2,6 +2,12 @@
 
 Docs: https://docs.openclaw.ai
 
+## 2026.6.11-alpha.1
+
+### Fixes
+
+- Alpha nightly validation carries forward release-gate fixes for channel progress finalization, embedded fallback coverage, Codex auth startup contracts, run-node signal injection, Feishu media temp handling, and publish-scan review coverage for Raft and Signal plugin subprocess boundaries.
+
 ## 2026.6.9
 
 ### Highlights
