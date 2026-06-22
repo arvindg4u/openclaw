@@ -19,14 +19,6 @@ import type {
   ChatInputHistoryKeyResult,
 } from "../../ui/chat/input-history.ts";
 import { getPinnedMessageSummary } from "../../ui/chat/pinned-summary.ts";
-import {
-  REALTIME_TALK_FALLBACK_PROVIDERS,
-  listSelectableRealtimeTalkProviders,
-  resolveControlUiRealtimeTalkProviderTransports,
-  type RealtimeTalkCatalogProvider,
-} from "../../ui/chat/realtime-talk-catalog.ts";
-import type { RealtimeTalkConversationEntry } from "../../ui/chat/realtime-talk-conversation.ts";
-import type { RealtimeTalkStatus } from "../../ui/chat/realtime-talk.ts";
 import type { ChatRunUiStatus } from "../../ui/chat/run-lifecycle.ts";
 import { getOrCreateSessionCacheValue } from "../../ui/chat/session-cache.ts";
 import {
@@ -67,6 +59,14 @@ import {
 } from "./grouped-render.ts";
 import { CHAT_HISTORY_RENDER_LIMIT } from "./history-limits.ts";
 import { PinnedMessages } from "./pinned-messages.ts";
+import {
+  REALTIME_TALK_FALLBACK_PROVIDERS,
+  listSelectableRealtimeTalkProviders,
+  resolveControlUiRealtimeTalkProviderTransports,
+  type RealtimeTalkCatalogProvider,
+} from "./realtime-talk-catalog.ts";
+import type { RealtimeTalkConversationEntry } from "./realtime-talk-conversation.ts";
+import type { RealtimeTalkStatus } from "./realtime-talk.ts";
 import { renderChatRunControls } from "./run-controls.ts";
 import { renderSideResult } from "./side-result-render.ts";
 import type { ChatSideResult } from "./side-result.ts";
