@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConfigWriteNotification } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { GMailWatcherStartupOutcome } from "../hooks/gmail-watcher-lifecycle.js";
 import { consumeGatewaySigusr1RestartIntent } from "../infra/restart.js";
 import {
   pinActivePluginChannelRegistry,
@@ -36,11 +37,16 @@ type GmailWatcherRestartParams = {
   signal?: AbortSignal;
 };
 
-type StartGmailWatcherWithLogs = (params: GmailWatcherRestartParams) => Promise<void>;
+type StartGmailWatcherWithLogs = (
+  params: GmailWatcherRestartParams,
+) => Promise<GMailWatcherStartupOutcome>;
 type StopGmailWatcher = () => Promise<void>;
 
 const hoisted = vi.hoisted(() => ({
-  startGmailWatcherWithLogs: vi.fn<StartGmailWatcherWithLogs>(async () => {}),
+  startGmailWatcherWithLogs: vi.fn<StartGmailWatcherWithLogs>(async () => ({
+    sidecar: "gmail-watch",
+    status: "started",
+  })),
   stopGmailWatcher: vi.fn<StopGmailWatcher>(async () => {}),
   activeTaskCount: { value: 0 },
   activeTaskBlockers: [] as Array<{
@@ -1208,6 +1214,7 @@ describe("gateway Gmail hot reload handlers", () => {
         await new Promise<void>((resolve) => {
           params.signal?.addEventListener("abort", () => resolve(), { once: true });
         });
+        return { sidecar: "gmail-watch", status: "skipped", reason: "startup-cancelled" };
       },
     );
     const initialConfig = createGmailConfig("old@example.com");

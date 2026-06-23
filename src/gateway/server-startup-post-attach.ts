@@ -7,6 +7,7 @@ import { resolveStateDir } from "../config/paths.js";
 import type { GatewayTailscaleMode } from "../config/types.gateway.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { hasConfiguredInternalHooks } from "../hooks/configured.js";
+import type { GMailWatcherStartupOutcome } from "../hooks/gmail-watcher-lifecycle.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { hasRestartSentinel } from "../infra/restart-sentinel.js";
 import type { scheduleGatewayUpdateCheck } from "../infra/update-startup.js";
@@ -419,6 +420,13 @@ function schedulePostReadySidecarTask(params: {
   };
 }
 
+function formatGmailWatcherStartupOutcome(outcome: GMailWatcherStartupOutcome): string {
+  if (outcome.status === "skipped") {
+    return `${outcome.sidecar}=skipped:${outcome.reason}`;
+  }
+  return `${outcome.sidecar}=${outcome.status}`;
+}
+
 type CleanStaleLockFiles = typeof import("../agents/session-write-lock.js").cleanStaleLockFiles;
 type MarkRestartAbortedMainSessionsFromLocks =
   typeof import("../agents/main-session-restart-recovery.js").markRestartAbortedMainSessionsFromLocks;
@@ -687,7 +695,7 @@ export async function startGatewaySidecars(params: {
   prewarmPrimaryModel?: typeof prewarmConfiguredPrimaryModel;
   onPluginServices?: (pluginServices: PluginServicesHandle | null) => void;
   shouldStartPluginServices?: () => boolean;
-  log: { warn: (msg: string) => void };
+  log: { info?: (msg: string) => void; warn: (msg: string) => void };
   logHooks: {
     info: (msg: string) => void;
     warn: (msg: string) => void;
@@ -899,7 +907,7 @@ export async function startGatewaySidecars(params: {
     },
   });
 
-  if (params.cfg.hooks?.enabled && params.cfg.hooks.gmail?.account) {
+  if (params.cfg.hooks?.enabled && params.cfg.hooks.gmail) {
     postReadySidecars.push(
       schedulePostReadySidecarTask({
         startupTrace: params.startupTrace,
@@ -910,12 +918,15 @@ export async function startGatewaySidecars(params: {
           if (isStopped()) {
             return;
           }
-          await startGmailWatcherWithLogs({
+          const outcome = await startGmailWatcherWithLogs({
             cfg: params.cfg,
             log: params.logHooks,
             isCancelled: isStopped,
             signal,
           });
+          params.log.info?.(
+            `gateway startup sidecar outcomes: ${formatGmailWatcherStartupOutcome(outcome)}`,
+          );
         },
       }),
     );
@@ -1411,5 +1422,6 @@ export const testing = {
   schedulePrimaryModelPrewarm,
   shouldSkipStartupModelPrewarm,
   stopPostReadySidecarsAfterCloseStarted,
+  formatGmailWatcherStartupOutcome,
 };
 export { testing as __testing };

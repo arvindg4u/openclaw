@@ -16,7 +16,10 @@ import { withEnvAsync } from "../test-utils/env.js";
 
 const hoisted = vi.hoisted(() => {
   const startPluginServices = vi.fn<() => Promise<PluginServicesHandle | null>>(async () => null);
-  const startGmailWatcherWithLogs = vi.fn(async () => {});
+  const startGmailWatcherWithLogs = vi.fn(async () => ({
+    sidecar: "gmail-watch" as const,
+    status: "started" as const,
+  }));
   const loadInternalHooks = vi.fn(async () => 0);
   const setInternalHooksEnabled = vi.fn();
   const hasInternalHookListeners = vi.fn(() => false);
@@ -304,6 +307,10 @@ describe("startGatewayPostAttachRuntime", () => {
     vi.stubEnv("OPENCLAW_SKIP_PROVIDERS", "0");
     hoisted.startPluginServices.mockClear();
     hoisted.startGmailWatcherWithLogs.mockClear();
+    hoisted.startGmailWatcherWithLogs.mockResolvedValue({
+      sidecar: "gmail-watch",
+      status: "started",
+    });
     hoisted.loadInternalHooks.mockClear();
     hoisted.setInternalHooksEnabled.mockClear();
     hoisted.hasInternalHookListeners.mockReset();
@@ -1761,6 +1768,42 @@ describe("startGatewayPostAttachRuntime", () => {
     await vi.waitFor(() => {
       expect(log.warn).toHaveBeenCalledWith(
         "sidecars.gmail-watch failed after gateway ready: Error: boom",
+      );
+    });
+  });
+
+  it("summarizes missing-account Gmail watcher startup outcome", async () => {
+    const log = { info: vi.fn(), warn: vi.fn() };
+    hoisted.startGmailWatcherWithLogs.mockResolvedValueOnce({
+      sidecar: "gmail-watch",
+      status: "skipped",
+      reason: "missing-account",
+    });
+
+    const result = await startGatewaySidecars({
+      cfg: {
+        hooks: { enabled: true, internal: { enabled: false }, gmail: {} },
+      } as never,
+      pluginRegistry: createPostAttachParams().pluginRegistry,
+      defaultWorkspaceDir: "/tmp/openclaw-workspace",
+      deps: {} as never,
+      startChannels: vi.fn(async () => {}),
+      log,
+      logHooks: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      },
+      logChannels: {
+        info: vi.fn(),
+        error: vi.fn(),
+      },
+    });
+
+    expect(result.postReadySidecars).toHaveLength(1);
+    await vi.waitFor(() => {
+      expect(log.info).toHaveBeenCalledWith(
+        "gateway startup sidecar outcomes: gmail-watch=skipped:missing-account",
       );
     });
   });
