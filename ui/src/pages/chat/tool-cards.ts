@@ -3,6 +3,7 @@ import { html, nothing } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { extractCanvasFromText } from "../../../../src/chat/canvas-render.js";
 import { icons } from "../../components/icons.ts";
+import "../../components/tooltip.ts";
 import { t } from "../../i18n/index.ts";
 import { resolveCanvasIframeUrl } from "../../ui/canvas-url.ts";
 import { resolveEmbedSandbox, type EmbedSandboxMode } from "../../ui/embed-sandbox.ts";
@@ -738,15 +739,16 @@ export function renderExpandedToolCardContent(
         ${canOpenSidebar
           ? html`
               <div class="chat-tool-card__actions">
-                <button
-                  class="chat-tool-card__action-btn"
-                  type="button"
-                  @click=${() => onOpenSidebar?.(sidebarActionContent)}
-                  title="Open in the side panel"
-                  aria-label="Open tool details in side panel"
-                >
-                  <span class="chat-tool-card__action-icon">${icons.panelRightOpen}</span>
-                </button>
+                <openclaw-tooltip content="Open in the side panel">
+                  <button
+                    class="chat-tool-card__action-btn"
+                    type="button"
+                    @click=${() => onOpenSidebar?.(sidebarActionContent)}
+                    aria-label="Open tool details in side panel"
+                  >
+                    <span class="chat-tool-card__action-icon">${icons.panelRightOpen}</span>
+                  </button>
+                </openclaw-tooltip>
               </div>
             `
           : nothing}

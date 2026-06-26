@@ -11,6 +11,7 @@ import type {
 } from "../../api/types.ts";
 import { pathForRoute } from "../../app-routes.ts";
 import { icons } from "../../components/icons.ts";
+import "../../components/tooltip.ts";
 import { t } from "../../i18n/index.ts";
 import { formatRelativeTimestamp, parseSessionKeyParts } from "../../lib/format.ts";
 import { formatSessionTokens } from "../../lib/presenter.ts";
@@ -215,14 +216,12 @@ function renderSessionStatusBadge(row: GatewaySessionRow) {
   const badge = resolveSessionStatusBadge(row);
   const title = `${t("sessionsView.status")}: ${badge.label}`;
   return html`
-    <span
-      class="session-status-badge session-status-badge--${badge.tone}"
-      title=${title}
-      aria-label=${title}
-    >
-      <span class="session-status-badge__dot" aria-hidden="true"></span>
-      <span class="session-status-badge__label">${badge.label}</span>
-    </span>
+    <openclaw-tooltip .content=${title}>
+      <span class="session-status-badge session-status-badge--${badge.tone}" aria-label=${title}>
+        <span class="session-status-badge__dot" aria-hidden="true"></span>
+        <span class="session-status-badge__label">${badge.label}</span>
+      </span>
+    </openclaw-tooltip>
   `;
 }
 
@@ -395,15 +394,14 @@ function renderSessionGoalChip(goal: GatewaySessionRow["goal"]) {
   if (!goal) {
     return nothing;
   }
+  const title = formatGoalDetail(goal);
   return html`
-    <span
-      class="session-goal-chip session-goal-chip--${goal.status}"
-      title=${formatGoalDetail(goal)}
-      aria-label=${formatGoalDetail(goal)}
-    >
-      <span class="session-goal-chip__label">${formatGoalSummary(goal)}</span>
-      <span class="session-goal-chip__objective">${goal.objective}</span>
-    </span>
+    <openclaw-tooltip .content=${title}>
+      <span class="session-goal-chip session-goal-chip--${goal.status}" aria-label=${title}>
+        <span class="session-goal-chip__label">${formatGoalSummary(goal)}</span>
+        <span class="session-goal-chip__objective">${goal.objective}</span>
+      </span>
+    </openclaw-tooltip>
   `;
 }
 
@@ -478,17 +476,19 @@ function renderFilterToggle(params: {
     .filter(Boolean)
     .join(" ");
   return html`
-    <label class=${className} data-tooltip=${params.title}>
-      <input
-        name=${params.name}
-        class="session-filter-check__input"
-        type="checkbox"
-        .checked=${params.checked}
-        @change=${(e: Event) => params.onChange((e.target as HTMLInputElement).checked)}
-      />
-      <span class="session-filter-check__mark" aria-hidden="true">${icons.check}</span>
-      <span class="session-filter-check__label">${params.label}</span>
-    </label>
+    <openclaw-tooltip .content=${params.title}>
+      <label class=${className}>
+        <input
+          name=${params.name}
+          class="session-filter-check__input"
+          type="checkbox"
+          .checked=${params.checked}
+          @change=${(e: Event) => params.onChange((e.target as HTMLInputElement).checked)}
+        />
+        <span class="session-filter-check__mark" aria-hidden="true">${icons.check}</span>
+        <span class="session-filter-check__label">${params.label}</span>
+      </label>
+    </openclaw-tooltip>
   `;
 }
 
@@ -572,38 +572,42 @@ export function renderSessions(props: SessionsProps) {
                 aria-label="Session filters"
               >
                 <div class="session-filter-primary-row">
-                  <label class="session-filter-field" data-tooltip=${activeTooltip}>
-                    <span class="session-filter-label">${t("sessionsView.active")}</span>
-                    <input
-                      class="session-filter-input session-filter-input--minutes"
-                      placeholder=${t("sessionsView.minutesPlaceholder")}
-                      .value=${props.activeMinutes}
-                      ?disabled=${props.showArchived}
-                      @input=${(e: Event) =>
-                        props.onFiltersChange({
-                          activeMinutes: (e.target as HTMLInputElement).value,
-                          limit: props.limit,
-                          includeGlobal: props.includeGlobal,
-                          includeUnknown: props.includeUnknown,
-                          showArchived: props.showArchived,
-                        })}
-                    />
-                  </label>
-                  <label class="session-filter-field" data-tooltip=${limitTooltip}>
-                    <span class="session-filter-label">${t("sessionsView.limit")}</span>
-                    <input
-                      class="session-filter-input session-filter-input--limit"
-                      .value=${props.limit}
-                      @input=${(e: Event) =>
-                        props.onFiltersChange({
-                          activeMinutes: props.activeMinutes,
-                          limit: (e.target as HTMLInputElement).value,
-                          includeGlobal: props.includeGlobal,
-                          includeUnknown: props.includeUnknown,
-                          showArchived: props.showArchived,
-                        })}
-                    />
-                  </label>
+                  <openclaw-tooltip .content=${activeTooltip}>
+                    <label class="session-filter-field">
+                      <span class="session-filter-label">${t("sessionsView.active")}</span>
+                      <input
+                        class="session-filter-input session-filter-input--minutes"
+                        placeholder=${t("sessionsView.minutesPlaceholder")}
+                        .value=${props.activeMinutes}
+                        ?disabled=${props.showArchived}
+                        @input=${(e: Event) =>
+                          props.onFiltersChange({
+                            activeMinutes: (e.target as HTMLInputElement).value,
+                            limit: props.limit,
+                            includeGlobal: props.includeGlobal,
+                            includeUnknown: props.includeUnknown,
+                            showArchived: props.showArchived,
+                          })}
+                      />
+                    </label>
+                  </openclaw-tooltip>
+                  <openclaw-tooltip .content=${limitTooltip}>
+                    <label class="session-filter-field">
+                      <span class="session-filter-label">${t("sessionsView.limit")}</span>
+                      <input
+                        class="session-filter-input session-filter-input--limit"
+                        .value=${props.limit}
+                        @input=${(e: Event) =>
+                          props.onFiltersChange({
+                            activeMinutes: props.activeMinutes,
+                            limit: (e.target as HTMLInputElement).value,
+                            includeGlobal: props.includeGlobal,
+                            includeUnknown: props.includeUnknown,
+                            showArchived: props.showArchived,
+                          })}
+                      />
+                    </label>
+                  </openclaw-tooltip>
                 </div>
                 <div
                   class="session-filter-toggle-group"
@@ -902,37 +906,36 @@ function renderRows(row: GatewaySessionRow, props: SessionsProps) {
         />
       </td>
       <td class="data-table-key-col">
-        <div
-          class=${friendlyKeyLabel ? "session-key-cell" : "mono session-key-cell"}
-          title=${keyCellTitle}
-        >
-          ${canLink
-            ? html`<a
-                href=${chatUrl}
-                class="session-link"
-                @click=${(e: MouseEvent) => {
-                  if (
-                    e.defaultPrevented ||
-                    e.button !== 0 ||
-                    e.metaKey ||
-                    e.ctrlKey ||
-                    e.shiftKey ||
-                    e.altKey
-                  ) {
-                    return;
-                  }
-                  if (props.onNavigateToChat) {
-                    e.preventDefault();
-                    props.onNavigateToChat(row.key);
-                  }
-                }}
-                >${friendlyKeyLabel ?? row.key}</a
-              >`
-            : (friendlyKeyLabel ?? row.key)}
-          ${showDisplayName
-            ? html`<span class="muted session-key-display-name">${displayName}</span>`
-            : nothing}
-        </div>
+        <openclaw-tooltip .content=${keyCellTitle}>
+          <div class=${friendlyKeyLabel ? "session-key-cell" : "mono session-key-cell"}>
+            ${canLink
+              ? html`<a
+                  href=${chatUrl}
+                  class="session-link"
+                  @click=${(e: MouseEvent) => {
+                    if (
+                      e.defaultPrevented ||
+                      e.button !== 0 ||
+                      e.metaKey ||
+                      e.ctrlKey ||
+                      e.shiftKey ||
+                      e.altKey
+                    ) {
+                      return;
+                    }
+                    if (props.onNavigateToChat) {
+                      e.preventDefault();
+                      props.onNavigateToChat(row.key);
+                    }
+                  }}
+                  >${friendlyKeyLabel ?? row.key}</a
+                >`
+              : (friendlyKeyLabel ?? row.key)}
+            ${showDisplayName
+              ? html`<span class="muted session-key-display-name">${displayName}</span>`
+              : nothing}
+          </div>
+        </openclaw-tooltip>
       </td>
       <td>
         <input
@@ -1057,19 +1060,25 @@ function renderRows(row: GatewaySessionRow, props: SessionsProps) {
       <td>
         ${props.onAddToWorkboard && canLink
           ? html`
-              <button
-                class="icon-btn"
-                title=${captured
+              <openclaw-tooltip
+                .content=${captured
                   ? t("sessionsView.openWorkboardCard")
                   : t("sessionsView.addToWorkboard")}
-                ?disabled=${props.loading || captureBusy}
-                @click=${(event: MouseEvent) => {
-                  event.stopPropagation();
-                  void props.onAddToWorkboard?.(row);
-                }}
               >
-                ${captured ? icons.check : icons.plus}
-              </button>
+                <button
+                  class="icon-btn"
+                  aria-label=${captured
+                    ? t("sessionsView.openWorkboardCard")
+                    : t("sessionsView.addToWorkboard")}
+                  ?disabled=${props.loading || captureBusy}
+                  @click=${(event: MouseEvent) => {
+                    event.stopPropagation();
+                    void props.onAddToWorkboard?.(row);
+                  }}
+                >
+                  ${captured ? icons.check : icons.plus}
+                </button>
+              </openclaw-tooltip>
             `
           : nothing}
       </td>
@@ -1102,9 +1111,9 @@ function renderRows(row: GatewaySessionRow, props: SessionsProps) {
                     (item) => html`
                       <div class="session-detail-stat">
                         <div class="session-detail-stat__label">${item.label}</div>
-                        <div class="session-detail-stat__value" title=${item.value}>
-                          ${item.value}
-                        </div>
+                        <openclaw-tooltip .content=${item.value}>
+                          <div class="session-detail-stat__value">${item.value}</div>
+                        </openclaw-tooltip>
                       </div>
                     `,
                   )}

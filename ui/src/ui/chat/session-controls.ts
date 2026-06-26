@@ -4,6 +4,7 @@ import { repeat } from "lit/directives/repeat.js";
 import type { FastMode, GatewayThinkingLevelOption, SessionsListResult } from "../../api/types.ts";
 import { pathForRoute, type RouteId } from "../../app-routes.ts";
 import { icons } from "../../components/icons.ts";
+import "../../components/tooltip.ts";
 import { t } from "../../i18n/index.ts";
 import { formatDateTimeMs } from "../../lib/format.ts";
 import { isMonitoredAuthProvider } from "../../lib/model-auth-helpers.ts";
@@ -560,7 +561,6 @@ function renderChatSessionPicker(params: {
         class="chat-controls__session-trigger"
         data-chat-session-select="true"
         type="button"
-        title=${selectedSessionLabel}
         aria-label=${t("chat.selectors.session")}
         aria-haspopup="dialog"
         aria-expanded=${pickerOpen ? "true" : "false"}
@@ -649,29 +649,31 @@ function renderChatSessionPickerPopover(
             }}
           />
         </label>
-        <button
-          class="btn btn--ghost btn--icon chat-session-picker__icon-button"
-          data-chat-session-search-submit="true"
-          type="button"
-          title=${t("common.search")}
-          aria-label=${t("common.search")}
-          ?disabled=${controlsDisabled}
-          @click=${() => void applyChatSessionPickerSearch(state)}
-        >
-          ${icons.search}
-        </button>
+        <openclaw-tooltip .content=${t("common.search")}>
+          <button
+            class="btn btn--ghost btn--icon chat-session-picker__icon-button"
+            data-chat-session-search-submit="true"
+            type="button"
+            aria-label=${t("common.search")}
+            ?disabled=${controlsDisabled}
+            @click=${() => void applyChatSessionPickerSearch(state)}
+          >
+            ${icons.search}
+          </button>
+        </openclaw-tooltip>
         ${hasQuery
-          ? html`<button
-              class="btn btn--ghost btn--icon chat-session-picker__icon-button"
-              data-chat-session-search-clear="true"
-              type="button"
-              title=${t("chat.selectors.clearSessionSearch")}
-              aria-label=${t("chat.selectors.clearSessionSearch")}
-              ?disabled=${controlsDisabled}
-              @click=${() => clearChatSessionPickerSearch(state)}
-            >
-              ${icons.x}
-            </button>`
+          ? html`<openclaw-tooltip .content=${t("chat.selectors.clearSessionSearch")}>
+              <button
+                class="btn btn--ghost btn--icon chat-session-picker__icon-button"
+                data-chat-session-search-clear="true"
+                type="button"
+                aria-label=${t("chat.selectors.clearSessionSearch")}
+                ?disabled=${controlsDisabled}
+                @click=${() => clearChatSessionPickerSearch(state)}
+              >
+                ${icons.x}
+              </button>
+            </openclaw-tooltip>`
           : ""}
       </div>
       ${state.chatSessionPickerError
@@ -702,7 +704,6 @@ function renderChatSessionPickerPopover(
                 data-session-key=${row.key}
                 role="option"
                 aria-selected=${selected ? "true" : "false"}
-                title=${label}
                 type="button"
                 @click=${() => {
                   closeChatSessionPicker(state);
@@ -808,7 +809,6 @@ function renderChatAgentSelect(
       <select
         data-chat-agent-filter="true"
         aria-label=${t("chat.selectors.agentFilter")}
-        title=${selectedLabel}
         .value=${activeAgentId}
         ?disabled=${!state.connected}
         @change=${(e: Event) => {
@@ -1142,7 +1142,6 @@ function renderChatModelReasoningSelect(params: {
         data-chat-thinking-disabled=${thinkingDisabled ? "true" : "false"}
         aria-label=${`${t("chat.selectors.model")}, ${t("chat.selectors.thinkingLevel")}: ${triggerLabel}`}
         aria-disabled=${disabled ? "true" : "false"}
-        title=${triggerLabel}
         @click=${(event: MouseEvent) => {
           if (disabled) {
             event.preventDefault();

@@ -1,6 +1,7 @@
 // Control UI view renders usage screen content.
 import { html, nothing } from "lit";
 import { t } from "../../i18n/index.ts";
+import "../../components/tooltip.ts";
 import { getUsageCacheRefreshTitle } from "./cache-status.ts";
 import { extractQueryTerms, filterSessionsByQuery } from "./helpers.ts";
 import {
@@ -511,7 +512,6 @@ export function renderUsage(props: UsageProps) {
               : nothing}
             <button
               class="btn btn--sm usage-pin-btn ${display.headerPinned ? "active" : ""}"
-              title=${display.headerPinned ? t("usage.filters.unpin") : t("usage.filters.pin")}
               @click=${filterActions.onToggleHeaderPinned}
             >
               ${display.headerPinned ? t("usage.filters.pinned") : t("usage.filters.pin")}
@@ -724,15 +724,17 @@ export function renderUsage(props: UsageProps) {
                     return html`
                       <span class="usage-query-chip">
                         ${label}
-                        <button
-                          title=${t("usage.filters.remove")}
-                          @click=${() =>
-                            filterActions.onQueryDraftChange(
-                              removeQueryToken(filters.queryDraft, label),
-                            )}
-                        >
-                          ×
-                        </button>
+                        <openclaw-tooltip .content=${t("usage.filters.remove")}>
+                          <button
+                            aria-label=${t("usage.filters.remove")}
+                            @click=${() =>
+                              filterActions.onQueryDraftChange(
+                                removeQueryToken(filters.queryDraft, label),
+                              )}
+                          >
+                            ×
+                          </button>
+                        </openclaw-tooltip>
                       </span>
                     `;
                   })}
