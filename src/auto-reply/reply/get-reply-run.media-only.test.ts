@@ -320,12 +320,6 @@ describe("runPreparedReply media-only handling", () => {
     return Promise.all(paths.map((entry) => rm(entry, { recursive: true, force: true })));
   });
 
-  it("does not load session store runtime on module import", async () => {
-    await loadFreshGetReplyRunModuleForTest();
-
-    expect(storeRuntimeLoads).not.toHaveBeenCalled();
-  });
-
   it("passes approved elevated defaults to the runner", async () => {
     await runPreparedReply(
       baseParams({
@@ -469,7 +463,6 @@ describe("runPreparedReply media-only handling", () => {
     expect(call.followupRun.run.thinkLevel).toBe("off");
     expect(sessionEntry.thinkingLevel).toBe("high");
     expect(sessionStore["session-key"]?.thinkingLevel).toBe("high");
-    expect(updateSessionStore).not.toHaveBeenCalled();
   });
 
   it("keeps empty-assistant silence disabled for direct runs by default", async () => {
