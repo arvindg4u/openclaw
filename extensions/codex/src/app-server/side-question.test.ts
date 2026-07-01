@@ -1790,16 +1790,27 @@ describe("runCodexAppServerSideQuestion", () => {
       unsubscribeDiagnostics();
     }
 
+    type ToolExecutionEvent = Extract<
+      DiagnosticEventPayload,
+      {
+        type:
+          | "tool.execution.started"
+          | "tool.execution.completed"
+          | "tool.execution.error"
+          | "tool.execution.blocked";
+      }
+    >;
+    const toolEvents = diagnosticEvents.filter((event): event is ToolExecutionEvent =>
+      event.type.startsWith("tool.execution."),
+    );
     expect(
-      diagnosticEvents
-        .filter((event) => event.type.startsWith("tool.execution."))
-        .map((event) => ({
-          type: event.type,
-          agentId: event.agentId,
-          toolName: "toolName" in event ? event.toolName : undefined,
-          toolCallId: "toolCallId" in event ? event.toolCallId : undefined,
-          durationMs: "durationMs" in event ? event.durationMs : undefined,
-        })),
+      toolEvents.map((event) => ({
+        type: event.type,
+        agentId: event.agentId,
+        toolName: "toolName" in event ? event.toolName : undefined,
+        toolCallId: "toolCallId" in event ? event.toolCallId : undefined,
+        durationMs: "durationMs" in event ? event.durationMs : undefined,
+      })),
     ).toEqual([
       {
         type: "tool.execution.started",
