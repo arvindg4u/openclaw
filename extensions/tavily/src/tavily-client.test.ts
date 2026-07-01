@@ -56,11 +56,13 @@ describe("tavily client X-Client-Source header", () => {
   });
 
   it("runTavilySearch sends X-Client-Source: openclaw", async () => {
-    await runTavilySearch({ query: "test query" });
+    const signal = new AbortController().signal;
+    await runTavilySearch({ query: "test query", signal });
 
     expect(postTrustedWebToolsJson).toHaveBeenCalledOnce();
     const params = postTrustedWebToolsJson.mock.calls[0]?.[0];
     expect(params.extraHeaders).toEqual({ "X-Client-Source": "openclaw" });
+    expect(params.signal).toBe(signal);
   });
 
   it("routes a configured SecretRef operation through the credential broker", async () => {
@@ -82,7 +84,8 @@ describe("tavily client X-Client-Source header", () => {
       })),
     };
 
-    await runTavilySearch({ query: "test query", credentialBroker });
+    const signal = new AbortController().signal;
+    await runTavilySearch({ query: "test query", credentialBroker, signal });
 
     expect(credentialBroker.createRequest).toHaveBeenCalledWith({
       operationId: "search",
@@ -91,7 +94,7 @@ describe("tavily client X-Client-Source header", () => {
         max_results: 5,
       },
     });
-    expect(execute).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledWith({ signal });
     expect(resolveTavilyApiKey).not.toHaveBeenCalled();
     expect(postTrustedWebToolsJson).not.toHaveBeenCalled();
   });

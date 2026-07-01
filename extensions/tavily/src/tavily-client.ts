@@ -107,6 +107,7 @@ async function postTavilyJson(params: {
       body: params.body,
       errorLabel: params.errorLabel,
       extraHeaders: { "X-Client-Source": "openclaw" },
+      signal: params.signal,
     },
     async (response) =>
       readTavilyJsonResponse(response, params.errorLabel, {
