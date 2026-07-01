@@ -1154,6 +1154,7 @@ async function agentCommandInternal(
         agentId: sessionAgentId,
         lifecycleGeneration,
         abortSignal: opts.abortSignal,
+        stopReason,
       });
 
       const result = applyAgentRunAbortMetadata(
