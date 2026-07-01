@@ -13,6 +13,7 @@ import {
   type TrustedToolExecutionEvent,
 } from "../../infra/diagnostic-events.js";
 import {
+  buildAcpResult,
   emitAcpLifecycleEnd,
   emitAcpLifecycleError,
   emitAcpPromptSubmitted,
@@ -40,6 +41,16 @@ beforeEach(() => {
 });
 
 describe("ACP diagnostic events", () => {
+  it("preserves cancelled result metadata without a stop reason", () => {
+    const result = buildAcpResult({
+      payloadText: "",
+      startedAt: Date.now(),
+      resultStatus: "cancelled",
+    });
+
+    expect(result.meta).toMatchObject({ aborted: true, stopReason: "stop" });
+  });
+
   it("emits prompt-submitted state with proxy env names but not values", () => {
     const previous = process.env.HTTPS_PROXY;
     process.env.HTTPS_PROXY = "http://proxy.example.invalid:8080";
@@ -159,7 +170,12 @@ describe("ACP diagnostic events", () => {
     });
     emitAcpRuntimeEvent({
       ...params,
-      event: { type: "done", stopReason: "end_turn" },
+      event: { type: "done", status: "completed", stopReason: "end_turn" },
+    });
+    emitAcpLifecycleEnd({
+      ...params,
+      resultStatus: "completed",
+      stopReason: "end_turn",
     });
 
     expect(capturedTools).toMatchObject([
@@ -209,7 +225,11 @@ describe("ACP diagnostic events", () => {
     });
     emitAcpRuntimeEvent({
       ...params,
-      event: { type: "done", stopReason: "manual-cancel" },
+      event: { type: "done", status: "cancelled" },
+    });
+    emitAcpLifecycleEnd({
+      ...params,
+      resultStatus: "cancelled",
     });
 
     expect(capturedTools).toMatchObject([
@@ -222,10 +242,6 @@ describe("ACP diagnostic events", () => {
       },
     ]);
 
-    emitAcpLifecycleEnd({
-      runId: "run-cancelled-lifecycle",
-      stopReason: "manual-cancel",
-    });
     expect(captured.at(-1)?.data).toMatchObject({
       phase: "end",
       aborted: true,
@@ -255,7 +271,12 @@ describe("ACP diagnostic events", () => {
     abortController.abort(Object.assign(new Error("timed out"), { name: "TimeoutError" }));
     emitAcpRuntimeEvent({
       ...params,
-      event: { type: "done", stopReason: "timeout" },
+      event: { type: "done", status: "cancelled", stopReason: "timeout" },
+    });
+    emitAcpLifecycleEnd({
+      ...params,
+      resultStatus: "cancelled",
+      stopReason: "timeout",
     });
 
     expect(capturedTools).toMatchObject([

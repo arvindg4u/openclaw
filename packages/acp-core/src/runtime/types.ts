@@ -127,6 +127,8 @@ export type AcpRuntimeEvent =
     }
   | {
       type: "done";
+      /** Closed result status when the manager synthesizes the terminal event. */
+      status?: "completed" | "cancelled";
       stopReason?: string;
     }
   | {

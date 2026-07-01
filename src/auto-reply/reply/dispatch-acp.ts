@@ -536,18 +536,62 @@ export async function tryDispatchAcpReply(params: {
       recordProcessed: params.recordProcessed,
       markIdle: params.markIdle,
     });
+  const requestId = resolveAcpRequestId(params.ctx);
+  const auditRunId = normalizeOptionalString(params.runId) ?? requestId;
+  const auditRuntime = await loadDispatchAcpAuditRuntime();
+  let auditFinished = false;
+  let auditTerminalOutcome: "blocked" | undefined;
+  let auditStopReason: string | undefined;
+  let auditResultStatus: "completed" | "cancelled" | undefined;
+  auditRuntime.emitAcpLifecycleStart({
+    runId: auditRunId,
+    sessionKey: canonicalSessionKey,
+    agentId: acpAgentId,
+    startedAt: Date.now(),
+  });
+  const emitAuditEnd = () => {
+    if (auditFinished) {
+      return;
+    }
+    auditFinished = true;
+    auditRuntime.emitAcpLifecycleEnd({
+      runId: auditRunId,
+      sessionKey: canonicalSessionKey,
+      agentId: acpAgentId,
+      ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
+      ...(auditStopReason ? { stopReason: auditStopReason } : {}),
+      ...(auditResultStatus ? { resultStatus: auditResultStatus } : {}),
+    });
+  };
+  const emitAuditError = (error: unknown) => {
+    if (auditFinished) {
+      return;
+    }
+    auditFinished = true;
+    auditRuntime.emitAcpLifecycleError({
+      runId: auditRunId,
+      sessionKey: canonicalSessionKey,
+      agentId: acpAgentId,
+      ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
+      ...(auditTerminalOutcome ? { terminalOutcome: auditTerminalOutcome } : {}),
+      error,
+    });
+  };
   try {
     const dispatchPolicyError = resolveAcpDispatchPolicyError(params.cfg);
     if (dispatchPolicyError) {
+      auditTerminalOutcome = "blocked";
       throw dispatchPolicyError;
     }
     if (isRestrictiveRuntimeToolsAllow(params.toolsAllow)) {
+      auditTerminalOutcome = "blocked";
       throw new AcpRuntimeError(
         "ACP_DISPATCH_DISABLED",
         "ACP dispatch cannot enforce runtime toolsAllow for this session; use an embedded runtime for restricted tool policy.",
       );
     }
     if (acpResolution.kind === "stale") {
+      emitAuditError(acpResolution.error);
       await maybeUnbindStaleBoundConversations({
         targetSessionKey: canonicalSessionKey,
         error: acpResolution.error,
@@ -563,6 +607,7 @@ export async function tryDispatchAcpReply(params: {
     }
     const agentPolicyError = resolveAcpAgentPolicyError(params.cfg, resolvedAcpAgent);
     if (agentPolicyError) {
+      auditTerminalOutcome = "blocked";
       throw agentPolicyError;
     }
     let extractedFileImages = params.extractedFileImages ?? [];
@@ -632,6 +677,7 @@ export async function tryDispatchAcpReply(params: {
         })
       : promptText;
     if (!turnPromptText && attachments.length === 0) {
+      emitAuditEnd();
       const counts = params.dispatcher.getQueuedCounts();
       delivery.applyRoutedCounts(counts);
       params.recordProcessed("completed", { reason: "acp_empty_prompt" });
@@ -645,59 +691,33 @@ export async function tryDispatchAcpReply(params: {
       logVerbose(`dispatch-acp: start reply lifecycle failed: ${formatErrorMessage(error)}`);
     }
 
-    const requestId = resolveAcpRequestId(params.ctx);
-    const auditRunId = normalizeOptionalString(params.runId) ?? requestId;
-    const auditRuntime = await loadDispatchAcpAuditRuntime();
-    let auditStopReason: string | undefined;
-    auditRuntime.emitAcpLifecycleStart({
-      runId: auditRunId,
+    await acpManager.runTurn({
+      cfg: params.cfg,
       sessionKey: canonicalSessionKey,
-      agentId: acpAgentId,
-      startedAt: Date.now(),
+      text: resolveAcpTurnText({
+        promptText: turnPromptText,
+        sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
+      }),
+      attachments: attachments.length > 0 ? attachments : undefined,
+      mode: "prompt",
+      requestId,
+      ...(params.abortSignal ? { signal: params.abortSignal } : {}),
+      onEvent: async (event) => {
+        auditRuntime.emitAcpRuntimeEvent({
+          runId: auditRunId,
+          sessionKey: canonicalSessionKey,
+          agentId: acpAgentId,
+          ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
+          event,
+        });
+        if (event.type === "done") {
+          auditStopReason = event.stopReason;
+          auditResultStatus = event.status;
+        }
+        await projector.onEvent(event);
+      },
     });
-    try {
-      await acpManager.runTurn({
-        cfg: params.cfg,
-        sessionKey: canonicalSessionKey,
-        text: resolveAcpTurnText({
-          promptText: turnPromptText,
-          sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
-        }),
-        attachments: attachments.length > 0 ? attachments : undefined,
-        mode: "prompt",
-        requestId,
-        ...(params.abortSignal ? { signal: params.abortSignal } : {}),
-        onEvent: async (event) => {
-          auditRuntime.emitAcpRuntimeEvent({
-            runId: auditRunId,
-            sessionKey: canonicalSessionKey,
-            agentId: acpAgentId,
-            ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
-            event,
-          });
-          if (event.type === "done") {
-            auditStopReason = event.stopReason;
-          }
-          await projector.onEvent(event);
-        },
-      });
-      auditRuntime.emitAcpLifecycleEnd({
-        runId: auditRunId,
-        sessionKey: canonicalSessionKey,
-        agentId: acpAgentId,
-        ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
-        ...(auditStopReason ? { stopReason: auditStopReason } : {}),
-      });
-    } catch (error) {
-      auditRuntime.emitAcpLifecycleError({
-        runId: auditRunId,
-        sessionKey: canonicalSessionKey,
-        agentId: acpAgentId,
-        ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
-        error,
-      });
-      throw error;
-    }
+    emitAuditEnd();
 
     await projector.flush(true);
     if (params.abortSignal?.aborted) {
@@ -748,6 +768,7 @@ export async function tryDispatchAcpReply(params: {
       fallbackCode: "ACP_TURN_FAILED",
       fallbackMessage: "ACP turn failed before completion.",
     });
+    emitAuditError(acpError);
     await maybeUnbindStaleBoundConversations({
       targetSessionKey: canonicalSessionKey,
       error: acpError,

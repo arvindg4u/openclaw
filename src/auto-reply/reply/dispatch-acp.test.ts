@@ -1459,6 +1459,11 @@ describe("tryDispatchAcpReply", () => {
       "ACP dispatch is disabled by policy.",
     );
     expect(bindingServiceMocks.unbind).not.toHaveBeenCalled();
+    expect(auditMocks.emitAcpLifecycleStart).toHaveBeenCalledOnce();
+    expect(auditMocks.emitAcpLifecycleError).toHaveBeenCalledWith(
+      expect.objectContaining({ terminalOutcome: "blocked" }),
+    );
+    expect(auditMocks.emitAcpLifecycleEnd).not.toHaveBeenCalled();
   });
 
   it("fails closed when ACP dispatch cannot enforce restrictive runtime toolsAllow", async () => {
@@ -1474,6 +1479,25 @@ describe("tryDispatchAcpReply", () => {
     expect(managerMocks.runTurn).not.toHaveBeenCalled();
     expect(dispatcherCall(dispatcher.sendFinalReply).isError).toBe(true);
     expect(dispatcherCall(dispatcher.sendFinalReply).text).toContain("runtime toolsAllow");
+    expect(auditMocks.emitAcpLifecycleError).toHaveBeenCalledWith(
+      expect.objectContaining({ terminalOutcome: "blocked" }),
+    );
+  });
+
+  it("audits ACP agent-policy rejections as blocked attempts", async () => {
+    setReadyAcpResolution();
+    policyMocks.resolveAcpAgentPolicyError.mockReturnValue(
+      new AcpRuntimeError("ACP_SESSION_INIT_FAILED", "ACP agent is not allowed by policy."),
+    );
+
+    await runDispatch({ bodyForAgent: "test" });
+
+    expect(managerMocks.runTurn).not.toHaveBeenCalled();
+    expect(auditMocks.emitAcpLifecycleStart).toHaveBeenCalledOnce();
+    expect(auditMocks.emitAcpLifecycleError).toHaveBeenCalledWith(
+      expect.objectContaining({ terminalOutcome: "blocked" }),
+    );
+    expect(auditMocks.emitAcpLifecycleEnd).not.toHaveBeenCalled();
   });
 
   it("allows wildcard runtime toolsAllow through ACP dispatch", async () => {
