@@ -113,6 +113,17 @@ export type AcpRuntimeEvent =
       toolCallId?: string;
       status?: string;
       title?: string;
+      kind?:
+        | "read"
+        | "edit"
+        | "delete"
+        | "move"
+        | "search"
+        | "execute"
+        | "fetch"
+        | "switch_mode"
+        | "think"
+        | "other";
     }
   | {
       type: "done";

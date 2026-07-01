@@ -72,6 +72,7 @@ import {
   recordStructuredReplaySafeToolCall,
   structuredReplaySafeToolCallIds,
 } from "./agent-tools.before-tool-call.state.js";
+import { resolveAgentRunAbortLifecycleFields } from "./run-termination.js";
 export {
   consumeAdjustedParamsForToolCall,
   consumePreExecutionBlockedToolCall,
@@ -1464,6 +1465,7 @@ export function wrapToolWithBeforeToolCallHook(
           ...(ctx?.runId && { runId: ctx.runId }),
           ...(ctx?.sessionKey && { sessionKey: ctx.sessionKey }),
           ...(ctx?.sessionId && { sessionId: ctx.sessionId }),
+          ...(ctx?.agentId && { agentId: ctx.agentId }),
           ...(trace && { trace }),
           toolName: normalizedToolName,
           ...diagnosticIdentity,
@@ -1522,6 +1524,7 @@ export function wrapToolWithBeforeToolCallHook(
         ...(ctx?.runId && { runId: ctx.runId }),
         ...(ctx?.sessionKey && { sessionKey: ctx.sessionKey }),
         ...(ctx?.sessionId && { sessionId: ctx.sessionId }),
+        ...(ctx?.agentId && { agentId: ctx.agentId }),
         ...(trace && { trace }),
         toolName: normalizedToolName,
         ...diagnosticIdentity,
@@ -1590,13 +1593,21 @@ export function wrapToolWithBeforeToolCallHook(
       } catch (err) {
         const cause = unwrapErrorCause(err);
         const errorCode = diagnosticHttpStatusCode(cause);
+        const abortFields = resolveAgentRunAbortLifecycleFields(signal);
+        const terminalReason = !abortFields.aborted
+          ? "failed"
+          : abortFields.stopReason === "timeout"
+            ? "timed_out"
+            : "cancelled";
         if (hookOptions.emitDiagnostics) {
           emitTrustedDiagnosticEventWithPrivateData(
             {
               type: "tool.execution.error",
               ...eventBase,
               durationMs: Date.now() - startedAt,
-              errorCategory: diagnosticErrorCategory(cause),
+              errorCategory:
+                terminalReason === "cancelled" ? "aborted" : diagnosticErrorCategory(cause),
+              terminalReason,
               ...(errorCode ? { errorCode } : {}),
             },
             buildToolContentPrivateData(toolContentPolicy, {

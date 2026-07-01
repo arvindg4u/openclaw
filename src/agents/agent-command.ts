@@ -969,14 +969,20 @@ async function agentCommandInternal(
       registerAgentRunContext(
         runId,
         suppressVisibleSessionEffects
-          ? { isControlUiVisible: false, lifecycleGeneration }
+          ? { agentId: sessionAgentId, isControlUiVisible: false, lifecycleGeneration }
           : {
               sessionKey,
               sessionId,
+              agentId: sessionAgentId,
               lifecycleGeneration,
             },
       );
-      attemptExecutionRuntime.emitAcpLifecycleStart({ runId, startedAt, lifecycleGeneration });
+      attemptExecutionRuntime.emitAcpLifecycleStart({
+        runId,
+        startedAt,
+        agentId: sessionAgentId,
+        lifecycleGeneration,
+      });
 
       const visibleTextAccumulator = attemptExecutionRuntime.createAcpVisibleTextAccumulator();
       let stopReason: string | undefined;
@@ -1025,6 +1031,8 @@ async function agentCommandInternal(
               attemptExecutionRuntime.emitAcpRuntimeEvent({
                 runId,
                 sessionKey,
+                agentId: sessionAgentId,
+                abortSignal: opts.abortSignal,
                 event,
               });
             }
@@ -1066,6 +1074,7 @@ async function agentCommandInternal(
           runId,
           error: acpError,
           sessionKey,
+          agentId: sessionAgentId,
           lifecycleGeneration,
           abortSignal: opts.abortSignal,
         });
@@ -1134,6 +1143,7 @@ async function agentCommandInternal(
           runId,
           error: restartAbortReason,
           sessionKey,
+          agentId: sessionAgentId,
           lifecycleGeneration,
           abortSignal: opts.abortSignal,
         });
@@ -1141,6 +1151,7 @@ async function agentCommandInternal(
       }
       attemptExecutionRuntime.emitAcpLifecycleEnd({
         runId,
+        agentId: sessionAgentId,
         lifecycleGeneration,
         abortSignal: opts.abortSignal,
       });
@@ -1178,6 +1189,7 @@ async function agentCommandInternal(
     if (sessionKey || suppressVisibleSessionEffects) {
       registerAgentRunContext(runId, {
         ...(sessionKey && !suppressVisibleSessionEffects ? { sessionKey, sessionId } : {}),
+        agentId: sessionAgentId,
         lifecycleGeneration,
         verboseLevel: resolvedVerboseLevel,
         isControlUiVisible: !suppressVisibleSessionEffects,

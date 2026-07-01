@@ -2,7 +2,10 @@
  * Orchestrates one agent attempt across embedded, CLI, and ACP runtimes.
  */
 import type { AcpRuntimeEvent } from "@openclaw/acp-core/runtime/types";
-import type { FastMode } from "@openclaw/normalization-core/string-coerce";
+import {
+  normalizeOptionalLowercaseString,
+  type FastMode,
+} from "@openclaw/normalization-core/string-coerce";
 import { sanitizeForLog } from "../../../packages/terminal-core/src/ansi.js";
 import { formatAcpErrorChain } from "../../acp/runtime/errors.js";
 import { normalizeReplyPayload } from "../../auto-reply/reply/normalize-reply.js";
@@ -16,6 +19,7 @@ import {
   timestampOptsFromConfig,
 } from "../../gateway/server-methods/agent-timestamp.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
+import { emitTrustedDiagnosticEvent } from "../../infra/diagnostic-events.js";
 import { readErrorName } from "../../infra/errors.js";
 import { redactSensitiveText } from "../../logging/redact.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -869,10 +873,12 @@ export function buildAcpResult(params: {
 export function emitAcpLifecycleStart(params: {
   runId: string;
   startedAt: number;
+  agentId?: string;
   lifecycleGeneration?: string;
 }) {
   emitAgentEvent({
     runId: params.runId,
+    ...(params.agentId ? { agentId: params.agentId } : {}),
     ...(params.lifecycleGeneration ? { lifecycleGeneration: params.lifecycleGeneration } : {}),
     stream: "lifecycle",
     data: {
@@ -890,6 +896,150 @@ const ACP_PROXY_ENV_KEYS = [
   "https_proxy",
   "all_proxy",
 ] as const;
+type ActiveAcpTool = {
+  runId: string;
+  sessionKey?: string;
+  agentId?: string;
+  toolCallId: string;
+  toolName: string;
+  startedAt: number;
+};
+
+const ACTIVE_ACP_TOOLS = new Map<string, ActiveAcpTool>();
+const MAX_TRACKED_ACP_TOOLS = 4_096;
+
+function acpAuditToolName(kind: unknown): string {
+  switch (kind) {
+    case "read":
+    case "edit":
+    case "delete":
+    case "move":
+    case "search":
+    case "execute":
+    case "fetch":
+    case "switch_mode":
+    case "think":
+    case "other":
+      return `acp_${kind}`;
+    default:
+      return "acp_tool";
+  }
+}
+
+function resolveAcpToolTerminalReason(
+  signal: AbortSignal | undefined,
+): "failed" | "cancelled" | "timed_out" {
+  const abortFields = resolveAgentRunAbortLifecycleFields(signal);
+  if (!abortFields.aborted) {
+    return "failed";
+  }
+  return abortFields.stopReason === "timeout" ? "timed_out" : "cancelled";
+}
+
+function emitAcpToolExecutionEvent(params: {
+  runId: string;
+  sessionKey?: string;
+  agentId?: string;
+  abortSignal?: AbortSignal;
+  event: Extract<AcpRuntimeEvent, { type: "tool_call" }>;
+}): void {
+  const { event } = params;
+  const now = Date.now();
+  const key = event.toolCallId ? `${params.runId}\0${event.toolCallId}` : undefined;
+  const activeTool = key ? ACTIVE_ACP_TOOLS.get(key) : undefined;
+  const status = normalizeOptionalLowercaseString(event.status);
+  const terminalReason = resolveAcpToolTerminalReason(params.abortSignal);
+  const terminal = status === "completed" || status === "failed";
+  const toolName = acpAuditToolName(event.kind);
+  if (!activeTool) {
+    emitTrustedDiagnosticEvent({
+      type: "tool.execution.started",
+      runId: params.runId,
+      ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+      ...(params.agentId ? { agentId: params.agentId } : {}),
+      ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+      toolName,
+      toolSource: "core",
+      toolOwner: "acp",
+    });
+    if (key && event.toolCallId) {
+      ACTIVE_ACP_TOOLS.set(key, {
+        runId: params.runId,
+        ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+        ...(params.agentId ? { agentId: params.agentId } : {}),
+        toolCallId: event.toolCallId,
+        toolName,
+        startedAt: now,
+      });
+      if (ACTIVE_ACP_TOOLS.size > MAX_TRACKED_ACP_TOOLS) {
+        const oldest = ACTIVE_ACP_TOOLS.keys().next().value;
+        if (oldest !== undefined) {
+          ACTIVE_ACP_TOOLS.delete(oldest);
+        }
+      }
+    }
+  }
+  if (!terminal) {
+    return;
+  }
+  const durationMs = Math.max(0, now - (activeTool?.startedAt ?? now));
+  emitTrustedDiagnosticEvent(
+    status === "completed"
+      ? {
+          type: "tool.execution.completed",
+          runId: params.runId,
+          ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+          ...(params.agentId ? { agentId: params.agentId } : {}),
+          ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+          toolName: activeTool?.toolName ?? toolName,
+          toolSource: "core",
+          toolOwner: "acp",
+          durationMs,
+        }
+      : {
+          type: "tool.execution.error",
+          runId: params.runId,
+          ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+          ...(params.agentId ? { agentId: params.agentId } : {}),
+          ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+          toolName: activeTool?.toolName ?? toolName,
+          toolSource: "core",
+          toolOwner: "acp",
+          durationMs,
+          errorCategory: terminalReason === "cancelled" ? "aborted" : "acp_tool",
+          terminalReason,
+        },
+  );
+  if (key) {
+    ACTIVE_ACP_TOOLS.delete(key);
+  }
+}
+
+function finalizeAcpToolsForRun(
+  runId: string,
+  terminalReason: "failed" | "cancelled" | "timed_out",
+): void {
+  const now = Date.now();
+  for (const [key, activeTool] of ACTIVE_ACP_TOOLS) {
+    if (activeTool.runId !== runId) {
+      continue;
+    }
+    emitTrustedDiagnosticEvent({
+      type: "tool.execution.error",
+      runId,
+      ...(activeTool.sessionKey ? { sessionKey: activeTool.sessionKey } : {}),
+      ...(activeTool.agentId ? { agentId: activeTool.agentId } : {}),
+      toolName: activeTool.toolName,
+      toolSource: "core",
+      toolOwner: "acp",
+      toolCallId: activeTool.toolCallId,
+      durationMs: Math.max(0, now - activeTool.startedAt),
+      errorCategory: terminalReason === "cancelled" ? "aborted" : "acp_tool_incomplete",
+      terminalReason,
+    });
+    ACTIVE_ACP_TOOLS.delete(key);
+  }
+}
 
 function resolvePresentProxyEnvKeys(env: NodeJS.ProcessEnv = process.env): string[] {
   return ACP_PROXY_ENV_KEYS.filter((key) => {
@@ -957,11 +1107,25 @@ export function emitAcpRuntimeEvent(params: {
   runId: string;
   event: AcpRuntimeEvent;
   sessionKey?: string;
+  agentId?: string;
+  abortSignal?: AbortSignal;
 }) {
+  if (params.event.type === "tool_call") {
+    emitAcpToolExecutionEvent({
+      runId: params.runId,
+      ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+      ...(params.agentId ? { agentId: params.agentId } : {}),
+      ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
+      event: params.event,
+    });
+  } else if (params.event.type === "done" || params.event.type === "error") {
+    finalizeAcpToolsForRun(params.runId, resolveAcpToolTerminalReason(params.abortSignal));
+  }
   emitAgentEvent({
     runId: params.runId,
     stream: "acp",
     ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+    ...(params.agentId ? { agentId: params.agentId } : {}),
     data: {
       phase: "runtime_event",
       ...acpRuntimeEventDiagnostics(params.event),
@@ -971,11 +1135,14 @@ export function emitAcpRuntimeEvent(params: {
 
 export function emitAcpLifecycleEnd(params: {
   runId: string;
+  agentId?: string;
   lifecycleGeneration?: string;
   abortSignal?: AbortSignal;
 }) {
+  finalizeAcpToolsForRun(params.runId, resolveAcpToolTerminalReason(params.abortSignal));
   emitAgentEvent({
     runId: params.runId,
+    ...(params.agentId ? { agentId: params.agentId } : {}),
     ...(params.lifecycleGeneration ? { lifecycleGeneration: params.lifecycleGeneration } : {}),
     stream: "lifecycle",
     data: {
@@ -990,11 +1157,14 @@ export function emitAcpLifecycleError(params: {
   runId: string;
   error: unknown;
   sessionKey?: string;
+  agentId?: string;
   lifecycleGeneration?: string;
   abortSignal?: AbortSignal;
 }) {
+  finalizeAcpToolsForRun(params.runId, resolveAcpToolTerminalReason(params.abortSignal));
   emitAgentEvent({
     runId: params.runId,
+    ...(params.agentId ? { agentId: params.agentId } : {}),
     ...(params.lifecycleGeneration ? { lifecycleGeneration: params.lifecycleGeneration } : {}),
     stream: "lifecycle",
     ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
