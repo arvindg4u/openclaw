@@ -1969,7 +1969,11 @@ describe("runCodexAppServerSideQuestion", () => {
     toolExecuteMock.mockImplementation(
       (_callId: string, _args: unknown, signal?: AbortSignal) =>
         new Promise((_resolve, reject) => {
-          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          signal?.addEventListener(
+            "abort",
+            () => reject(signal.reason instanceof Error ? signal.reason : new Error("aborted")),
+            { once: true },
+          );
         }),
     );
     client.request.mockImplementation(async (method: string) => {

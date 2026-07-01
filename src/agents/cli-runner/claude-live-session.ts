@@ -1074,8 +1074,7 @@ function createTurn(params: {
   resolve: (output: CliOutput) => void;
   reject: (error: unknown) => void;
 }): ClaudeLiveTurn {
-  let turn: ClaudeLiveTurn;
-  turn = {
+  const turn: ClaudeLiveTurn = {
     backend: params.context.preparedBackend.backend,
     diagnosticRefs: {
       runId: params.context.params.runId,

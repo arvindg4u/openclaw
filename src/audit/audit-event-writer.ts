@@ -143,6 +143,8 @@ export function createAuditEventWriter(
       }
       pending += 1;
       try {
+        // Node Worker.postMessage is not the browser Window API and has no targetOrigin.
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin
         worker.postMessage({ type: "record", input });
         return true;
       } catch (error) {
@@ -168,6 +170,8 @@ export function createAuditEventWriter(
           finishStop();
         }, AUDIT_WRITER_SHUTDOWN_TIMEOUT_MS);
         try {
+          // Node Worker.postMessage is not the browser Window API and has no targetOrigin.
+          // oxlint-disable-next-line unicorn/require-post-message-target-origin
           worker.postMessage({ type: "stop" });
         } catch (error) {
           fail(error);

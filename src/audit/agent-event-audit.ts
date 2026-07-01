@@ -350,7 +350,7 @@ export function createAgentEventAuditRecorder(options?: {
       }
     },
     stop: async () => {
-      for (const runInstance of [...pendingTerminals.keys()]) {
+      for (const runInstance of pendingTerminals.keys()) {
         flushPending(runInstance);
       }
       await writer.stop();

@@ -5,9 +5,9 @@ const listAuditEvents = vi.hoisted(() => vi.fn());
 
 vi.mock("../../audit/audit-event-store.js", () => ({ listAuditEvents }));
 
-function runAuditHandler(params: Record<string, unknown>) {
+async function runAuditHandler(params: Record<string, unknown>) {
   const respond = vi.fn();
-  auditHandlers["audit.list"]({ params, respond } as never);
+  await auditHandlers["audit.list"]({ params, respond } as never);
   return respond;
 }
 
@@ -35,8 +35,8 @@ describe("audit.list", () => {
     });
   });
 
-  it("passes bounded filters and maps the public actor shape", () => {
-    const respond = runAuditHandler({
+  it("passes bounded filters and maps the public actor shape", async () => {
+    const respond = await runAuditHandler({
       agentId: "main",
       kind: "agent_run",
       after: 50,
@@ -58,13 +58,13 @@ describe("audit.list", () => {
     );
   });
 
-  it("rejects malformed cursors and inverted ranges", () => {
-    expect(runAuditHandler({ cursor: "bad" })).toHaveBeenCalledWith(
+  it("rejects malformed cursors and inverted ranges", async () => {
+    expect(await runAuditHandler({ cursor: "bad" })).toHaveBeenCalledWith(
       false,
       undefined,
       expect.any(Object),
     );
-    expect(runAuditHandler({ after: 2, before: 1 })).toHaveBeenCalledWith(
+    expect(await runAuditHandler({ after: 2, before: 1 })).toHaveBeenCalledWith(
       false,
       undefined,
       expect.any(Object),
