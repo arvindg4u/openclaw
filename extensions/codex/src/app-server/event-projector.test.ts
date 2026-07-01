@@ -2160,6 +2160,43 @@ describe("CodexAppServerEventProjector", () => {
     ).toEqual([]);
   });
 
+  it("projects native image-generation error status as a failed audit action", async () => {
+    const diagnosticEvents: DiagnosticEventPayload[] = [];
+    const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
+    const projector = await createProjector();
+    const startedItem = {
+      id: "image-generation-error-1",
+      type: "imageGeneration",
+      status: "in_progress",
+      revisedPrompt: null,
+      result: null,
+    };
+
+    try {
+      await projector.handleNotification(forCurrentTurn("item/started", { item: startedItem }));
+      await projector.handleNotification(
+        forCurrentTurn("item/completed", {
+          item: { ...startedItem, status: "error" },
+        }),
+      );
+      await flushDiagnosticEvents();
+    } finally {
+      unsubscribe();
+    }
+
+    expect(
+      diagnosticEvents
+        .filter((event) => "toolCallId" in event && event.toolCallId === startedItem.id)
+        .map((event) => ({
+          type: event.type,
+          terminalReason: "terminalReason" in event ? event.terminalReason : undefined,
+        })),
+    ).toEqual([
+      { type: "tool.execution.started", terminalReason: undefined },
+      { type: "tool.execution.error", terminalReason: "failed" },
+    ]);
+  });
+
   it("synthesizes native tool progress from turn completion snapshots", async () => {
     const onAgentEvent = vi.fn();
     const onToolResult = vi.fn();

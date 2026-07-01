@@ -2528,7 +2528,7 @@ function itemTitle(item: CodexThreadItem): string {
 
 function itemStatus(item: CodexThreadItem): "completed" | "failed" | "running" | "blocked" {
   const status = readItemString(item, "status");
-  if (status === "failed") {
+  if (status === "failed" || status === "error") {
     return "failed";
   }
   if (status === "declined") {
