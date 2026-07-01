@@ -53,7 +53,7 @@ describe("createRuntimeConfig", () => {
     );
   });
 
-  it("uses a host-prepared snapshot for an isolated discovery runtime", () => {
+  it("uses a host-prepared getter for an isolated discovery runtime", () => {
     const configSnapshot = {
       plugins: {
         entries: {
@@ -65,7 +65,7 @@ describe("createRuntimeConfig", () => {
         },
       },
     } as OpenClawConfig;
-    const configApi = createRuntimeConfig(configSnapshot);
+    const configApi = createRuntimeConfig(() => configSnapshot);
 
     expect(configApi.current()).toBe(configSnapshot);
     expect(configApi.loadConfig()).toBe(configSnapshot);

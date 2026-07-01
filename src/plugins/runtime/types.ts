@@ -103,6 +103,6 @@ export type CreatePluginRuntimeOptions = {
   subagent?: PluginRuntime["subagent"];
   nodes?: PluginRuntime["nodes"];
   allowGatewaySubagentBinding?: boolean;
-  /** Host-prepared config view for an isolated plugin discovery runtime. */
-  configSnapshot?: OpenClawConfig;
+  /** Host-prepared live config view for an isolated plugin discovery runtime. */
+  getConfig?: () => OpenClawConfig;
 };

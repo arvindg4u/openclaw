@@ -13,6 +13,7 @@ import { getLoadedRuntimePluginRegistry } from "./active-runtime-registry.js";
 import { applyTestPluginDefaults, normalizePluginsConfig } from "./config-state.js";
 import {
   bindCredentialBrokerToToolContext,
+  createCredentialBrokerSafeConfigGetter,
   createCredentialBrokerClient,
   hasConfiguredBrokeredSecretInputs,
   listConfiguredBrokeredToolNames,
@@ -744,13 +745,7 @@ function createCachedDescriptorPluginTool(params: {
       const registry = resolvePluginToolRegistry({
         loadOptions,
         onlyPluginIds: [pluginId],
-        forceStandaloneLoad: Boolean(
-          params.credentialBrokerSourceConfig &&
-          hasConfiguredBrokeredSecretInputs({
-            sourceConfig: params.credentialBrokerSourceConfig,
-            plugins: [params.plugin],
-          }),
-        ),
+        forceStandaloneLoad: (params.plugin.credentialBroker?.operations.length ?? 0) > 0,
         retainedRegistry: cachedDescriptorRuntimeRegistries.get(params.descriptor),
         onRetainRegistry: (retainedRegistry) => {
           cachedDescriptorRuntimeRegistries.set(params.descriptor, retainedRegistry);
@@ -1075,7 +1070,7 @@ function resolvePluginToolLoadState(params: {
       onlyPluginIds: string[];
       runtimeOptions: PluginLoadOptions["runtimeOptions"];
       snapshot: PluginMetadataManifestView;
-      hasBrokeredSecretInputs: boolean;
+      requiresBrokerIsolatedRuntime: boolean;
     }
   | undefined {
   const env = params.env ?? process.env;
@@ -1119,6 +1114,9 @@ function resolvePluginToolLoadState(params: {
       plugins: selectedPlugins,
     }),
   );
+  const requiresBrokerIsolatedRuntime = selectedPlugins.some(
+    (plugin) => (plugin.credentialBroker?.operations.length ?? 0) > 0,
+  );
   if (hasBrokeredSecretInputs && brokerSourceConfig) {
     const scrub = (config: OpenClawConfig) =>
       projectConfiguredBrokeredSecretInputs({
@@ -1133,8 +1131,15 @@ function resolvePluginToolLoadState(params: {
       activationSourceConfig: scrub(context.activationSourceConfig),
     };
   }
-  const runtimeOptions = hasBrokeredSecretInputs
-    ? { ...baseRuntimeOptions, configSnapshot: context.config }
+  const runtimeOptions = requiresBrokerIsolatedRuntime
+    ? {
+        ...baseRuntimeOptions,
+        getConfig: createCredentialBrokerSafeConfigGetter({
+          getRuntimeConfig: params.context.getRuntimeConfig,
+          preparedConfig: context.config,
+          plugins: selectedPlugins,
+        }),
+      }
     : baseRuntimeOptions;
   const loadOptions = buildPluginRuntimeLoadOptions(context, {
     activate: false,
@@ -1149,7 +1154,7 @@ function resolvePluginToolLoadState(params: {
     onlyPluginIds,
     runtimeOptions,
     snapshot,
-    hasBrokeredSecretInputs,
+    requiresBrokerIsolatedRuntime,
   };
 }
 
@@ -1166,7 +1171,7 @@ export function ensureStandalonePluginToolRegistryLoaded(params: {
   if (!loadState) {
     return undefined;
   }
-  if (loadState.hasBrokeredSecretInputs) {
+  if (loadState.requiresBrokerIsolatedRuntime) {
     return resolvePluginToolRegistry({
       loadOptions: loadState.loadOptions,
       onlyPluginIds: loadState.onlyPluginIds,
@@ -1207,7 +1212,7 @@ export function resolvePluginTools(params: {
   if (!loadState) {
     return [];
   }
-  const { context, env, onlyPluginIds, runtimeOptions, snapshot, hasBrokeredSecretInputs } =
+  const { context, env, onlyPluginIds, runtimeOptions, snapshot, requiresBrokerIsolatedRuntime } =
     loadState;
   const tools: AnyAgentTool[] = [];
   const finishTools = (): AnyAgentTool[] => {
@@ -1281,7 +1286,7 @@ export function resolvePluginTools(params: {
     runtimeOptions,
   });
   let registry =
-    !hasBrokeredSecretInputs &&
+    !requiresBrokerIsolatedRuntime &&
     registryHasScopedPluginTools(params.runtimeRegistry, runtimePluginIds)
       ? params.runtimeRegistry
       : undefined;
@@ -1289,7 +1294,7 @@ export function resolvePluginTools(params: {
     registry = resolvePluginToolRegistry({
       loadOptions,
       onlyPluginIds: runtimePluginIds,
-      forceStandaloneLoad: hasBrokeredSecretInputs,
+      forceStandaloneLoad: requiresBrokerIsolatedRuntime,
     });
   }
   if (!registry) {
@@ -1313,7 +1318,7 @@ export function resolvePluginTools(params: {
     registry = resolvePluginToolRegistry({
       loadOptions,
       onlyPluginIds: runtimePluginIds,
-      forceStandaloneLoad: hasBrokeredSecretInputs,
+      forceStandaloneLoad: requiresBrokerIsolatedRuntime,
     });
     if (!registry) {
       context.logger.warn(

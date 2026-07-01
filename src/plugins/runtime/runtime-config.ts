@@ -50,10 +50,11 @@ export function resetRuntimeConfigDeprecationWarningStateForTest(): void {
   warnedDeprecatedConfigApis.clear();
 }
 
-export function createRuntimeConfig(configSnapshot?: OpenClawConfig): PluginRuntime["config"] {
-  const current = configSnapshot ? () => configSnapshot : getRuntimeConfig;
+export function createRuntimeConfig(
+  getConfig: () => OpenClawConfig = getRuntimeConfig,
+): PluginRuntime["config"] {
   return {
-    current,
+    current: getConfig,
     mutateConfigFile: async (params) =>
       await mutateConfigFileInternal({
         ...params,
@@ -66,7 +67,7 @@ export function createRuntimeConfig(configSnapshot?: OpenClawConfig): PluginRunt
       }),
     loadConfig: () => {
       warnDeprecatedConfigApiOnce("loadConfig", "config.current()");
-      return current();
+      return getConfig();
     },
     writeConfigFile: async (cfg, options) => {
       warnDeprecatedConfigApiOnce(

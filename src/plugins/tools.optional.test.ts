@@ -1400,33 +1400,34 @@ describe("resolvePluginTools optional tools", () => {
         factory,
       },
     ]);
+    const manifestPlugin = {
+      id: "broker-demo",
+      origin: "bundled",
+      enabledByDefault: true,
+      channels: [],
+      providers: [],
+      contracts: { tools: ["brokered_action"] },
+      credentialBroker: {
+        operations: [
+          {
+            id: "action",
+            tool: "brokered_action",
+            secretInputPath: "service.token",
+            defaultBaseUrl: "https://api.example.test",
+            path: "/action",
+            method: "POST",
+            credentialHeader: "Authorization",
+            maxRequestBodyBytes: 1024,
+            maxResponseBodyBytes: 1024,
+            timeoutMs: 1000,
+          },
+        ],
+      },
+    };
     installToolManifestSnapshot({
       config: sourceConfig as never,
       compatibleConfigs: [runtimeConfig as never],
-      plugin: {
-        id: "broker-demo",
-        origin: "bundled",
-        enabledByDefault: true,
-        channels: [],
-        providers: [],
-        contracts: { tools: ["brokered_action"] },
-        credentialBroker: {
-          operations: [
-            {
-              id: "action",
-              tool: "brokered_action",
-              secretInputPath: "service.token",
-              defaultBaseUrl: "https://api.example.test",
-              path: "/action",
-              method: "POST",
-              credentialHeader: "Authorization",
-              maxRequestBodyBytes: 1024,
-              maxResponseBodyBytes: 1024,
-              timeoutMs: 1000,
-            },
-          ],
-        },
-      },
+      plugin: manifestPlugin,
     });
     const profile = resolveConversationCapabilityProfile({
       config: sourceConfig,
@@ -1470,17 +1471,17 @@ describe("resolvePluginTools optional tools", () => {
       cache?: boolean;
       config?: OpenClawConfig;
       activationSourceConfig?: OpenClawConfig;
-      runtimeOptions?: { configSnapshot?: OpenClawConfig };
+      runtimeOptions?: { getConfig?: () => OpenClawConfig };
     };
     expect(loaderParams.cache).toBe(false);
     expect(JSON.stringify(loaderParams.config)).not.toContain("resolved-secret-must-not-cross");
     expect(JSON.stringify(loaderParams.activationSourceConfig)).not.toContain(
       "resolved-secret-must-not-cross",
     );
-    expect(JSON.stringify(loaderParams.runtimeOptions?.configSnapshot)).not.toContain(
+    expect(JSON.stringify(loaderParams.runtimeOptions?.getConfig?.())).not.toContain(
       "resolved-secret-must-not-cross",
     );
-    expect(JSON.stringify(loaderParams.runtimeOptions?.configSnapshot)).toContain(
+    expect(JSON.stringify(loaderParams.runtimeOptions?.getConfig?.())).toContain(
       "BROKER_DEMO_TOKEN",
     );
 
@@ -1518,6 +1519,70 @@ describe("resolvePluginTools optional tools", () => {
     });
 
     expect(unscopedTools).toEqual([]);
+
+    const literalSourceConfig = structuredClone(sourceConfig);
+    const literalEntry = literalSourceConfig.plugins?.entries?.["broker-demo"]?.config as {
+      service?: { token?: unknown };
+    };
+    if (literalEntry.service) {
+      literalEntry.service.token = "literal-before-secret-ref";
+    }
+    let liveRuntimeConfig = literalSourceConfig;
+    factory.mockClear();
+    loadOpenClawPluginsMock.mockClear();
+    resetPluginToolFactoryCache();
+    installToolManifestSnapshot({
+      config: literalSourceConfig as never,
+      plugin: manifestPlugin,
+    });
+
+    resolvePluginTools({
+      context: {
+        ...createContext(),
+        config: literalSourceConfig,
+        runtimeConfig: literalSourceConfig,
+        getRuntimeConfig: () => liveRuntimeConfig,
+      } as never,
+      runtimeRegistry: registry as never,
+      toolAllowlist: ["brokered_action"],
+      credentialBrokerSourceConfig: literalSourceConfig,
+    });
+
+    const literalLoaderParams = mockCallParams(loadOpenClawPluginsMock) as {
+      cache?: boolean;
+      runtimeOptions?: { getConfig?: () => OpenClawConfig };
+    };
+    expect(literalLoaderParams.cache).toBe(false);
+    expect(JSON.stringify(literalLoaderParams.runtimeOptions?.getConfig?.())).toContain(
+      "literal-before-secret-ref",
+    );
+    const transitionedRuntimeConfig = structuredClone(runtimeConfig);
+    const transitionedEntry = transitionedRuntimeConfig.plugins?.entries?.["broker-demo"]
+      ?.config as {
+      service?: { baseUrl?: string; token?: unknown };
+    };
+    if (transitionedEntry.service) {
+      transitionedEntry.service.baseUrl = "https://next.example.test";
+    }
+    liveRuntimeConfig = transitionedRuntimeConfig;
+    expect(JSON.stringify(factoryContext.getRuntimeConfig?.())).not.toContain(
+      "resolved-secret-must-not-cross",
+    );
+    expect(JSON.stringify(factoryContext.getRuntimeConfig?.())).toContain(
+      "literal-before-secret-ref",
+    );
+    expect(JSON.stringify(factoryContext.getRuntimeConfig?.())).toContain(
+      "https://next.example.test",
+    );
+    expect(JSON.stringify(literalLoaderParams.runtimeOptions?.getConfig?.())).not.toContain(
+      "resolved-secret-must-not-cross",
+    );
+    expect(JSON.stringify(literalLoaderParams.runtimeOptions?.getConfig?.())).toContain(
+      "literal-before-secret-ref",
+    );
+    expect(JSON.stringify(literalLoaderParams.runtimeOptions?.getConfig?.())).toContain(
+      "https://next.example.test",
+    );
   });
 
   it("does not invoke named optional tool factories without a matching allowlist", () => {

@@ -200,6 +200,37 @@ export function projectConfiguredBrokeredSecretInputs(params: {
   return safeConfig as OpenClawConfig;
 }
 
+/** Keeps broker-owned credential inputs on their prepared view while other config stays live. */
+export function createCredentialBrokerSafeConfigGetter(params: {
+  getRuntimeConfig?: () => OpenClawConfig | undefined;
+  preparedConfig: OpenClawConfig;
+  plugins: readonly CredentialBrokerManifestPlugin[];
+}): () => OpenClawConfig {
+  return () => {
+    let safeConfig: unknown = params.getRuntimeConfig?.() ?? params.preparedConfig;
+    for (const plugin of params.plugins) {
+      for (const operation of plugin.credentialBroker?.operations ?? []) {
+        const path = [
+          "plugins",
+          "entries",
+          plugin.id,
+          "config",
+          ...operation.secretInputPath.split("."),
+        ];
+        const preparedValue = readPath(
+          readPluginConfig(params.preparedConfig, plugin.id),
+          operation.secretInputPath,
+        );
+        safeConfig =
+          preparedValue === undefined
+            ? omitPath(safeConfig, path)
+            : replacePath(safeConfig, path, preparedValue);
+      }
+    }
+    return safeConfig as OpenClawConfig;
+  };
+}
+
 function hasOperationSecretRef(params: {
   config: OpenClawConfig;
   pluginId: string;
@@ -596,9 +627,6 @@ export function bindCredentialBrokerToToolContext(params: {
       }),
     )
     .map((operation) => operation.secretInputPath);
-  if (secretInputPaths.length === 0) {
-    return params.broker ? { ...params.context, credentialBroker: params.broker } : params.context;
-  }
   const configuredOperationIds = new Set(
     params.operations
       .filter((operation) => secretInputPaths.includes(operation.secretInputPath))
@@ -606,27 +634,44 @@ export function bindCredentialBrokerToToolContext(params: {
   );
   // Preserve the configured-broker signal on control-plane paths that lack conversation scope.
   // Otherwise a plugin could mistake the scrubbed config for literal/env fallback authorization.
-  const credentialBroker: OpenClawCredentialBroker = params.broker ?? {
-    isConfigured: (operationId) => configuredOperationIds.has(operationId),
-    createRequest: () => {
-      throw new Error("Credential broker requires a prepared conversation capability profile.");
-    },
-  };
+  const credentialBroker: OpenClawCredentialBroker | undefined =
+    params.broker ??
+    (configuredOperationIds.size > 0
+      ? {
+          isConfigured: (operationId) => configuredOperationIds.has(operationId),
+          createRequest: () => {
+            throw new Error(
+              "Credential broker requires a prepared conversation capability profile.",
+            );
+          },
+        }
+      : undefined);
   const getRuntimeConfig = params.context.getRuntimeConfig;
+  const config = omitBrokeredSecrets(params.context.config, params.pluginId, secretInputPaths);
+  const runtimeConfig = omitBrokeredSecrets(
+    params.context.runtimeConfig,
+    params.pluginId,
+    secretInputPaths,
+  );
+  const preparedConfig = runtimeConfig ?? config;
+  const safeConfigGetter =
+    getRuntimeConfig && preparedConfig
+      ? createCredentialBrokerSafeConfigGetter({
+          getRuntimeConfig,
+          preparedConfig,
+          plugins: [
+            {
+              id: params.pluginId,
+              credentialBroker: { operations: params.operations },
+            },
+          ],
+        })
+      : undefined;
   return {
     ...params.context,
-    config: omitBrokeredSecrets(params.context.config, params.pluginId, secretInputPaths),
-    runtimeConfig: omitBrokeredSecrets(
-      params.context.runtimeConfig,
-      params.pluginId,
-      secretInputPaths,
-    ),
-    ...(getRuntimeConfig
-      ? {
-          getRuntimeConfig: () =>
-            omitBrokeredSecrets(getRuntimeConfig(), params.pluginId, secretInputPaths),
-        }
-      : {}),
-    credentialBroker,
+    config,
+    runtimeConfig,
+    ...(safeConfigGetter ? { getRuntimeConfig: safeConfigGetter } : {}),
+    ...(credentialBroker ? { credentialBroker } : {}),
   };
 }
