@@ -71,6 +71,7 @@ type SignalApprovalDeliveryTarget = {
 type SignalApprovalDeliveryResult = {
   channel?: string;
   messageId?: string | null;
+  toJid?: string;
   meta?: Record<string, unknown>;
 };
 

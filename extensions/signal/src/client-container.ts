@@ -54,7 +54,6 @@ export type ContainerWebSocketMessage = {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_ATTACHMENT_RESPONSE_MAX_BYTES = 1_048_576;
-const DEFAULT_REST_RESPONSE_MAX_BYTES = 16 * 1024 * 1024;
 const CONTAINER_TEXT_STYLE_MARKERS: Record<string, string> = {
   BOLD: "**",
   ITALIC: "*",

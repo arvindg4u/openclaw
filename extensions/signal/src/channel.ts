@@ -520,8 +520,6 @@ export const signalPlugin: ChannelPlugin<ResolvedSignalAccount, SignalProbe> =
             deps,
             abortSignal,
           }),
-        renderPresentation: (params) => renderSignalApprovalPayloadForReactions(params),
-        afterDeliverPayload: (params) => registerDeliveredSignalApprovalPayloadForReactions(params),
       },
       attachedResults: {
         channel: "signal",
