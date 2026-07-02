@@ -247,6 +247,7 @@ export async function runCodexAppServerSideQuestion(
     if (
       notification.method !== "item/started" &&
       notification.method !== "item/completed" &&
+      notification.method !== "rawResponseItem/completed" &&
       notification.method !== "turn/completed"
     ) {
       return;

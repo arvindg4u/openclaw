@@ -1766,6 +1766,37 @@ describe("runCodexAppServerSideQuestion", () => {
               item: nativeCommandItem("native-tool-1", "completed", 12),
             },
           });
+          const webSearchItem = {
+            type: "webSearch",
+            id: "native-search-1",
+            query: "sensitive side-thread query",
+            action: {
+              type: "search",
+              query: "sensitive side-thread query",
+              queries: null,
+            },
+          };
+          client.emit({
+            method: "item/started",
+            params: { threadId: "side-thread", turnId: "turn-1", item: webSearchItem },
+          });
+          client.emit({
+            method: "item/completed",
+            params: { threadId: "side-thread", turnId: "turn-1", item: webSearchItem },
+          });
+          client.emit({
+            method: "rawResponseItem/completed",
+            params: {
+              threadId: "side-thread",
+              turnId: "turn-1",
+              item: {
+                type: "web_search_call",
+                id: webSearchItem.id,
+                status: "completed",
+                action: webSearchItem.action,
+              },
+            },
+          });
           client.emit(turnCompleted("side-thread", "turn-1", "Native tool answer."));
         }, 0);
         return turnStartResult("turn-1");
@@ -1826,8 +1857,23 @@ describe("runCodexAppServerSideQuestion", () => {
         toolCallId: "native-tool-1",
         durationMs: 12,
       },
+      {
+        type: "tool.execution.started",
+        agentId: "side-agent",
+        toolName: "web_search",
+        toolCallId: "native-search-1",
+        durationMs: undefined,
+      },
+      {
+        type: "tool.execution.completed",
+        agentId: "side-agent",
+        toolName: "web_search",
+        toolCallId: "native-search-1",
+        durationMs: expect.any(Number),
+      },
     ]);
     expect(activeDiagnosticToolKeys(diagnosticEvents)).toEqual(new Set());
+    expect(JSON.stringify(toolEvents)).not.toContain("sensitive side-thread query");
   });
 
   it("projects snapshot-only native side-thread tools exactly once", async () => {
