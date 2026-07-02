@@ -913,8 +913,21 @@ type ActiveAcpTool = {
   startedAt: number;
 };
 
-const ACTIVE_ACP_TOOLS = new Map<string, ActiveAcpTool>();
+export type AcpToolLifecycleTracker = {
+  active: Map<string, ActiveAcpTool>;
+  terminalToolCallIds: Set<string>;
+  saturated: boolean;
+};
+
 const MAX_TRACKED_ACP_TOOLS = 4_096;
+
+export function createAcpToolLifecycleTracker(): AcpToolLifecycleTracker {
+  return {
+    active: new Map(),
+    terminalToolCallIds: new Set(),
+    saturated: false,
+  };
+}
 
 function acpAuditToolName(kind: unknown): string {
   switch (kind) {
@@ -993,6 +1006,7 @@ function resolveAcpLifecycleEndFields(
 
 function emitAcpToolExecutionEvent(params: {
   runId: string;
+  toolTracker: AcpToolLifecycleTracker;
   sessionKey?: string;
   agentId?: string;
   abortSignal?: AbortSignal;
@@ -1000,39 +1014,48 @@ function emitAcpToolExecutionEvent(params: {
 }): void {
   const { event } = params;
   const now = Date.now();
-  const key = event.toolCallId ? `${params.runId}\0${event.toolCallId}` : undefined;
-  const activeTool = key ? ACTIVE_ACP_TOOLS.get(key) : undefined;
+  const toolCallId = event.toolCallId?.trim() ? event.toolCallId : undefined;
+  const activeTool = toolCallId ? params.toolTracker.active.get(toolCallId) : undefined;
   const terminalOutcome = resolveAcpToolTerminalOutcome(event.status);
   const toolName = acpAuditToolName(event.kind);
+  // ACP runtimes may replay terminal updates. Keep the closed identity until the run ends so a
+  // late progress/terminal pair cannot reopen one invocation as a second durable audit action.
+  if (toolCallId && !activeTool) {
+    if (params.toolTracker.terminalToolCallIds.has(toolCallId)) {
+      return;
+    }
+    // Never evict an open identity: once this run reaches its bound, ignore new identities until
+    // lifecycle cleanup releases the complete set. Other runs own independent trackers.
+    const trackedIdentities =
+      params.toolTracker.active.size + params.toolTracker.terminalToolCallIds.size;
+    if (params.toolTracker.saturated || trackedIdentities >= MAX_TRACKED_ACP_TOOLS) {
+      params.toolTracker.saturated = true;
+      return;
+    }
+  }
   // Without an identity, wait for a terminal event so every observed action closes immediately.
   // Opening on progress would leave an unmatched audit action if the runtime omits its result.
-  const startsUnidentifiedTool = key === undefined && terminalOutcome !== undefined;
-  if (!activeTool && (key !== undefined || startsUnidentifiedTool)) {
+  const startsUnidentifiedTool = toolCallId === undefined && terminalOutcome !== undefined;
+  if (!activeTool && (toolCallId !== undefined || startsUnidentifiedTool)) {
     emitTrustedDiagnosticEvent({
       type: "tool.execution.started",
       runId: params.runId,
       ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
       ...(params.agentId ? { agentId: params.agentId } : {}),
-      ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+      ...(toolCallId ? { toolCallId } : {}),
       toolName,
       toolSource: "core",
       toolOwner: "acp",
     });
-    if (key && event.toolCallId) {
-      ACTIVE_ACP_TOOLS.set(key, {
+    if (toolCallId) {
+      params.toolTracker.active.set(toolCallId, {
         runId: params.runId,
         ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
         ...(params.agentId ? { agentId: params.agentId } : {}),
-        toolCallId: event.toolCallId,
+        toolCallId,
         toolName,
         startedAt: now,
       });
-      if (ACTIVE_ACP_TOOLS.size > MAX_TRACKED_ACP_TOOLS) {
-        const oldest = ACTIVE_ACP_TOOLS.keys().next().value;
-        if (oldest !== undefined) {
-          ACTIVE_ACP_TOOLS.delete(oldest);
-        }
-      }
     }
   }
   if (!terminalOutcome) {
@@ -1052,7 +1075,7 @@ function emitAcpToolExecutionEvent(params: {
           runId: params.runId,
           ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
           ...(params.agentId ? { agentId: params.agentId } : {}),
-          ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+          ...(toolCallId ? { toolCallId } : {}),
           toolName: activeTool?.toolName ?? toolName,
           toolSource: "core",
           toolOwner: "acp",
@@ -1063,7 +1086,7 @@ function emitAcpToolExecutionEvent(params: {
           runId: params.runId,
           ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
           ...(params.agentId ? { agentId: params.agentId } : {}),
-          ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+          ...(toolCallId ? { toolCallId } : {}),
           toolName: activeTool?.toolName ?? toolName,
           toolSource: "core",
           toolOwner: "acp",
@@ -1072,20 +1095,19 @@ function emitAcpToolExecutionEvent(params: {
           terminalReason,
         },
   );
-  if (key) {
-    ACTIVE_ACP_TOOLS.delete(key);
+  if (toolCallId) {
+    params.toolTracker.active.delete(toolCallId);
+    params.toolTracker.terminalToolCallIds.add(toolCallId);
   }
 }
 
 function finalizeAcpToolsForRun(
+  toolTracker: AcpToolLifecycleTracker,
   runId: string,
   terminalReason: "failed" | "cancelled" | "timed_out",
 ): void {
   const now = Date.now();
-  for (const [key, activeTool] of ACTIVE_ACP_TOOLS) {
-    if (activeTool.runId !== runId) {
-      continue;
-    }
+  for (const activeTool of toolTracker.active.values()) {
     emitTrustedDiagnosticEvent({
       type: "tool.execution.error",
       runId,
@@ -1099,8 +1121,10 @@ function finalizeAcpToolsForRun(
       errorCategory: terminalReason === "cancelled" ? "aborted" : "acp_tool_incomplete",
       terminalReason,
     });
-    ACTIVE_ACP_TOOLS.delete(key);
   }
+  toolTracker.active.clear();
+  toolTracker.terminalToolCallIds.clear();
+  toolTracker.saturated = false;
 }
 
 function resolvePresentProxyEnvKeys(env: NodeJS.ProcessEnv = process.env): string[] {
@@ -1168,6 +1192,7 @@ export function emitAcpPromptSubmitted(params: { runId: string; sessionKey?: str
 
 export function emitAcpRuntimeEvent(params: {
   runId: string;
+  toolTracker: AcpToolLifecycleTracker;
   event: AcpRuntimeEvent;
   sessionKey?: string;
   agentId?: string;
@@ -1177,6 +1202,7 @@ export function emitAcpRuntimeEvent(params: {
   if (params.event.type === "tool_call") {
     emitAcpToolExecutionEvent({
       runId: params.runId,
+      toolTracker: params.toolTracker,
       ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
       ...(params.agentId ? { agentId: params.agentId } : {}),
       ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
@@ -1199,6 +1225,7 @@ export function emitAcpRuntimeEvent(params: {
 
 export function emitAcpLifecycleEnd(params: {
   runId: string;
+  toolTracker: AcpToolLifecycleTracker;
   sessionKey?: string;
   agentId?: string;
   lifecycleGeneration?: string;
@@ -1208,6 +1235,7 @@ export function emitAcpLifecycleEnd(params: {
   auditOnly?: boolean;
 }) {
   finalizeAcpToolsForRun(
+    params.toolTracker,
     params.runId,
     resolveAcpToolTerminalReason(
       params.abortSignal,
@@ -1233,6 +1261,7 @@ export function emitAcpLifecycleEnd(params: {
 
 export function emitAcpLifecycleError(params: {
   runId: string;
+  toolTracker: AcpToolLifecycleTracker;
   error: unknown;
   sessionKey?: string;
   agentId?: string;
@@ -1242,7 +1271,7 @@ export function emitAcpLifecycleError(params: {
   auditOnly?: boolean;
 }) {
   const terminalReason = resolveAcpToolTerminalReason(params.abortSignal, undefined, params.error);
-  finalizeAcpToolsForRun(params.runId, terminalReason);
+  finalizeAcpToolsForRun(params.toolTracker, params.runId, terminalReason);
   const lifecycleFields =
     params.terminalOutcome === "blocked"
       ? ({ livenessState: "blocked" } as const)

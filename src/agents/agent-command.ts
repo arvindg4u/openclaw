@@ -965,6 +965,7 @@ async function agentCommandInternal(
     if (!isRawModelRun && acpResolution?.kind === "ready" && sessionKey) {
       assertAgentRunLifecycleGenerationCurrent(lifecycleGeneration);
       const attemptExecutionRuntime = await loadAttemptExecutionRuntime();
+      const acpToolTracker = attemptExecutionRuntime.createAcpToolLifecycleTracker();
       const startedAt = Date.now();
       registerAgentRunContext(
         runId,
@@ -1034,6 +1035,7 @@ async function agentCommandInternal(
             if (event.type !== "text_delta") {
               attemptExecutionRuntime.emitAcpRuntimeEvent({
                 runId,
+                toolTracker: acpToolTracker,
                 sessionKey,
                 agentId: sessionAgentId,
                 abortSignal: opts.abortSignal,
@@ -1077,6 +1079,7 @@ async function agentCommandInternal(
         });
         attemptExecutionRuntime.emitAcpLifecycleError({
           runId,
+          toolTracker: acpToolTracker,
           error: acpError,
           sessionKey,
           agentId: sessionAgentId,
@@ -1147,6 +1150,7 @@ async function agentCommandInternal(
       if (isAgentRunRestartAbortReason(restartAbortReason)) {
         attemptExecutionRuntime.emitAcpLifecycleError({
           runId,
+          toolTracker: acpToolTracker,
           error: restartAbortReason,
           sessionKey,
           agentId: sessionAgentId,
@@ -1157,6 +1161,7 @@ async function agentCommandInternal(
       }
       attemptExecutionRuntime.emitAcpLifecycleEnd({
         runId,
+        toolTracker: acpToolTracker,
         agentId: sessionAgentId,
         lifecycleGeneration,
         abortSignal: opts.abortSignal,

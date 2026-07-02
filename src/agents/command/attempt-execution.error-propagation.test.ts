@@ -15,21 +15,42 @@ import {
 } from "../../infra/diagnostic-events.js";
 import {
   buildAcpResult,
+  createAcpToolLifecycleTracker,
   emitAcpLifecycleStart,
-  emitAcpLifecycleEnd,
-  emitAcpLifecycleError,
+  emitAcpLifecycleEnd as emitAcpLifecycleEndBase,
+  emitAcpLifecycleError as emitAcpLifecycleErrorBase,
   emitAcpPromptSubmitted,
-  emitAcpRuntimeEvent,
+  emitAcpRuntimeEvent as emitAcpRuntimeEventBase,
 } from "./attempt-execution.js";
 
 let captured: AgentEventPayload[] = [];
 let capturedTools: TrustedToolExecutionEvent[] = [];
 let unsubscribe: (() => void) | undefined;
 let unsubscribeTools: (() => void) | undefined;
+let toolTracker = createAcpToolLifecycleTracker();
+
+function emitAcpRuntimeEvent(
+  params: Omit<Parameters<typeof emitAcpRuntimeEventBase>[0], "toolTracker">,
+) {
+  return emitAcpRuntimeEventBase({ ...params, toolTracker });
+}
+
+function emitAcpLifecycleEnd(
+  params: Omit<Parameters<typeof emitAcpLifecycleEndBase>[0], "toolTracker">,
+) {
+  return emitAcpLifecycleEndBase({ ...params, toolTracker });
+}
+
+function emitAcpLifecycleError(
+  params: Omit<Parameters<typeof emitAcpLifecycleErrorBase>[0], "toolTracker">,
+) {
+  return emitAcpLifecycleErrorBase({ ...params, toolTracker });
+}
 
 beforeEach(() => {
   resetAgentEventsForTest();
   resetDiagnosticEventsForTest();
+  toolTracker = createAcpToolLifecycleTracker();
   captured = [];
   capturedTools = [];
   // Subscribe to the process-level event bus so tests observe exactly what
@@ -240,6 +261,118 @@ describe("ACP diagnostic events", () => {
       ...(expected.terminalReason ? { terminalReason: expected.terminalReason } : {}),
       ...(expected.status === "cancelled" ? { errorCategory: "aborted" } : {}),
     });
+  });
+
+  it("deduplicates repeated terminal tool updates until the ACP run ends", () => {
+    const params = { runId: "run-tool-replayed-terminal" };
+    const toolCall = {
+      type: "tool_call",
+      text: "command result",
+      kind: "execute",
+      toolCallId: "call-replayed-terminal",
+    } as const;
+    emitAcpRuntimeEvent({
+      ...params,
+      event: { ...toolCall, tag: "tool_call", status: "in_progress" },
+    });
+    emitAcpRuntimeEvent({
+      ...params,
+      event: { ...toolCall, tag: "tool_call_update", status: "completed" },
+    });
+    emitAcpRuntimeEvent({
+      ...params,
+      event: { ...toolCall, tag: "tool_call_update", status: "completed" },
+    });
+    emitAcpRuntimeEvent({
+      ...params,
+      event: { ...toolCall, tag: "tool_call_update", status: "in_progress" },
+    });
+
+    expect(capturedTools.map((event) => event.type)).toEqual([
+      "tool.execution.started",
+      "tool.execution.completed",
+    ]);
+
+    emitAcpLifecycleEnd({ ...params, resultStatus: "completed" });
+    emitAcpRuntimeEvent({
+      ...params,
+      event: { ...toolCall, tag: "tool_call_update", status: "completed" },
+    });
+    expect(capturedTools.slice(2).map((event) => event.type)).toEqual([
+      "tool.execution.started",
+      "tool.execution.completed",
+    ]);
+    emitAcpLifecycleEnd({ ...params, resultStatus: "completed" });
+  });
+
+  it("fails closed without evicting terminal identities at the tracking bound", () => {
+    const params = { runId: "run-tool-tracking-bound" };
+    const terminalEvent = (toolCallId: string) =>
+      ({
+        type: "tool_call",
+        tag: "tool_call_update",
+        text: "done",
+        kind: "execute",
+        toolCallId,
+        status: "completed",
+      }) as const;
+    for (let index = 0; index < 4_096; index += 1) {
+      emitAcpRuntimeEvent({ ...params, event: terminalEvent(`call-${index}`) });
+    }
+    expect(capturedTools).toHaveLength(8_192);
+
+    emitAcpRuntimeEvent({ ...params, event: terminalEvent("call-0") });
+    emitAcpRuntimeEvent({ ...params, event: terminalEvent("call-overflow") });
+    expect(capturedTools).toHaveLength(8_192);
+
+    const unrelatedTracker = createAcpToolLifecycleTracker();
+    emitAcpRuntimeEventBase({
+      runId: "run-tool-unrelated",
+      toolTracker: unrelatedTracker,
+      event: terminalEvent("call-unrelated"),
+    });
+    expect(capturedTools.slice(8_192).map((event) => event.type)).toEqual([
+      "tool.execution.started",
+      "tool.execution.completed",
+    ]);
+    emitAcpLifecycleEndBase({
+      runId: "run-tool-unrelated",
+      toolTracker: unrelatedTracker,
+      resultStatus: "completed",
+    });
+
+    emitAcpLifecycleEnd({ ...params, resultStatus: "completed" });
+    emitAcpRuntimeEvent({ ...params, event: terminalEvent("call-overflow") });
+    expect(capturedTools.slice(8_194).map((event) => event.type)).toEqual([
+      "tool.execution.started",
+      "tool.execution.completed",
+    ]);
+    emitAcpLifecycleEnd({ ...params, resultStatus: "completed" });
+  });
+
+  it("treats blank tool call ids as unidentified", () => {
+    const params = { runId: "run-tool-blank-id" };
+    const event = {
+      type: "tool_call",
+      text: "result",
+      kind: "execute",
+      toolCallId: "   ",
+    } as const;
+    emitAcpRuntimeEvent({
+      ...params,
+      event: { ...event, tag: "tool_call", status: "in_progress" },
+    });
+    expect(capturedTools).toEqual([]);
+
+    emitAcpRuntimeEvent({
+      ...params,
+      event: { ...event, tag: "tool_call_update", status: "completed" },
+    });
+    expect(capturedTools.map(({ type, toolCallId }) => ({ type, toolCallId }))).toEqual([
+      { type: "tool.execution.started", toolCallId: undefined },
+      { type: "tool.execution.completed", toolCallId: undefined },
+    ]);
+    emitAcpLifecycleEnd({ ...params, resultStatus: "completed" });
   });
 
   it("waits for terminal evidence before recording a tool without a call id", () => {

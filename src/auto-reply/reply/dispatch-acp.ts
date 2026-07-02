@@ -541,6 +541,7 @@ export async function tryDispatchAcpReply(params: {
   const auditOnly = existingRunId === undefined;
   const auditRunId = existingRunId ?? generateSecureUuid();
   const auditRuntime = await loadDispatchAcpAuditRuntime();
+  const auditToolTracker = auditRuntime.createAcpToolLifecycleTracker();
   let auditStarted = false;
   let auditFinished = false;
   let auditTerminalOutcome: "blocked" | undefined;
@@ -567,6 +568,7 @@ export async function tryDispatchAcpReply(params: {
     auditFinished = true;
     auditRuntime.emitAcpLifecycleEnd({
       runId: auditRunId,
+      toolTracker: auditToolTracker,
       sessionKey: canonicalSessionKey,
       agentId: acpAgentId,
       ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
@@ -583,6 +585,7 @@ export async function tryDispatchAcpReply(params: {
     auditFinished = true;
     auditRuntime.emitAcpLifecycleError({
       runId: auditRunId,
+      toolTracker: auditToolTracker,
       sessionKey: canonicalSessionKey,
       agentId: acpAgentId,
       ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
@@ -719,6 +722,7 @@ export async function tryDispatchAcpReply(params: {
       onEvent: async (event) => {
         auditRuntime.emitAcpRuntimeEvent({
           runId: auditRunId,
+          toolTracker: auditToolTracker,
           sessionKey: canonicalSessionKey,
           agentId: acpAgentId,
           ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),

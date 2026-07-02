@@ -124,6 +124,11 @@ vi.mock("./dispatch-acp-manager.runtime.js", () => ({
 }));
 
 vi.mock("../../agents/command/attempt-execution.runtime.js", () => ({
+  createAcpToolLifecycleTracker: () => ({
+    active: new Map(),
+    terminalToolCallIds: new Set(),
+    saturated: false,
+  }),
   emitAcpLifecycleStart: auditMocks.emitAcpLifecycleStart,
   emitAcpRuntimeEvent: auditMocks.emitAcpRuntimeEvent,
   emitAcpLifecycleEnd: auditMocks.emitAcpLifecycleEnd,

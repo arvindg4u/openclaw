@@ -80,6 +80,11 @@ vi.mock("./model-fallback.js", () => ({
 
 vi.mock("./command/attempt-execution.runtime.js", () => ({
   buildAcpResult: (...args: unknown[]) => state.buildAcpResultMock(...args),
+  createAcpToolLifecycleTracker: () => ({
+    active: new Map(),
+    terminalToolCallIds: new Set(),
+    saturated: false,
+  }),
   createAcpVisibleTextAccumulator: () => state.createAcpVisibleTextAccumulatorMock(),
   emitAcpAssistantDelta: vi.fn(),
   emitAcpLifecycleEnd: (...args: unknown[]) => state.emitAcpLifecycleEndMock(...args),
