@@ -537,7 +537,9 @@ export async function tryDispatchAcpReply(params: {
       markIdle: params.markIdle,
     });
   const requestId = resolveAcpRequestId(params.ctx);
-  const auditRunId = normalizeOptionalString(params.runId) ?? generateSecureUuid();
+  const existingRunId = normalizeOptionalString(params.runId);
+  const auditOnly = existingRunId === undefined;
+  const auditRunId = existingRunId ?? generateSecureUuid();
   const auditRuntime = await loadDispatchAcpAuditRuntime();
   let auditStarted = false;
   let auditFinished = false;
@@ -554,6 +556,7 @@ export async function tryDispatchAcpReply(params: {
       sessionKey: canonicalSessionKey,
       agentId: acpAgentId,
       startedAt: Date.now(),
+      auditOnly,
     });
   };
   const emitAuditEnd = () => {
@@ -569,6 +572,7 @@ export async function tryDispatchAcpReply(params: {
       ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
       ...(auditStopReason ? { stopReason: auditStopReason } : {}),
       ...(auditResultStatus ? { resultStatus: auditResultStatus } : {}),
+      auditOnly,
     });
   };
   const emitAuditError = (error: unknown) => {
@@ -583,6 +587,7 @@ export async function tryDispatchAcpReply(params: {
       agentId: acpAgentId,
       ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
       ...(auditTerminalOutcome ? { terminalOutcome: auditTerminalOutcome } : {}),
+      auditOnly,
       error,
     });
   };
@@ -717,6 +722,7 @@ export async function tryDispatchAcpReply(params: {
           sessionKey: canonicalSessionKey,
           agentId: acpAgentId,
           ...(params.abortSignal ? { abortSignal: params.abortSignal } : {}),
+          auditOnly,
           event,
         });
         if (event.type === "done") {

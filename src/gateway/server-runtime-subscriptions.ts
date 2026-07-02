@@ -1,6 +1,6 @@
 // Gateway event subscription wiring for agent, heartbeat, transcript, and lifecycle broadcasts.
 import { createAgentEventAuditRecorder } from "../audit/agent-event-audit.js";
-import { clearAgentRunContext, onAgentEvent } from "../infra/agent-events.js";
+import { clearAgentRunContext, onAgentAuditEvent, onAgentEvent } from "../infra/agent-events.js";
 import { onTrustedToolExecutionEvent } from "../infra/diagnostic-events.js";
 import { onHeartbeatEvent } from "../infra/heartbeat-events.js";
 import { onSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
@@ -37,6 +37,7 @@ export function startGatewayEventSubscriptions(params: {
   restartRecoveryCandidates: Map<string, RestartRecoveryCandidate>;
 }) {
   const auditRecorder = createAgentEventAuditRecorder();
+  const unsubscribePrivateAuditEvents = onAgentAuditEvent(auditRecorder.record);
   const unsubscribeToolAuditEvents = onTrustedToolExecutionEvent(auditRecorder.recordTool);
   const getAgentEventHandler = createLazyPromise(
     () => {
@@ -235,6 +236,7 @@ export function startGatewayEventSubscriptions(params: {
   });
   const agentUnsub = async () => {
     unsubscribeAgentEvents();
+    unsubscribePrivateAuditEvents();
     unsubscribeToolAuditEvents();
     await auditRecorder.stop();
   };

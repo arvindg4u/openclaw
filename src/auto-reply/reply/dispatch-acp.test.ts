@@ -318,6 +318,7 @@ function createAcpConfigWithVisibleToolTags(): OpenClawConfig {
 
 async function runDispatch(params: {
   bodyForAgent: string;
+  runId?: string;
   cfg?: OpenClawConfig;
   dispatcher?: ReplyDispatcher;
   shouldRouteToOriginating?: boolean;
@@ -344,6 +345,7 @@ async function runDispatch(params: {
     }),
     cfg: params.cfg ?? createAcpTestConfig(),
     dispatcher: params.dispatcher ?? createDispatcher().dispatcher,
+    ...(params.runId ? { runId: params.runId } : {}),
     sessionKey: targetSessionKey,
     images: params.images,
     abortSignal: params.abortSignal,
@@ -507,6 +509,7 @@ describe("tryDispatchAcpReply", () => {
         runId: expect.any(String),
         sessionKey,
         startedAt: expect.any(Number),
+        auditOnly: true,
       }),
     );
     expect(auditMocks.emitAcpRuntimeEvent).toHaveBeenCalledTimes(3);
@@ -514,13 +517,27 @@ describe("tryDispatchAcpReply", () => {
       expect.objectContaining({
         runId: expect.any(String),
         sessionKey,
+        auditOnly: true,
         event: expect.objectContaining({ type: "tool_call", toolCallId: "tool-audit" }),
       }),
     );
     expect(auditMocks.emitAcpLifecycleEnd).toHaveBeenCalledWith(
-      expect.objectContaining({ runId: expect.any(String), sessionKey }),
+      expect.objectContaining({ runId: expect.any(String), sessionKey, auditOnly: true }),
     );
     expect(auditMocks.emitAcpLifecycleError).not.toHaveBeenCalled();
+  });
+
+  it("keeps caller-owned run ids on the shared lifecycle path", async () => {
+    setReadyAcpResolution();
+
+    await runDispatch({ bodyForAgent: "audit this turn", runId: "caller-run" });
+
+    expect(auditMocks.emitAcpLifecycleStart).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "caller-run", auditOnly: false }),
+    );
+    expect(auditMocks.emitAcpLifecycleEnd).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "caller-run", auditOnly: false }),
+    );
   });
 
   it("keeps audit run ids unique when channel message ids repeat", async () => {

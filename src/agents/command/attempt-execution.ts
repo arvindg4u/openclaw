@@ -20,7 +20,7 @@ import {
   injectTimestamp,
   timestampOptsFromConfig,
 } from "../../gateway/server-methods/agent-timestamp.js";
-import { emitAgentEvent } from "../../infra/agent-events.js";
+import { emitAgentAuditEvent, emitAgentEvent } from "../../infra/agent-events.js";
 import { emitTrustedDiagnosticEvent } from "../../infra/diagnostic-events.js";
 import { readErrorName } from "../../infra/errors.js";
 import { redactSensitiveText } from "../../logging/redact.js";
@@ -880,8 +880,10 @@ export function emitAcpLifecycleStart(params: {
   sessionKey?: string;
   agentId?: string;
   lifecycleGeneration?: string;
+  auditOnly?: boolean;
 }) {
-  emitAgentEvent({
+  const emit = params.auditOnly ? emitAgentAuditEvent : emitAgentEvent;
+  emit({
     runId: params.runId,
     ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
     ...(params.agentId ? { agentId: params.agentId } : {}),
@@ -1002,9 +1004,9 @@ function emitAcpToolExecutionEvent(params: {
   const activeTool = key ? ACTIVE_ACP_TOOLS.get(key) : undefined;
   const terminalOutcome = resolveAcpToolTerminalOutcome(event.status);
   const toolName = acpAuditToolName(event.kind);
-  // ID-less updates cannot be correlated; only the initial event may open the lifecycle.
-  // Treating progress updates as starts creates phantom audit actions.
-  const startsUnidentifiedTool = key === undefined && event.tag !== "tool_call_update";
+  // Without an identity, wait for a terminal event so every observed action closes immediately.
+  // Opening on progress would leave an unmatched audit action if the runtime omits its result.
+  const startsUnidentifiedTool = key === undefined && terminalOutcome !== undefined;
   if (!activeTool && (key !== undefined || startsUnidentifiedTool)) {
     emitTrustedDiagnosticEvent({
       type: "tool.execution.started",
@@ -1170,6 +1172,7 @@ export function emitAcpRuntimeEvent(params: {
   sessionKey?: string;
   agentId?: string;
   abortSignal?: AbortSignal;
+  auditOnly?: boolean;
 }) {
   if (params.event.type === "tool_call") {
     emitAcpToolExecutionEvent({
@@ -1180,16 +1183,18 @@ export function emitAcpRuntimeEvent(params: {
       event: params.event,
     });
   }
-  emitAgentEvent({
-    runId: params.runId,
-    stream: "acp",
-    ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
-    ...(params.agentId ? { agentId: params.agentId } : {}),
-    data: {
-      phase: "runtime_event",
-      ...acpRuntimeEventDiagnostics(params.event),
-    },
-  });
+  if (!params.auditOnly) {
+    emitAgentEvent({
+      runId: params.runId,
+      stream: "acp",
+      ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+      ...(params.agentId ? { agentId: params.agentId } : {}),
+      data: {
+        phase: "runtime_event",
+        ...acpRuntimeEventDiagnostics(params.event),
+      },
+    });
+  }
 }
 
 export function emitAcpLifecycleEnd(params: {
@@ -1200,6 +1205,7 @@ export function emitAcpLifecycleEnd(params: {
   abortSignal?: AbortSignal;
   stopReason?: string;
   resultStatus?: Extract<AcpRuntimeEvent, { type: "done" }>["status"];
+  auditOnly?: boolean;
 }) {
   finalizeAcpToolsForRun(
     params.runId,
@@ -1210,7 +1216,8 @@ export function emitAcpLifecycleEnd(params: {
       params.resultStatus,
     ),
   );
-  emitAgentEvent({
+  const emit = params.auditOnly ? emitAgentAuditEvent : emitAgentEvent;
+  emit({
     runId: params.runId,
     ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
     ...(params.agentId ? { agentId: params.agentId } : {}),
@@ -1232,6 +1239,7 @@ export function emitAcpLifecycleError(params: {
   lifecycleGeneration?: string;
   abortSignal?: AbortSignal;
   terminalOutcome?: "blocked";
+  auditOnly?: boolean;
 }) {
   const terminalReason = resolveAcpToolTerminalReason(params.abortSignal, undefined, params.error);
   finalizeAcpToolsForRun(params.runId, terminalReason);
@@ -1241,7 +1249,8 @@ export function emitAcpLifecycleError(params: {
       : terminalReason === "timed_out"
         ? ({ aborted: true, stopReason: "timeout", status: "timed_out" } as const)
         : resolveAgentRunAbortLifecycleFields(params.abortSignal);
-  emitAgentEvent({
+  const emit = params.auditOnly ? emitAgentAuditEvent : emitAgentEvent;
+  emit({
     runId: params.runId,
     ...(params.agentId ? { agentId: params.agentId } : {}),
     ...(params.lifecycleGeneration ? { lifecycleGeneration: params.lifecycleGeneration } : {}),
@@ -1249,7 +1258,7 @@ export function emitAcpLifecycleError(params: {
     ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
     data: {
       phase: "error",
-      error: formatAcpErrorChain(params.error),
+      ...(!params.auditOnly ? { error: formatAcpErrorChain(params.error) } : {}),
       endedAt: Date.now(),
       ...lifecycleFields,
     },

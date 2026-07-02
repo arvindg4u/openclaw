@@ -4,6 +4,7 @@ import { ACP_TURN_TIMEOUT_DETAIL_CODE } from "../../acp/control-plane/manager.tu
 import { AcpRuntimeError, formatAcpErrorChain } from "../../acp/runtime/errors.js";
 import {
   type AgentEventPayload,
+  onAgentAuditEvent,
   onAgentEvent,
   resetAgentEventsForTest,
 } from "../../infra/agent-events.js";
@@ -14,6 +15,7 @@ import {
 } from "../../infra/diagnostic-events.js";
 import {
   buildAcpResult,
+  emitAcpLifecycleStart,
   emitAcpLifecycleEnd,
   emitAcpLifecycleError,
   emitAcpPromptSubmitted,
@@ -98,6 +100,52 @@ describe("ACP diagnostic events", () => {
     });
     expect(String(event?.data.text)).toContain("connecting");
     expect(String(event?.data.text)).not.toContain("sk-abcdefghijklmnopqrstuvwxyz123456");
+  });
+
+  it("keeps audit-only ACP lifecycle and runtime events off the shared bus", () => {
+    const secret = "private ACP cause chain";
+    const auditEvents: AgentEventPayload[] = [];
+    const stopAudit = onAgentAuditEvent((event) => auditEvents.push(event));
+    try {
+      emitAcpLifecycleStart({
+        runId: "run-audit-only",
+        sessionKey: "agent:main:acp:child",
+        startedAt: 123,
+        auditOnly: true,
+      });
+      emitAcpRuntimeEvent({
+        runId: "run-audit-only",
+        sessionKey: "agent:main:acp:child",
+        auditOnly: true,
+        event: {
+          type: "tool_call",
+          tag: "tool_call",
+          text: "private command payload",
+          kind: "execute",
+          toolCallId: "private-call",
+          status: "completed",
+        },
+      });
+      emitAcpLifecycleError({
+        runId: "run-audit-only",
+        error: new Error(secret),
+        auditOnly: true,
+      });
+    } finally {
+      stopAudit();
+    }
+
+    expect(captured).toEqual([]);
+    expect(auditEvents.map((event) => [event.stream, event.data.phase])).toEqual([
+      ["lifecycle", "start"],
+      ["lifecycle", "error"],
+    ]);
+    expect(capturedTools.map((event) => event.type)).toEqual([
+      "tool.execution.started",
+      "tool.execution.completed",
+    ]);
+    expect(JSON.stringify(auditEvents)).not.toContain("private command payload");
+    expect(JSON.stringify(auditEvents)).not.toContain(secret);
   });
 
   it("emits metadata-only tool lifecycle events without ACP text or title", () => {
@@ -194,7 +242,7 @@ describe("ACP diagnostic events", () => {
     });
   });
 
-  it("does not duplicate starts for tool updates without a call id", () => {
+  it("waits for terminal evidence before recording a tool without a call id", () => {
     const params = { runId: "run-tool-without-id" };
     emitAcpRuntimeEvent({
       ...params,
@@ -206,6 +254,7 @@ describe("ACP diagnostic events", () => {
         status: "in_progress",
       },
     });
+    expect(capturedTools).toEqual([]);
     emitAcpRuntimeEvent({
       ...params,
       event: {
@@ -216,6 +265,7 @@ describe("ACP diagnostic events", () => {
         status: "in_progress",
       },
     });
+    expect(capturedTools).toEqual([]);
     emitAcpRuntimeEvent({
       ...params,
       event: {
