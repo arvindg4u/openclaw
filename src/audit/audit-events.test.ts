@@ -476,6 +476,35 @@ describe("agent activity audit projection", () => {
     ]);
   });
 
+  it("keeps one start when a retry cancels a pending terminal", async () => {
+    const inputs: AuditEventInput[] = [];
+    const writer: AuditEventWriter = {
+      ready: Promise.resolve(),
+      record: (input) => {
+        inputs.push(input);
+        return true;
+      },
+      stop: async () => {},
+    };
+    const recorder = createAgentEventAuditRecorder({ writer, terminalSettleMs: 60_000 });
+    const lifecycleGeneration = "gateway-retry";
+
+    recorder.record(agentEvent({ lifecycleGeneration, seq: 1 }));
+    recorder.record(agentEvent({ lifecycleGeneration, seq: 2, data: { phase: "error" } }));
+    recorder.record(agentEvent({ lifecycleGeneration, seq: 3 }));
+    recorder.record(agentEvent({ lifecycleGeneration, seq: 4, data: { phase: "end" } }));
+    recorder.record(agentEvent({ lifecycleGeneration, seq: 5 }));
+    recorder.record(agentEvent({ lifecycleGeneration, seq: 6, data: { phase: "end" } }));
+
+    expect(inputs.map(({ action, status }) => ({ action, status }))).toEqual([
+      { action: "agent.run.started", status: "started" },
+      { action: "agent.run.finished", status: "succeeded" },
+      { action: "agent.run.started", status: "started" },
+      { action: "agent.run.finished", status: "succeeded" },
+    ]);
+    await recorder.stop();
+  });
+
   it("persists definitive successful terminals immediately in source order", async () => {
     const inputs: AuditEventInput[] = [];
     const writer: AuditEventWriter = {

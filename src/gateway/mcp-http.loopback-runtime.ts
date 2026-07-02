@@ -10,6 +10,9 @@ export type McpLoopbackToolCallResult = {
   args: Record<string, unknown>;
   result?: unknown;
   isError: boolean;
+  outcome: "blocked" | "completed" | "failed";
+  correlationId?: string;
+  deniedReason?: string;
 };
 
 export type McpLoopbackToolCallStart = Pick<McpLoopbackToolCallResult, "toolName" | "args">;
@@ -20,7 +23,7 @@ type McpLoopbackToolCallCapture = {
   onRequestStart?: () => void;
   onRequestClassified?: () => void;
   onRequestFinish?: () => void;
-  onToolCallStart?: (call: McpLoopbackToolCallStart) => void;
+  onToolCallStart?: (call: McpLoopbackToolCallStart) => string | void;
   onToolCallUpdate?: (calls: {
     previous: McpLoopbackToolCallStart;
     current: McpLoopbackToolCallStart;
@@ -41,6 +44,7 @@ export type McpLoopbackRequestCaptureHandle = {
 export type McpLoopbackToolCallCaptureHandle = {
   capture: McpLoopbackToolCallCapture;
   call: McpLoopbackToolCallStart;
+  correlationId?: string;
   prepared: boolean;
   finished: boolean;
 };
@@ -76,7 +80,7 @@ export function beginMcpLoopbackToolCallCapture(params: {
   onRequestStart?: () => void;
   onRequestClassified?: () => void;
   onRequestFinish?: () => void;
-  onToolCallStart?: (call: McpLoopbackToolCallStart) => void;
+  onToolCallStart?: (call: McpLoopbackToolCallStart) => string | void;
   onToolCallUpdate?: (calls: {
     previous: McpLoopbackToolCallStart;
     current: McpLoopbackToolCallStart;
@@ -196,12 +200,14 @@ export function markMcpLoopbackToolCallStarted(params: {
   const call = { toolName, args: params.args };
   capture.inFlight += 1;
   notifyMcpLoopbackToolCallCaptureActivity(capture);
+  let correlationId: string | undefined;
   try {
-    capture.onToolCallStart?.(call);
+    const observedCorrelationId = capture.onToolCallStart?.(call);
+    correlationId = typeof observedCorrelationId === "string" ? observedCorrelationId : undefined;
   } catch {
     // Delivery observation is diagnostic state; it must not alter tool execution.
   }
-  return { capture, call, prepared: false, finished: false };
+  return { capture, call, correlationId, prepared: false, finished: false };
 }
 
 /** Update an admitted call with the final arguments produced by gateway hooks. */
@@ -229,6 +235,8 @@ export function recordMcpLoopbackToolCallResult(params: {
   args: Record<string, unknown>;
   result?: unknown;
   isError: boolean;
+  outcome: "blocked" | "completed" | "failed";
+  deniedReason?: string;
 }): void {
   const toolName = params.toolName.trim();
   if (!toolName) {
@@ -240,6 +248,11 @@ export function recordMcpLoopbackToolCallResult(params: {
       args: params.args,
       result: params.result,
       isError: params.isError,
+      outcome: params.outcome,
+      ...(params.captureHandle.correlationId
+        ? { correlationId: params.captureHandle.correlationId }
+        : {}),
+      ...(params.deniedReason ? { deniedReason: params.deniedReason } : {}),
     });
   } catch {
     // Delivery observation is diagnostic state; it must not turn a successful tool call into error.

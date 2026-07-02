@@ -1376,6 +1376,7 @@ describe("runCliAgent spawn path", () => {
         args: { action: "send", target: "chat123", message: "done" },
         result: { status: "sent" },
         isError: false,
+        outcome: "completed",
       });
       markMcpLoopbackToolCallFinished(captureHandle);
       input.onStdout?.("done");
@@ -2160,6 +2161,126 @@ ${JSON.stringify({
     } finally {
       stopDiagnostics();
     }
+  });
+
+  it("preserves loopback policy blocks for Claude live tools", async () => {
+    const diagnosticEvents: Array<Record<string, unknown>> = [];
+    const stopDiagnostics = onInternalDiagnosticEvent((event) => {
+      if (
+        event.type.startsWith("tool.execution.") &&
+        "toolCallId" in event &&
+        event.toolCallId === "tool-live-blocked"
+      ) {
+        diagnosticEvents.push(event as unknown as Record<string, unknown>);
+      }
+    });
+    let stdoutListener: ((chunk: string) => void) | undefined;
+    let captureKey = "";
+    const stdin = {
+      write: vi.fn((_data: string, cb?: (err?: Error | null) => void) => {
+        stdoutListener?.(
+          [
+            JSON.stringify({ type: "system", subtype: "init", session_id: "live-blocked" }),
+            JSON.stringify({
+              type: "assistant",
+              session_id: "live-blocked",
+              message: {
+                role: "assistant",
+                content: [
+                  {
+                    type: "mcp_tool_use",
+                    id: "tool-live-blocked",
+                    name: "mcp__openclaw__message",
+                    input: { action: "react" },
+                  },
+                ],
+              },
+            }),
+          ].join("\n") + "\n",
+        );
+        const captureHandle = markMcpLoopbackToolCallStarted({
+          captureKey,
+          toolName: "message",
+          args: { action: "react" },
+        });
+        if (!captureHandle) {
+          throw new Error("Expected live tool capture");
+        }
+        recordMcpLoopbackToolCallResult({
+          captureHandle,
+          toolName: "message",
+          args: { action: "react" },
+          isError: true,
+          outcome: "blocked",
+          deniedReason: "plugin-approval",
+        });
+        markMcpLoopbackToolCallFinished(captureHandle);
+        stdoutListener?.(
+          [
+            JSON.stringify({
+              type: "user",
+              session_id: "live-blocked",
+              message: {
+                role: "user",
+                content: [
+                  {
+                    type: "tool_result",
+                    tool_use_id: "tool-live-blocked",
+                    content: "blocked",
+                    is_error: true,
+                  },
+                ],
+              },
+            }),
+            JSON.stringify({ type: "result", session_id: "live-blocked", result: "ok" }),
+          ].join("\n") + "\n",
+        );
+        cb?.();
+      }),
+      end: vi.fn(),
+    };
+    supervisorSpawnMock.mockImplementation(async (...args: unknown[]) => {
+      const input = (args[0] ?? {}) as {
+        env?: Record<string, string>;
+        onStdout?: (chunk: string) => void;
+      };
+      stdoutListener = input.onStdout;
+      captureKey = input.env?.OPENCLAW_MCP_CLI_CAPTURE_KEY ?? "";
+      return {
+        runId: "live-run-blocked",
+        pid: 3061,
+        startedAtMs: Date.now(),
+        stdin,
+        wait: vi.fn(() => new Promise(() => {})),
+        cancel: vi.fn(),
+      };
+    });
+    const context = buildPreparedCliRunContext({
+      provider: "claude-cli",
+      model: "sonnet",
+      runId: "run-live-blocked",
+      sessionId: "session-live-blocked",
+      sessionKey: "agent:main:blocked",
+      prompt: "hello",
+      backend: { liveSession: "claude-stdio" },
+    });
+    context.mcpDeliveryCapture = true;
+
+    try {
+      await expect(executePreparedCliRun(context)).resolves.toMatchObject({ text: "ok" });
+      await waitForDiagnosticEventsDrained();
+    } finally {
+      stopDiagnostics();
+    }
+
+    expect(diagnosticEvents).toMatchObject([
+      { type: "tool.execution.started", toolCallId: "tool-live-blocked" },
+      {
+        type: "tool.execution.blocked",
+        toolCallId: "tool-live-blocked",
+        deniedReason: "plugin-approval",
+      },
+    ]);
   });
 
   it.each([

@@ -628,6 +628,7 @@ describe("runCliAgent reliability", () => {
           },
           result: { status: "sent" },
           isError: false,
+          outcome: "completed",
         });
         markMcpLoopbackToolCallFinished(captureHandle);
       }, 10);
@@ -757,6 +758,7 @@ describe("runCliAgent reliability", () => {
           },
         },
         isError: false,
+        outcome: "completed",
       });
       markMcpLoopbackToolCallFinished(captureHandle);
       return createManagedRun({
@@ -831,6 +833,7 @@ describe("runCliAgent reliability", () => {
           },
         },
         isError: false,
+        outcome: "completed",
       });
       markMcpLoopbackToolCallFinished(captureHandle);
       return createManagedRun({
@@ -905,6 +908,7 @@ describe("runCliAgent reliability", () => {
           },
         },
         isError: false,
+        outcome: "completed",
       });
       markMcpLoopbackToolCallFinished(captureHandle);
       return createManagedRun({
@@ -981,6 +985,7 @@ describe("runCliAgent reliability", () => {
         },
         result: { status: "sent" },
         isError: false,
+        outcome: "completed",
       });
       markMcpLoopbackToolCallFinished(captureHandle);
       input.onStdout?.(

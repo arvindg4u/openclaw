@@ -1054,14 +1054,20 @@ describe("mcp loopback server", () => {
   it("captures only successful calls with an explicit CLI capture key", async () => {
     const captureKey = "google-gemini-cli";
     const captured: Array<{ toolName: string; args: Record<string, unknown> }> = [];
+    const blockedResults: unknown[] = [];
     const startedTargets: unknown[] = [];
     const finishedTargets: unknown[] = [];
     beginMcpLoopbackToolCallCapture({
       captureKey,
-      onToolCallStart: ({ args }) => startedTargets.push(args.target),
+      onToolCallStart: ({ args }) => {
+        startedTargets.push(args.target);
+        return typeof args.target === "string" ? args.target : undefined;
+      },
       onToolCallFinish: ({ args }) => finishedTargets.push(args.target),
-      onToolCallResult: ({ toolName, args }) => {
-        if (toolName === "message" && args.action === "send") {
+      onToolCallResult: ({ toolName, args, outcome, correlationId, deniedReason }) => {
+        if (outcome === "blocked") {
+          blockedResults.push({ correlationId, deniedReason });
+        } else if (toolName === "message" && args.action === "send") {
           captured.push({ toolName, args });
         }
       },
@@ -1112,6 +1118,9 @@ describe("mcp loopback server", () => {
     ]);
     expect(startedTargets).toEqual(["chat123", "blocked"]);
     expect(finishedTargets).toEqual(["chat123", "blocked"]);
+    expect(blockedResults).toEqual([
+      { correlationId: "blocked", deniedReason: "plugin-before-tool-call" },
+    ]);
   });
 
   it("updates capture accounting with hook-rewritten tool arguments", async () => {
@@ -1190,6 +1199,7 @@ describe("mcp loopback server", () => {
       args: { action: "send", target: "chat123" },
       result: { content: "x".repeat(20 * 1024) },
       isError: false,
+      outcome: "completed",
     });
     markMcpLoopbackToolCallFinished(captureHandle);
 
@@ -1228,6 +1238,7 @@ describe("mcp loopback server", () => {
       args: { action: "send", target: "first-turn" },
       result: { status: "sent" },
       isError: false,
+      outcome: "completed",
     });
     markMcpLoopbackToolCallFinished(firstHandle);
 

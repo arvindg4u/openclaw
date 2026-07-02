@@ -52,6 +52,8 @@ export async function handleMcpJsonRpc(params: {
     args: Record<string, unknown>;
     result?: unknown;
     isError: boolean;
+    outcome: "blocked" | "completed" | "failed";
+    deniedReason?: string;
   }) => void;
   onToolCallPrepared?: (call: { toolName: string; args: Record<string, unknown> }) => void;
 }): Promise<object | null> {
@@ -105,13 +107,20 @@ export async function handleMcpJsonRpc(params: {
       }
       const toolCallId = `mcp-${crypto.randomUUID()}`;
       let executedToolArgs = toolArgs;
-      const reportToolCallResult = (result: unknown, isError: boolean) => {
+      const reportToolCallResult = (
+        result: unknown,
+        isError: boolean,
+        outcome: "blocked" | "completed" | "failed",
+        deniedReason?: string,
+      ) => {
         try {
           params.onToolCallResult?.({
             toolName,
             args: executedToolArgs,
             result,
             isError,
+            outcome,
+            ...(deniedReason ? { deniedReason } : {}),
           });
         } catch {
           // Observability callbacks must never alter the tool result returned to the MCP client.
@@ -128,6 +137,12 @@ export async function handleMcpJsonRpc(params: {
           signal: params.signal,
         });
         if (hookResult.blocked) {
+          const hookFailed = hookResult.kind === "failure";
+          const outcome = hookFailed ? "failed" : "blocked";
+          const deniedReason = hookFailed
+            ? undefined
+            : (hookResult.deniedReason ?? "plugin-before-tool-call");
+          reportToolCallResult(undefined, true, outcome, deniedReason);
           return jsonRpcResult(id, {
             content: [{ type: "text", text: hookResult.reason }],
             isError: true,
@@ -140,13 +155,13 @@ export async function handleMcpJsonRpc(params: {
           // Observability callbacks must never alter the tool result returned to the MCP client.
         }
         const result = await tool.execute(toolCallId, hookResult.params, params.signal);
-        reportToolCallResult(result, false);
+        reportToolCallResult(result, false, "completed");
         return jsonRpcResult(id, {
           content: normalizeToolCallContent(result),
           isError: false,
         });
       } catch (error) {
-        reportToolCallResult(error, true);
+        reportToolCallResult(error, true, "failed");
         const message = formatErrorMessage(error);
         return jsonRpcResult(id, {
           content: [{ type: "text", text: message || "tool execution failed" }],

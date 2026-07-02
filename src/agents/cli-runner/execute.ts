@@ -590,6 +590,8 @@ export async function executePreparedCliRun(
         string,
         { toolName: string; args: Record<string, unknown>; target?: MessagingToolSend }
       >();
+      const activeCliTools = new Map<string, { toolName: string; loopbackBound: boolean }>();
+      const blockedCliTools = new Map<string, string>();
       const messagingToolSentTexts: string[] = [];
       const messagingToolSentTextKeys = new Set<string>();
       const messagingToolSentMediaUrls: string[] = [];
@@ -865,9 +867,21 @@ export async function executePreparedCliRun(
               inFlightUnclassifiedMcpRequests = Math.max(0, inFlightUnclassifiedMcpRequests - 1);
             },
             onToolCallStart: (call) => {
+              let correlationId: string | undefined;
+              for (const [toolCallId, activeTool] of activeCliTools) {
+                if (
+                  !activeTool.loopbackBound &&
+                  normalizeCliMessagingToolName(activeTool.toolName) === call.toolName
+                ) {
+                  activeTool.loopbackBound = true;
+                  correlationId = toolCallId;
+                  break;
+                }
+              }
               if (isAdmittedPotentialMessagingDelivery(call.toolName)) {
                 inFlightMessagingToolCalls += 1;
               }
+              return correlationId;
             },
             onToolCallUpdate: ({ previous, current }) => {
               inFlightPreparedMessagingCalls.delete(previous);
@@ -892,7 +906,18 @@ export async function executePreparedCliRun(
               }
               inFlightPreparedMessagingCalls.delete(call);
             },
-            onToolCallResult: ({ toolName, args: toolArgs, result, isError }) => {
+            onToolCallResult: ({
+              toolName,
+              args: toolArgs,
+              result,
+              isError,
+              outcome,
+              correlationId,
+              deniedReason,
+            }) => {
+              if (outcome === "blocked" && correlationId) {
+                blockedCliTools.set(correlationId, deniedReason ?? "plugin-before-tool-call");
+              }
               const normalizedToolName = normalizeCliMessagingToolName(toolName);
               if (!isMessagingToolDeliveryAction(normalizedToolName, toolArgs)) {
                 return;
@@ -917,6 +942,10 @@ export async function executePreparedCliRun(
           args: Record<string, unknown>;
         }) => {
           observedCliActivity = true;
+          activeCliTools.set(event.toolCallId, {
+            toolName: event.name,
+            loopbackBound: false,
+          });
           const toolName = normalizeCliMessagingToolName(event.name);
           if (
             !gatewayCaptureKey &&
@@ -959,6 +988,7 @@ export async function executePreparedCliRun(
           result?: unknown;
         }) => {
           observedCliActivity = true;
+          activeCliTools.delete(event.toolCallId);
           const pending = pendingMessagingCalls.get(event.toolCallId);
           if (pending) {
             pendingMessagingCalls.delete(event.toolCallId);
@@ -1013,6 +1043,8 @@ export async function executePreparedCliRun(
         }) => {
           const activeTool = activeParsedTools.get(event.toolCallId);
           activeParsedTools.delete(event.toolCallId);
+          const blockedReason = blockedCliTools.get(event.toolCallId);
+          blockedCliTools.delete(event.toolCallId);
           const toolName = activeTool?.toolName ?? event.name;
           const now = Date.now();
           const terminalReason = resolveToolTerminalReason();
@@ -1028,17 +1060,24 @@ export async function executePreparedCliRun(
             durationMs: Math.max(0, now - (activeTool?.startedAt ?? now)),
           };
           emitTrustedDiagnosticEvent(
-            event.isError
+            blockedReason
               ? {
-                  type: "tool.execution.error",
+                  type: "tool.execution.blocked",
                   ...diagnosticBase,
-                  errorCategory: terminalReason === "cancelled" ? "aborted" : "cli_tool",
-                  terminalReason,
+                  deniedReason: blockedReason,
+                  reason: "blocked by before-tool policy",
                 }
-              : {
-                  type: "tool.execution.completed",
-                  ...diagnosticBase,
-                },
+              : event.isError
+                ? {
+                    type: "tool.execution.error",
+                    ...diagnosticBase,
+                    errorCategory: terminalReason === "cancelled" ? "aborted" : "cli_tool",
+                    terminalReason,
+                  }
+                : {
+                    type: "tool.execution.completed",
+                    ...diagnosticBase,
+                  },
           );
           emitCliToolResult(event);
         };
@@ -1130,6 +1169,11 @@ export async function executePreparedCliRun(
             onAssistantDelta: emitCliAssistantDelta,
             onToolUseStart: emitCliToolUseStart,
             onToolResult: emitCliToolResult,
+            resolveToolResultBlockedReason: (event) => {
+              const blockedReason = blockedCliTools.get(event.toolCallId);
+              blockedCliTools.delete(event.toolCallId);
+              return blockedReason;
+            },
             onCommentaryText:
               emitLiveEvents && context.params.emitCommentaryText
                 ? emitCliCommentaryText

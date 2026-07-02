@@ -277,6 +277,7 @@ export function createAgentEventAuditRecorder(options?: {
     Math.floor(options?.terminalSettleMs ?? AGENT_RUN_TERMINAL_RETRY_GRACE_MS),
   );
   const pendingTerminals = new Map<string, PendingTerminal>();
+  const openRunInstances = new Set<string>();
   const settledRunInstances = new Set<string>();
 
   const rememberSettled = (runInstance: string) => {
@@ -303,6 +304,7 @@ export function createAgentEventAuditRecorder(options?: {
       return;
     }
     clearPending(runInstance);
+    openRunInstances.delete(runInstance);
     if (writer.record(pending.input)) {
       rememberSettled(runInstance);
     }
@@ -345,8 +347,15 @@ export function createAgentEventAuditRecorder(options?: {
       }
       const runInstance = `${event.lifecycleGeneration ?? "unknown"}\0${event.runId}`;
       if (!projection.terminal) {
+        const alreadyOpen = openRunInstances.has(runInstance);
         clearPending(runInstance);
         settledRunInstances.delete(runInstance);
+        if (alreadyOpen) {
+          return;
+        }
+        // Retry starts cancel a provisional terminal for the same logical run.
+        // Keep the original start so one run cannot acquire unmatched starts.
+        openRunInstances.add(runInstance);
         writer.record(projection.input);
         return;
       }
@@ -357,6 +366,7 @@ export function createAgentEventAuditRecorder(options?: {
         projection.terminal.outcome.reason === "completed" &&
         !pendingTerminals.has(runInstance)
       ) {
+        openRunInstances.delete(runInstance);
         if (writer.record(projection.input)) {
           rememberSettled(runInstance);
         }

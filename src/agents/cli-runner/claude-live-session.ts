@@ -581,7 +581,11 @@ function markClaudeLiveToolStarted(turn: ClaudeLiveTurn, tool: CliToolUseStartDe
   startClaudeLiveActiveToolHeartbeat(turn);
 }
 
-function markClaudeLiveToolCompleted(turn: ClaudeLiveTurn, result: CliToolResultDelta): void {
+function markClaudeLiveToolCompleted(
+  turn: ClaudeLiveTurn,
+  result: CliToolResultDelta,
+  blockedReason?: string,
+): void {
   turn.toolEventCount += 1;
   const activeTool = turn.activeTools.get(result.toolCallId);
   if (!activeTool) {
@@ -597,7 +601,14 @@ function markClaudeLiveToolCompleted(turn: ClaudeLiveTurn, result: CliToolResult
     toolCallId: activeTool.toolCallId,
     durationMs: Math.max(0, Date.now() - activeTool.startedAt),
   };
-  if (result.isError) {
+  if (blockedReason) {
+    emitTrustedDiagnosticEvent({
+      type: "tool.execution.blocked",
+      ...event,
+      deniedReason: blockedReason,
+      reason: "blocked by before-tool policy",
+    });
+  } else if (result.isError) {
     emitTrustedDiagnosticEvent({
       type: "tool.execution.error",
       ...event,
@@ -1068,6 +1079,7 @@ function createTurn(params: {
   onAssistantDelta: (delta: CliStreamingDelta) => void;
   onToolUseStart?: (delta: CliToolUseStartDelta) => void;
   onToolResult?: (delta: CliToolResultDelta) => void;
+  resolveToolResultBlockedReason?: (delta: CliToolResultDelta) => string | undefined;
   onCommentaryText?: (text: string) => void;
   session: ClaudeLiveSession;
   execPermission: ClaudeLiveExecPermission;
@@ -1101,7 +1113,7 @@ function createTurn(params: {
         params.onToolUseStart?.(delta);
       },
       onToolResult: (delta) => {
-        markClaudeLiveToolCompleted(turn, delta);
+        markClaudeLiveToolCompleted(turn, delta, params.resolveToolResultBlockedReason?.(delta));
         params.onToolResult?.(delta);
       },
       onCommentaryText: params.onCommentaryText,
@@ -1175,6 +1187,7 @@ export async function runClaudeLiveSessionTurn(params: {
   onAssistantDelta: (delta: CliStreamingDelta) => void;
   onToolUseStart?: (delta: CliToolUseStartDelta) => void;
   onToolResult?: (delta: CliToolResultDelta) => void;
+  resolveToolResultBlockedReason?: (delta: CliToolResultDelta) => string | undefined;
   onCommentaryText?: (text: string) => void;
   onMcpCaptureReady?: (captureKey: string) => void;
   cleanup: () => Promise<void>;
@@ -1298,6 +1311,7 @@ export async function runClaudeLiveSessionTurn(params: {
       onAssistantDelta: params.onAssistantDelta,
       onToolUseStart: params.onToolUseStart,
       onToolResult: params.onToolResult,
+      resolveToolResultBlockedReason: params.resolveToolResultBlockedReason,
       onCommentaryText: params.onCommentaryText,
       session: liveSession,
       execPermission,
