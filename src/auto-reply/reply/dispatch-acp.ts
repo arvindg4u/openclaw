@@ -539,20 +539,28 @@ export async function tryDispatchAcpReply(params: {
   const requestId = resolveAcpRequestId(params.ctx);
   const auditRunId = normalizeOptionalString(params.runId) ?? generateSecureUuid();
   const auditRuntime = await loadDispatchAcpAuditRuntime();
+  let auditStarted = false;
   let auditFinished = false;
   let auditTerminalOutcome: "blocked" | undefined;
   let auditStopReason: string | undefined;
   let auditResultStatus: "completed" | "cancelled" | undefined;
-  auditRuntime.emitAcpLifecycleStart({
-    runId: auditRunId,
-    sessionKey: canonicalSessionKey,
-    agentId: acpAgentId,
-    startedAt: Date.now(),
-  });
+  const emitAuditStart = () => {
+    if (auditStarted) {
+      return;
+    }
+    auditStarted = true;
+    auditRuntime.emitAcpLifecycleStart({
+      runId: auditRunId,
+      sessionKey: canonicalSessionKey,
+      agentId: acpAgentId,
+      startedAt: Date.now(),
+    });
+  };
   const emitAuditEnd = () => {
     if (auditFinished) {
       return;
     }
+    emitAuditStart();
     auditFinished = true;
     auditRuntime.emitAcpLifecycleEnd({
       runId: auditRunId,
@@ -567,6 +575,7 @@ export async function tryDispatchAcpReply(params: {
     if (auditFinished) {
       return;
     }
+    emitAuditStart();
     auditFinished = true;
     auditRuntime.emitAcpLifecycleError({
       runId: auditRunId,
@@ -677,7 +686,6 @@ export async function tryDispatchAcpReply(params: {
         })
       : promptText;
     if (!turnPromptText && attachments.length === 0) {
-      emitAuditEnd();
       const counts = params.dispatcher.getQueuedCounts();
       delivery.applyRoutedCounts(counts);
       params.recordProcessed("completed", { reason: "acp_empty_prompt" });
@@ -685,6 +693,7 @@ export async function tryDispatchAcpReply(params: {
       return { queuedFinal: false, counts };
     }
 
+    emitAuditStart();
     try {
       await delivery.startReplyLifecycle();
     } catch (error) {
@@ -717,7 +726,6 @@ export async function tryDispatchAcpReply(params: {
         await projector.onEvent(event);
       },
     });
-    emitAuditEnd();
 
     await projector.flush(true);
     if (params.abortSignal?.aborted) {
@@ -725,6 +733,7 @@ export async function tryDispatchAcpReply(params: {
       delivery.applyRoutedCounts(counts);
       params.recordProcessed("completed", { reason: "acp_aborted" });
       params.markIdle("message_aborted");
+      emitAuditEnd();
       return { queuedFinal, counts };
     }
     try {
@@ -757,18 +766,20 @@ export async function tryDispatchAcpReply(params: {
         shouldEmitResolvedIdentityNotice,
       })) || queuedFinal;
 
-    return finishAttempt({
+    const result = finishAttempt({
       queuedFinal,
       outcome: { kind: "ok" },
     });
+    emitAuditEnd();
+    return result;
   } catch (err) {
-    await projector.flush(true);
     const acpError = toAcpRuntimeError({
       error: err,
       fallbackCode: "ACP_TURN_FAILED",
       fallbackMessage: "ACP turn failed before completion.",
     });
     emitAuditError(acpError);
+    await projector.flush(true);
     await maybeUnbindStaleBoundConversations({
       targetSessionKey: canonicalSessionKey,
       error: acpError,

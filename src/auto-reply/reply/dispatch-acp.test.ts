@@ -325,6 +325,7 @@ async function runDispatch(params: {
   originatingTo?: string;
   onReplyStart?: () => void;
   images?: Array<{ data: string; mimeType: string }>;
+  abortSignal?: AbortSignal;
   ctxOverrides?: Record<string, unknown>;
   sessionKeyOverride?: string;
   suppressUserDelivery?: boolean;
@@ -345,6 +346,7 @@ async function runDispatch(params: {
     dispatcher: params.dispatcher ?? createDispatcher().dispatcher,
     sessionKey: targetSessionKey,
     images: params.images,
+    abortSignal: params.abortSignal,
     inboundAudio: false,
     suppressUserDelivery: params.suppressUserDelivery,
     suppressReplyLifecycle: params.suppressReplyLifecycle,
@@ -753,6 +755,55 @@ describe("tryDispatchAcpReply", () => {
 
     expect(managerMocks.runTurn).not.toHaveBeenCalled();
     expect(onReplyStart).not.toHaveBeenCalled();
+    expect(auditMocks.emitAcpLifecycleStart).not.toHaveBeenCalled();
+    expect(auditMocks.emitAcpLifecycleEnd).not.toHaveBeenCalled();
+    expect(auditMocks.emitAcpLifecycleError).not.toHaveBeenCalled();
+  });
+
+  it("records cancellation only after ACP output flushing", async () => {
+    setReadyAcpResolution();
+    const abortController = new AbortController();
+    managerMocks.runTurn.mockImplementationOnce(
+      async ({ onEvent }: { onEvent: (event: unknown) => Promise<void> }) => {
+        await onEvent({ type: "text_delta", text: "partial", tag: "agent_message_chunk" });
+        await onEvent({ type: "done", status: "cancelled" });
+        abortController.abort();
+      },
+    );
+
+    await runDispatch({
+      bodyForAgent: "cancel this turn",
+      abortSignal: abortController.signal,
+    });
+
+    expect(auditMocks.emitAcpLifecycleEnd).toHaveBeenCalledWith(
+      expect.objectContaining({
+        abortSignal: abortController.signal,
+        resultStatus: "cancelled",
+      }),
+    );
+    expect(auditMocks.emitAcpLifecycleError).not.toHaveBeenCalled();
+  });
+
+  it("records an ACP error when output finalization fails", async () => {
+    setReadyAcpResolution();
+    mockVisibleTextTurn("visible output");
+    const { dispatcher } = createDispatcher();
+    vi.mocked(dispatcher.waitForIdle)
+      .mockRejectedValueOnce(new Error("output settlement failed"))
+      .mockResolvedValue(undefined);
+
+    await runDispatch({
+      bodyForAgent: "finalize this turn",
+      dispatcher,
+    });
+
+    expect(auditMocks.emitAcpLifecycleEnd).not.toHaveBeenCalled();
+    expect(auditMocks.emitAcpLifecycleError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.objectContaining({ message: "output settlement failed" }),
+      }),
+    );
   });
 
   it("skips media understanding for text-only ACP turns", async () => {
