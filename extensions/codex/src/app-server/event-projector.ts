@@ -73,6 +73,7 @@ export type CodexAppServerToolTelemetry = {
 export type CodexAppServerEventProjectorOptions = {
   nativePostToolUseRelayEnabled?: boolean;
   onNativeToolResultRecorded?: () => void | Promise<void>;
+  rawWebSearchResultsEnabled?: boolean;
   runAbortSignal?: AbortSignal;
   trajectoryRecorder?: CodexTrajectoryRecorder | null;
 };
@@ -518,7 +519,10 @@ export class CodexAppServerEventProjector {
       params,
       threadId,
       turnId,
-      { runAbortSignal: options.runAbortSignal },
+      {
+        rawWebSearchResultsEnabled: options.rawWebSearchResultsEnabled,
+        runAbortSignal: options.runAbortSignal,
+      },
     );
   }
 

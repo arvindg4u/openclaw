@@ -2195,6 +2195,48 @@ describe("CodexAppServerEventProjector", () => {
     },
   );
 
+  it("keeps native web-search outcomes unknown when raw events are unavailable", async () => {
+    const diagnosticEvents: DiagnosticEventPayload[] = [];
+    const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
+    const projector = await createProjector(undefined, { rawWebSearchResultsEnabled: false });
+    const item = {
+      id: "web-search-resumed",
+      type: "webSearch",
+      query: "sensitive resumed query",
+      action: { type: "search", query: "sensitive resumed query", queries: null },
+    };
+
+    try {
+      await projector.handleNotification(forCurrentTurn("item/started", { item }));
+      await projector.handleNotification(forCurrentTurn("item/completed", { item }));
+      await flushDiagnosticEvents();
+    } finally {
+      unsubscribe();
+    }
+
+    expect(
+      diagnosticEvents
+        .filter((event) => "toolCallId" in event && event.toolCallId === item.id)
+        .map((event) => ({
+          type: event.type,
+          terminalReason: "terminalReason" in event ? event.terminalReason : undefined,
+          errorCode: "errorCode" in event ? event.errorCode : undefined,
+        })),
+    ).toEqual([
+      {
+        type: "tool.execution.started",
+        terminalReason: undefined,
+        errorCode: undefined,
+      },
+      {
+        type: "tool.execution.error",
+        terminalReason: "failed",
+        errorCode: "tool_outcome_unknown",
+      },
+    ]);
+    expect(JSON.stringify(diagnosticEvents)).not.toContain("sensitive resumed query");
+  });
+
   it("projects native image-generation error status as a failed audit action", async () => {
     const diagnosticEvents: DiagnosticEventPayload[] = [];
     const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));

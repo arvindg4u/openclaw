@@ -2333,6 +2333,53 @@ describe("runCodexAppServerAttempt", () => {
     expect(inputText).toContain("is the previous message trustworthy?");
   });
 
+  it("keeps resumed native web-search outcomes unknown without raw events", async () => {
+    const sessionFile = path.join(tempDir, "session.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace");
+    await writeExistingBinding(sessionFile, workspaceDir, { dynamicToolsFingerprint: "[]" });
+    const harness = createResumeHarness();
+    const diagnosticEvents: DiagnosticEventPayload[] = [];
+    const stopDiagnostics = onInternalDiagnosticEvent((event) => {
+      if ("toolCallId" in event && event.toolCallId === "resumed-search") {
+        diagnosticEvents.push(event);
+      }
+    });
+
+    try {
+      const run = runCodexAppServerAttempt(createParams(sessionFile, workspaceDir));
+      await harness.waitForMethod("turn/start");
+      const item = {
+        id: "resumed-search",
+        type: "webSearch",
+        query: "sensitive resumed query",
+        action: { type: "search", query: "sensitive resumed query", queries: null },
+      };
+      await harness.notify({
+        method: "item/started",
+        params: { threadId: "thread-existing", turnId: "turn-1", item },
+      });
+      await harness.notify({
+        method: "item/completed",
+        params: { threadId: "thread-existing", turnId: "turn-1", item },
+      });
+      await harness.completeTurn({ threadId: "thread-existing", turnId: "turn-1" });
+      await run;
+      await flushDiagnosticEvents();
+    } finally {
+      stopDiagnostics();
+    }
+
+    expect(diagnosticEvents.map((event) => event.type)).toEqual([
+      "tool.execution.started",
+      "tool.execution.error",
+    ]);
+    expect(diagnosticEvents.at(-1)).toMatchObject({
+      terminalReason: "failed",
+      errorCode: "tool_outcome_unknown",
+    });
+    expect(JSON.stringify(diagnosticEvents)).not.toContain("sensitive resumed query");
+  });
+
   it("projects only newer visible history when a resumed Codex binding is stale", async () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");
