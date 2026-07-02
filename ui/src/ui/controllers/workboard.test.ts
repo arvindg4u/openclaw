@@ -907,6 +907,122 @@ describe("workboard controller", () => {
     expect(client.request).not.toHaveBeenCalledWith("workboard.cards.update", expect.anything());
   });
 
+  it("blocks lifecycle writes while a newer revision waits for canonical retry", async () => {
+    const host = {};
+    const state = getWorkboardState(host);
+    const listedCards = createDeferred<unknown>();
+    const completedTask = { ...sampleTask, status: "completed" as const };
+    const linked = {
+      ...sampleCard,
+      status: "running",
+      taskId: completedTask.taskId,
+      sessionKey: completedTask.childSessionKey,
+      runId: completedTask.runId,
+    } satisfies WorkboardCard;
+    let listCalls = 0;
+    const client = createClient((method) => {
+      if (method === "workboard.cards.list") {
+        listCalls += 1;
+        if (listCalls === 1) {
+          return listedCards.promise;
+        }
+        throw new Error("workboard unavailable");
+      }
+      if (method === "tasks.list") {
+        return { tasks: [completedTask] };
+      }
+      if (method === "workboard.cards.update") {
+        return { card: { ...linked, status: "review" } };
+      }
+      return {};
+    });
+
+    const refresh = refreshWorkboard({
+      host,
+      client: client as never,
+      source: "manual",
+    });
+    await vi.waitFor(() => expect(listCalls).toBe(1));
+    handleWorkboardChanged({
+      host,
+      client: client as never,
+      isActive: () => false,
+      payload: { epoch: "epoch-a", revision: 1 },
+    });
+    listedCards.resolve({ cards: [linked], statuses: ["todo", "running", "review"] });
+    await expect(refresh).resolves.toBe(true);
+
+    resumeWorkboardLiveUpdates({ host, client: client as never });
+    await vi.waitFor(() => {
+      expect(listCalls).toBe(2);
+      expect(state.loading).toBe(false);
+    });
+    expect(state.loaded).toBe(true);
+    expect(state.mutationReadiness).toBe("canonical_reload_required");
+
+    vi.clearAllMocks();
+    await syncWorkboardLifecycle({ host, client: client as never, sessions: [] });
+
+    expect(client.request).not.toHaveBeenCalledWith("workboard.cards.update", expect.anything());
+    stopWorkboardLifecycleRefresh(host);
+  });
+
+  it("blocks lifecycle writes when canonical readiness changes during task refresh", async () => {
+    const host = {};
+    const state = getWorkboardState(host);
+    const taskRefresh = createDeferred<unknown>();
+    const listedCards = createDeferred<unknown>();
+    const linked = {
+      ...sampleCard,
+      status: "running",
+      sessionKey: sampleSession.key,
+    } satisfies WorkboardCard;
+    state.loaded = true;
+    state.cards = [linked];
+    let taskListCalls = 0;
+    const client = createClient((method) => {
+      if (method === "workboard.cards.list") {
+        return listedCards.promise;
+      }
+      if (method === "tasks.list") {
+        taskListCalls += 1;
+        return taskListCalls === 1 ? taskRefresh.promise : { tasks: [] };
+      }
+      if (method === "workboard.cards.update") {
+        return { card: { ...linked, status: "review" } };
+      }
+      return {};
+    });
+    const sessions = [{ ...sampleSession, status: "done" as const, hasActiveRun: false }];
+
+    const lifecycleSync = syncWorkboardLifecycle({
+      host,
+      client: client as never,
+      sessions,
+    });
+    await vi.waitFor(() => expect(taskListCalls).toBe(1));
+    const loading = loadWorkboard({ host, client: client as never, force: true });
+    await vi.waitFor(() => {
+      expect(client.request).toHaveBeenCalledWith("workboard.cards.list", {});
+    });
+    handleWorkboardChanged({
+      host,
+      client: client as never,
+      isActive: () => false,
+      payload: { epoch: "epoch-a", revision: 1 },
+    });
+    listedCards.resolve({ cards: [linked], statuses: ["todo", "running", "review"] });
+    await expect(loading).resolves.toBe(true);
+    expect(taskListCalls).toBe(2);
+    expect(state.mutationReadiness).toBe("canonical_reload_required");
+
+    taskRefresh.resolve({ tasks: [] });
+    await lifecycleSync;
+
+    expect(client.request).not.toHaveBeenCalledWith("workboard.cards.update", expect.anything());
+    stopWorkboardLifecycleRefresh(host);
+  });
+
   it("keeps writes blocked when a stale edit closes during a preserved load", async () => {
     const host = {};
     const state = getWorkboardState(host);

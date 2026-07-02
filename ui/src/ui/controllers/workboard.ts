@@ -1049,8 +1049,12 @@ export function workboardMutationsReady(state: WorkboardUiState): boolean {
   return state.mutationReadiness === "ready";
 }
 
+function workboardCanonicalReloadPending(state: WorkboardUiState): boolean {
+  return state.mutationReadiness === "canonical_reload_required";
+}
+
 export function workboardCommentMutationsReady(state: WorkboardUiState): boolean {
-  return state.mutationReadiness !== "canonical_reload_required";
+  return !workboardCanonicalReloadPending(state);
 }
 
 export function workboardHasActiveWrites(state: WorkboardUiState): boolean {
@@ -3473,6 +3477,7 @@ export async function syncWorkboardLifecycle(params: {
   if (
     !params.client ||
     !state.loaded ||
+    workboardCanonicalReloadPending(state) ||
     (taskRefreshContinuationWaiting && workboardLifecycleRequiresTaskRefresh(state)) ||
     workboardLifecycleSyncBlocked(params.host, state)
   ) {
@@ -3523,6 +3528,7 @@ export async function syncWorkboardLifecycle(params: {
   }
   if (
     !isCurrentWorkboardLifecycleReconciliationEpoch(params.host, reconciliationEpoch) ||
+    workboardCanonicalReloadPending(state) ||
     workboardLifecycleSyncBlocked(params.host, state)
   ) {
     return;
@@ -3542,6 +3548,7 @@ export async function syncWorkboardLifecycle(params: {
   for (const card of state.cards) {
     if (
       !isCurrentWorkboardLifecycleReconciliationEpoch(params.host, reconciliationEpoch) ||
+      workboardCanonicalReloadPending(state) ||
       workboardLifecycleSyncBlocked(params.host, state)
     ) {
       return;
