@@ -761,6 +761,36 @@ describe("workboard controller", () => {
     ).toBe(false);
   });
 
+  it("stops automatic live-refresh recovery after the bounded retry sequence", async () => {
+    vi.useFakeTimers();
+    const host = {};
+    const client = createClient((method) => {
+      if (method === "workboard.cards.list") {
+        throw new Error("cards unavailable");
+      }
+      return {};
+    });
+    const params = { host, client: client as never };
+
+    handleWorkboardChanged({
+      ...params,
+      payload: { epoch: "epoch-a", revision: 1 },
+    });
+    await vi.advanceTimersByTimeAsync(1000 + 2000 + 5000);
+
+    expect(
+      client.request.mock.calls.filter(([method]) => method === "workboard.cards.list"),
+    ).toHaveLength(4);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    resumeWorkboardLiveUpdates(params);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(
+      client.request.mock.calls.filter(([method]) => method === "workboard.cards.list"),
+    ).toHaveLength(4);
+  });
+
   it("does not rearm live-refresh recovery after an in-flight lifecycle stop", async () => {
     vi.useFakeTimers();
     const host = {};
@@ -5211,7 +5241,7 @@ describe("workboard controller", () => {
     state.lifecycleTasksPrepared = true;
     state.lifecycleTasksPreparedAt = Date.now();
     const client = createClient({
-      "tasks.list": { tasks: [{ ...sampleTask, status: "completed" }] },
+      "tasks.get": { task: { ...sampleTask, status: "completed" } },
       "workboard.cards.update": { card: { ...linked, status: "review" } },
     });
     const requestUpdate = vi.fn();
@@ -5234,8 +5264,11 @@ describe("workboard controller", () => {
       requestUpdate,
     });
 
-    expect(client.request).toHaveBeenNthCalledWith(1, "tasks.list", { limit: 500 });
+    expect(client.request).toHaveBeenNthCalledWith(1, "tasks.get", {
+      taskId: sampleTask.taskId,
+    });
     expect(client.request).toHaveBeenNthCalledWith(2, "workboard.cards.update", expect.anything());
+    expect(client.request).not.toHaveBeenCalledWith("tasks.list", expect.anything());
   });
 
   it("does not schedule task reconciliation for terminal or archived links", async () => {
@@ -5276,6 +5309,14 @@ describe("workboard controller", () => {
     });
     await vi.advanceTimersByTimeAsync(5000);
 
+    await syncWorkboardLifecycle({
+      host,
+      client: client as never,
+      sessions: [],
+      canWrite: false,
+      requestUpdate,
+    });
+
     expect(requestUpdate).not.toHaveBeenCalled();
     expect(client.request).not.toHaveBeenCalled();
   });
@@ -5297,10 +5338,10 @@ describe("workboard controller", () => {
     let available = false;
     const client = createClient((method) => {
       if (method === "tasks.list") {
-        if (!available) {
-          throw new Error("tasks unavailable");
-        }
-        return { tasks: [sampleTask] };
+        throw new Error("tasks unavailable");
+      }
+      if (method === "tasks.get" && available) {
+        return { task: sampleTask };
       }
       return {};
     });
@@ -5332,7 +5373,10 @@ describe("workboard controller", () => {
       requestUpdate,
     });
 
-    expect(client.request).toHaveBeenCalledWith("tasks.list", { limit: 500 });
+    expect(client.request).toHaveBeenCalledWith("tasks.get", {
+      taskId: sampleTask.taskId,
+    });
+    expect(client.request).not.toHaveBeenCalledWith("tasks.list", expect.anything());
     expect(state.lifecycleTaskRefreshFailed).toBe(false);
   });
 
@@ -5562,6 +5606,7 @@ describe("workboard controller", () => {
   });
 
   it("reconciles session-only cards when task discovery is unavailable", async () => {
+    vi.useFakeTimers();
     const host = {};
     const state = getWorkboardState(host);
     const linked = {
@@ -5581,11 +5626,13 @@ describe("workboard controller", () => {
       }
       return {};
     });
+    const requestUpdate = vi.fn();
 
     await syncWorkboardLifecycle({
       host,
       client: client as never,
       sessions: [{ ...sampleSession, status: "done", hasActiveRun: false }],
+      requestUpdate,
     });
 
     expect(client.request).toHaveBeenCalledWith("tasks.list", { limit: 500 });
@@ -5594,6 +5641,91 @@ describe("workboard controller", () => {
       patch: expect.objectContaining({ status: "review" }),
     });
     expect(state.cards[0]?.status).toBe("review");
+
+    vi.clearAllMocks();
+    await vi.advanceTimersByTimeAsync(5000);
+    await syncWorkboardLifecycle({
+      host,
+      client: client as never,
+      sessions: [{ ...sampleSession, status: "done", hasActiveRun: false }],
+      requestUpdate,
+    });
+
+    expect(requestUpdate).not.toHaveBeenCalled();
+    expect(client.request).not.toHaveBeenCalled();
+  });
+
+  it("keeps unresolved task-backed cards quiescent after task refresh failure", async () => {
+    const host = {};
+    const state = getWorkboardState(host);
+    const linked = {
+      ...sampleCard,
+      status: "running",
+      sessionKey: sampleSession.key,
+      runId: "run-1",
+      taskId: sampleTask.taskId,
+    } satisfies WorkboardCard;
+    state.loaded = true;
+    state.cards = [linked];
+    const client = createClient((method) => {
+      if (method === "tasks.list") {
+        throw new Error("tasks unavailable");
+      }
+      if (method === "workboard.cards.update") {
+        return { card: { ...linked, status: "review" } };
+      }
+      return {};
+    });
+    const sessions = [{ ...sampleSession, status: "done" as const, hasActiveRun: false }];
+
+    await syncWorkboardLifecycle({ host, client: client as never, sessions });
+    expect(client.request).toHaveBeenCalledOnce();
+    expect(client.request).toHaveBeenCalledWith("tasks.list", { limit: 500 });
+
+    vi.clearAllMocks();
+    await syncWorkboardLifecycle({ host, client: client as never, sessions });
+
+    expect(client.request).not.toHaveBeenCalled();
+    expect(state.cards[0]?.status).toBe("running");
+  });
+
+  it("keeps unrelated unresolved task links quiescent after an exact active retry", async () => {
+    const host = {};
+    const state = getWorkboardState(host);
+    const active = {
+      ...sampleCard,
+      status: "running",
+      sessionKey: sampleTaskSessionKey,
+      runId: sampleTask.runId,
+      taskId: sampleTask.taskId,
+    } satisfies WorkboardCard;
+    const unresolved = {
+      ...sampleCard,
+      id: "card-unresolved",
+      status: "running",
+      sessionKey: sampleSession.key,
+      runId: "run-unresolved",
+      taskId: "task-unresolved",
+    } satisfies WorkboardCard;
+    state.loaded = true;
+    state.cards = [active, unresolved];
+    state.tasksByCardId.set(active.id, sampleTask);
+    state.lifecycleTaskRefreshFailed = true;
+    state.lifecycleTaskRefreshRetryAt = Date.now();
+    const client = createClient({
+      "tasks.get": { task: sampleTask },
+      "workboard.cards.update": { card: { ...unresolved, status: "review" } },
+    });
+
+    await syncWorkboardLifecycle({
+      host,
+      client: client as never,
+      sessions: [{ ...sampleSession, status: "done", hasActiveRun: false }],
+    });
+
+    expect(client.request).toHaveBeenCalledOnce();
+    expect(client.request).toHaveBeenCalledWith("tasks.get", { taskId: sampleTask.taskId });
+    expect(state.cards.find((card) => card.id === unresolved.id)?.status).toBe("running");
   });
 
   it("honors task refresh backoff while reconciling session-only cards", async () => {
@@ -6356,7 +6488,7 @@ describe("workboard controller", () => {
     expect(state.error).toBeNull();
   });
 
-  it("recovers task refresh failures for read-only workboard clients", async () => {
+  it("recovers known-active task refresh failures for read-only workboard clients", async () => {
     const host = {};
     const state = getWorkboardState(host);
     const linked = {
@@ -6368,10 +6500,12 @@ describe("workboard controller", () => {
     } satisfies WorkboardCard;
     state.loaded = true;
     state.cards = [linked];
+    state.tasksByCardId.set(linked.id, sampleTask);
     state.lifecycleTaskRefreshFailed = true;
+    state.lifecycleTaskRefreshRetryAt = Date.now();
     state.lifecycleTaskRefreshError = "tasks unavailable";
     state.lastRefreshError = "tasks unavailable";
-    const client = createClient({ "tasks.list": { tasks: [sampleTask] } });
+    const client = createClient({ "tasks.get": { task: sampleTask } });
 
     await syncWorkboardLifecycle({
       host,
@@ -6381,7 +6515,7 @@ describe("workboard controller", () => {
     });
 
     expect(client.request).toHaveBeenCalledOnce();
-    expect(client.request).toHaveBeenCalledWith("tasks.list", { limit: 500 });
+    expect(client.request).toHaveBeenCalledWith("tasks.get", { taskId: sampleTask.taskId });
     expect(client.request).not.toHaveBeenCalledWith("workboard.cards.update", expect.anything());
     expect(state.lifecycleTaskRefreshFailed).toBe(false);
     expect(state.lifecycleTaskRefreshError).toBeNull();

@@ -8,13 +8,15 @@ describe("createWorkboardChangeEventService", () => {
     vi.useFakeTimers();
     const unsubscribe = vi.fn();
     let listener: ((change: { epoch: string; revision: number }) => void) | undefined;
+    const announceChangeEpoch = vi.fn(() => listener?.({ epoch: "epoch-a", revision: 1 }));
+    const reconcileExternalChanges = vi.fn();
     const store = {
       subscribeChanges: vi.fn((next) => {
         listener = next;
         return unsubscribe;
       }),
-      announceChangeEpoch: vi.fn(() => listener?.({ epoch: "epoch-a", revision: 1 })),
-      reconcileExternalChanges: vi.fn(),
+      announceChangeEpoch,
+      reconcileExternalChanges,
     } as unknown as WorkboardStore;
     const emit = vi.fn();
     const service = createWorkboardChangeEventService(store);
@@ -44,12 +46,12 @@ describe("createWorkboardChangeEventService", () => {
       { epoch: "epoch-a", revision: 2 },
       { scope: "operator.read" },
     );
-    expect(store.announceChangeEpoch).toHaveBeenCalledOnce();
-    expect(store.reconcileExternalChanges).toHaveBeenCalledOnce();
+    expect(announceChangeEpoch).toHaveBeenCalledOnce();
+    expect(reconcileExternalChanges).toHaveBeenCalledOnce();
 
     await service.stop?.(ctx);
     await vi.advanceTimersByTimeAsync(1000);
-    expect(store.reconcileExternalChanges).toHaveBeenCalledOnce();
+    expect(reconcileExternalChanges).toHaveBeenCalledOnce();
     expect(unsubscribe).toHaveBeenCalledOnce();
     vi.useRealTimers();
   });

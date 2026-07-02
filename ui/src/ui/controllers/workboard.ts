@@ -442,6 +442,7 @@ const workboardLifecycleWritePromises = new WeakMap<WorkboardHost, Set<Promise<u
 const workboardLoadGenerations = new WeakMap<WorkboardHost, number>();
 const workboardLifecycleReconciliationEpochs = new WeakMap<WorkboardHost, number>();
 const workboardTaskPollOffsets = new WeakMap<WorkboardHost, number>();
+const workboardActiveTaskPollOffsets = new WeakMap<WorkboardHost, number>();
 const workboardTaskDiscoveryOffsets = new WeakMap<WorkboardHost, number>();
 const workboardDefaultTaskDiscoveryCursors = new WeakMap<WorkboardHost, string>();
 const workboardLifecycleTaskPreparedTimers = new WeakMap<
@@ -579,6 +580,11 @@ function workboardChangePending(host: WorkboardHost): boolean {
   return Boolean(progress && progress.applied < progress.highestSeen);
 }
 
+function workboardChangeRecoveryExhausted(host: WorkboardHost): boolean {
+  const progress = workboardChangeProgress.get(host);
+  return Boolean(progress && progress.failureCount > WORKBOARD_CHANGE_RETRY_DELAYS_MS.length);
+}
+
 function currentWorkboardChangeTarget(host: WorkboardHost): WorkboardChangeTarget | undefined {
   const progress = workboardChangeProgress.get(host);
   return progress ? { epoch: progress.epoch, revision: progress.highestSeen } : undefined;
@@ -627,6 +633,7 @@ export function resumeWorkboardLiveUpdates(params: ResumeWorkboardLiveUpdatesPar
     !params.client ||
     params.isActive?.() === false ||
     !workboardChangePending(params.host) ||
+    workboardChangeRecoveryExhausted(params.host) ||
     workboardChangeRefreshPromises.has(params.host) ||
     workboardChangeRetryTimers.has(params.host) ||
     workboardLoadTokens.has(params.host)
@@ -697,12 +704,12 @@ async function resumeWorkboardLiveUpdatesInternal(
       continue;
     }
     progress.failureCount += 1;
-    // Retry only this canonical reconciliation, at a capped rate. The timer is
-    // cleared by newer revisions, successful reads, reconnect, and teardown.
-    const retryIndex = Math.min(
-      progress.failureCount - 1,
-      WORKBOARD_CHANGE_RETRY_DELAYS_MS.length - 1,
-    );
+    // Bound background recovery. New revisions, successful reads, reconnect,
+    // and manual refresh can start a fresh reconciliation sequence.
+    if (progress.failureCount > WORKBOARD_CHANGE_RETRY_DELAYS_MS.length) {
+      return;
+    }
+    const retryIndex = progress.failureCount - 1;
     const timer = setTimeout(() => {
       workboardChangeRetryTimers.delete(params.host);
       resumeWorkboardLiveUpdates(params);
@@ -844,13 +851,7 @@ function setWorkboardLifecycleTasksPrepared(
     return;
   }
   clearWorkboardLifecycleTaskPreparedTimer(host);
-  if (
-    !prepared ||
-    !options.requestUpdate ||
-    !state.cards.some(
-      (card) => !card.metadata?.archivedAt && taskIsActive(state.tasksByCardId.get(card.id)),
-    )
-  ) {
+  if (!prepared || !options.requestUpdate || !workboardHasKnownActiveLifecycleTask(state)) {
     return;
   }
   // Active linked task state lives outside Workboard SQLite and has no change
@@ -869,6 +870,9 @@ function workboardLifecycleTasksPreparedAt(state: WorkboardUiState, now = Date.n
   if (!state.lifecycleTasksPrepared || state.lifecycleTasksPreparedAt === null) {
     return null;
   }
+  if (!workboardHasKnownActiveLifecycleTask(state)) {
+    return state.lifecycleTasksPreparedAt;
+  }
   return now - state.lifecycleTasksPreparedAt >= WORKBOARD_LIFECYCLE_TASK_RECONCILE_MS
     ? null
     : state.lifecycleTasksPreparedAt;
@@ -884,14 +888,15 @@ function setWorkboardLifecycleTaskRefreshFailed(
   } = {},
 ) {
   const retryDelayMs = options.retryDelayMs ?? WORKBOARD_LIFECYCLE_TASK_RETRY_MS;
+  const retryEligible = failed && workboardHasKnownActiveLifecycleTask(state);
   state.lifecycleTaskRefreshFailed = failed;
-  state.lifecycleTaskRefreshRetryAt = failed ? Date.now() + retryDelayMs : null;
+  state.lifecycleTaskRefreshRetryAt = retryEligible ? Date.now() + retryDelayMs : null;
   const host = options.host;
   if (!host) {
     return;
   }
   clearWorkboardLifecycleTaskRetryTimer(host);
-  if (!failed || !options.requestUpdate) {
+  if (!retryEligible || !options.requestUpdate) {
     return;
   }
   const timer = setTimeout(() => {
@@ -2158,6 +2163,12 @@ function selectWorkboardMissingTaskConfirmationIds(
 
 type WorkboardTaskLinkState = Pick<WorkboardUiState, "cards" | "tasksByCardId" | "missingTaskIds">;
 
+function workboardHasKnownActiveLifecycleTask(state: WorkboardTaskLinkState): boolean {
+  return state.cards.some(
+    (card) => !card.metadata?.archivedAt && taskIsActive(state.tasksByCardId.get(card.id)),
+  );
+}
+
 function applyTaskSummariesToState(
   state: WorkboardTaskLinkState,
   tasks: readonly WorkboardTaskSummary[],
@@ -3172,6 +3183,7 @@ async function refreshWorkboardLifecycleTasks(
     requestUpdate?: () => void;
   },
   state: WorkboardUiState,
+  options: { exactActiveOnly?: boolean } = {},
 ): Promise<number | null> {
   const existingRefresh = workboardLifecycleTaskRefreshPromises.get(params.host);
   if (existingRefresh) {
@@ -3181,6 +3193,71 @@ async function refreshWorkboardLifecycleTasks(
     const generation = nextWorkboardLoadGeneration(params.host);
     try {
       const previousTasksByCardId = state.tasksByCardId;
+      if (options.exactActiveOnly) {
+        const activeTaskIds = selectRotatingBatch(
+          params.host,
+          state.cards.flatMap((card) => {
+            const task = previousTasksByCardId.get(card.id);
+            return !card.metadata?.archivedAt && taskIsActive(task) ? [task.taskId] : [];
+          }),
+          WORKBOARD_TASK_POLL_BATCH_SIZE,
+          workboardActiveTaskPollOffsets,
+        );
+        const exactResult = await getWorkboardTaskPollBatch(params.client, activeTaskIds, []);
+        const resolvedTaskIds = new Set(
+          exactResult.tasks.flatMap((task) => [task.id, task.taskId]),
+        );
+        const activeTaskIdSet = new Set(activeTaskIds);
+        const taskLinkState: WorkboardTaskLinkState = {
+          cards: state.cards,
+          tasksByCardId: new Map(),
+          missingTaskIds: new Set(state.missingTaskIds),
+        };
+        const tasksToPreserve = state.cards.flatMap((card) => {
+          const task = previousTasksByCardId.get(card.id);
+          if (!task) {
+            return [];
+          }
+          const unresolvedTarget =
+            activeTaskIdSet.has(task.taskId) &&
+            !resolvedTaskIds.has(task.taskId) &&
+            !exactResult.missingTaskIds.has(task.taskId);
+          return !activeTaskIdSet.has(task.taskId) || unresolvedTarget ? [task] : [];
+        });
+        applyTaskSummariesToState(taskLinkState, [...exactResult.tasks, ...tasksToPreserve], {
+          missingTaskIds: exactResult.missingTaskIds,
+        });
+        if (
+          !isCurrentWorkboardLoadGeneration(params.host, generation) ||
+          workboardLifecycleSyncBlocked(params.host, state)
+        ) {
+          return null;
+        }
+        state.cards = taskLinkState.cards;
+        state.tasksByCardId = taskLinkState.tasksByCardId;
+        state.missingTaskIds = taskLinkState.missingTaskIds;
+        resetWorkboardLifecycleTaskConfirmations(state, { host: params.host });
+        if (exactResult.error) {
+          setWorkboardLifecycleTaskRefreshFailed(state, true, {
+            host: params.host,
+            requestUpdate: params.requestUpdate,
+          });
+          state.lifecycleTaskRefreshError = exactResult.error;
+          params.requestUpdate?.();
+          return null;
+        }
+        const recoveredTaskRefreshError = state.lifecycleTaskRefreshError;
+        setWorkboardLifecycleTaskRefreshFailed(state, false, { host: params.host });
+        state.lifecycleTaskRefreshError = null;
+        if (
+          recoveredTaskRefreshError !== null &&
+          state.lastRefreshError === recoveredTaskRefreshError
+        ) {
+          state.lastRefreshError = null;
+        }
+        params.requestUpdate?.();
+        return Date.now();
+      }
       const confirmationNow = Date.now();
       const confirmationExpired =
         state.lifecycleTaskConfirmationStartedAt !== null &&
@@ -3320,6 +3397,8 @@ export async function syncWorkboardLifecycle(params: {
   requestUpdate?: () => void;
 }) {
   const state = getWorkboardState(params.host);
+  const taskRefreshNow = Date.now();
+  const hasKnownActiveTask = workboardHasKnownActiveLifecycleTask(state);
   const taskRefreshRetryPending = workboardLifecycleTaskRefreshRetryPending(state);
   const taskRefreshContinuationWaiting = workboardLifecycleTaskRefreshContinuationWaiting(state);
   if (
@@ -3332,13 +3411,24 @@ export async function syncWorkboardLifecycle(params: {
     return;
   }
   const reconciliationEpoch = currentWorkboardLifecycleReconciliationEpoch(params.host);
-  let tasksPreparedAt = workboardLifecycleTasksPreparedAt(state);
+  const exactActiveTaskRefreshDue =
+    hasKnownActiveTask &&
+    ((state.lifecycleTasksPrepared &&
+      state.lifecycleTasksPreparedAt !== null &&
+      taskRefreshNow - state.lifecycleTasksPreparedAt >= WORKBOARD_LIFECYCLE_TASK_RECONCILE_MS) ||
+      (state.lifecycleTaskRefreshFailed &&
+        state.lifecycleTaskRefreshRetryAt !== null &&
+        taskRefreshNow >= state.lifecycleTaskRefreshRetryAt));
+  const taskRefreshBlockedWithoutWake =
+    state.lifecycleTaskRefreshFailed && !exactActiveTaskRefreshDue;
+  let tasksPreparedAt = workboardLifecycleTasksPreparedAt(state, taskRefreshNow);
   const tasksPrepared = tasksPreparedAt !== null;
   setWorkboardLifecycleTasksPrepared(state, false, { host: params.host });
   if (
     !tasksPrepared &&
     !taskRefreshRetryPending &&
     !taskRefreshContinuationWaiting &&
+    !taskRefreshBlockedWithoutWake &&
     shouldRefreshWorkboardTasksForLifecycle(state)
   ) {
     tasksPreparedAt = await refreshWorkboardLifecycleTasks(
@@ -3348,6 +3438,7 @@ export async function syncWorkboardLifecycle(params: {
         requestUpdate: params.requestUpdate,
       },
       state,
+      { exactActiveOnly: exactActiveTaskRefreshDue },
     );
     if (tasksPreparedAt === null && workboardLifecycleRequiresTaskRefresh(state)) {
       // A null result without a recorded failure means the shared refresh was
@@ -3386,6 +3477,12 @@ export async function syncWorkboardLifecycle(params: {
       workboardLifecycleSyncBlocked(params.host, state)
     ) {
       return;
+    }
+    const taskId = normalizeString(card.taskId);
+    const unresolvedTaskBackedCard =
+      taskId !== null && !state.missingTaskIds.has(taskId) && !state.tasksByCardId.has(card.id);
+    if (unresolvedTaskBackedCard) {
+      continue;
     }
     const lifecycle = getWorkboardLifecycle(
       card,
