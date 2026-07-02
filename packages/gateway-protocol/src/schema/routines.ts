@@ -120,10 +120,6 @@ const RoutineRecordFields = {
   updatedAtMs: Type.Integer({ minimum: 0 }),
 };
 
-const RoutineRecordSchema = Type.Object(RoutineRecordFields, {
-  additionalProperties: false,
-});
-
 export const RoutineViewSchema = Type.Object(
   {
     ...RoutineRecordFields,
