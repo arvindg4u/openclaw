@@ -577,8 +577,6 @@ export async function runCodexAppServerSideQuestion(
       childThreadId,
       turnId,
       {
-        // Codex fork listeners suppress raw response items, so normalized completion is terminal.
-        rawWebSearchResultsEnabled: false,
         runAbortSignal: runAbortController.signal,
       },
     );

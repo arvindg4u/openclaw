@@ -3042,9 +3042,6 @@ export async function runCodexAppServerAttempt(
       nativePostToolUseRelayEnabled:
         nativeHookRelay?.allowedEvents.includes("post_tool_use") === true &&
         nativeHookRelay.shouldRelayEvent("post_tool_use"),
-      // Only thread/start enables raw response events. Resumed web-search
-      // history has no authoritative status, so its audit outcome stays unknown.
-      rawWebSearchResultsEnabled: thread.lifecycle.action === "started",
       runAbortSignal: runAbortController.signal,
       trajectoryRecorder,
       onNativeToolResultRecorded: maybeAnnounceFastModeAutoOff,

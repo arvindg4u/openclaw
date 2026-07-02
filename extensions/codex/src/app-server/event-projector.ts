@@ -73,7 +73,6 @@ export type CodexAppServerToolTelemetry = {
 export type CodexAppServerEventProjectorOptions = {
   nativePostToolUseRelayEnabled?: boolean;
   onNativeToolResultRecorded?: () => void | Promise<void>;
-  rawWebSearchResultsEnabled?: boolean;
   runAbortSignal?: AbortSignal;
   trajectoryRecorder?: CodexTrajectoryRecorder | null;
 };
@@ -84,7 +83,6 @@ type CodexNativeToolLifecycleContext = Pick<
 >;
 
 type CodexNativeToolLifecycleProjectorOptions = {
-  rawWebSearchResultsEnabled?: boolean;
   runAbortSignal?: AbortSignal;
 };
 
@@ -98,7 +96,7 @@ type CodexNativePreToolUseFailureRecord = {
 export class CodexNativeToolLifecycleProjector {
   private readonly startedAtByItem = new Map<string, number>();
   private readonly activeItems = new Map<string, { toolName: string }>();
-  private readonly webSearchesAwaitingRawResult = new Set<string>();
+  private readonly webSearchAbortStateAtCompletion = new Map<string, boolean>();
   private readonly completedItemIds = new Set<string>();
   private readonly approvalFailureDispositionByItem = new Map<
     string,
@@ -163,12 +161,12 @@ export class CodexNativeToolLifecycleProjector {
       return;
     }
     if (params.item.type === "webSearch") {
-      if (this.options.rawWebSearchResultsEnabled === false) {
-        this.recordTerminal(params.item.id, toolName, "unknown");
-        return;
-      }
-      // Prefer the raw status when this listener receives raw response items.
-      this.webSearchesAwaitingRawResult.add(params.item.id);
+      // Warm resumes retain raw-event delivery, while cold resumes expose no
+      // capability bit. Wait through the drain; finalization closes misses unknown.
+      this.webSearchAbortStateAtCompletion.set(
+        params.item.id,
+        this.options.runAbortSignal?.aborted === true,
+      );
       return;
     }
 
@@ -236,6 +234,7 @@ export class CodexNativeToolLifecycleProjector {
     toolName: string,
     status: CodexNativeToolAuditStatus,
     itemDurationMs?: number,
+    runWasAborted = this.options.runAbortSignal?.aborted === true,
   ): void {
     const preToolUseFailure = this.preToolUseFailureByItem.get(toolCallId);
     this.preToolUseFailureByItem.delete(toolCallId);
@@ -243,7 +242,7 @@ export class CodexNativeToolLifecycleProjector {
     this.approvalFailureDispositionByItem.delete(toolCallId);
     this.completedItemIds.add(toolCallId);
     this.activeItems.delete(toolCallId);
-    this.webSearchesAwaitingRawResult.delete(toolCallId);
+    this.webSearchAbortStateAtCompletion.delete(toolCallId);
     const startedAt = this.startedAtByItem.get(toolCallId);
     this.startedAtByItem.delete(toolCallId);
     const durationMs =
@@ -276,11 +275,12 @@ export class CodexNativeToolLifecycleProjector {
                     ? "aborted"
                     : "codex_native_tool_error",
               ...(status === "unknown" ? { errorCode: "tool_outcome_unknown" } : {}),
-              terminalReason: this.options.runAbortSignal?.aborted
-                ? resolveCodexToolAbortTerminalReason(this.options.runAbortSignal)
-                : status === "cancelled"
-                  ? ("cancelled" as const)
-                  : ("failed" as const),
+              terminalReason:
+                runWasAborted && this.options.runAbortSignal
+                  ? resolveCodexToolAbortTerminalReason(this.options.runAbortSignal)
+                  : status === "cancelled"
+                    ? ("cancelled" as const)
+                    : ("failed" as const),
             }
           : {
               type: "tool.execution.completed" as const,
@@ -295,8 +295,12 @@ export class CodexNativeToolLifecycleProjector {
   finalizeActive(): void {
     this.finalized = true;
     for (const [toolCallId, { toolName }] of this.activeItems) {
-      const status = this.webSearchesAwaitingRawResult.has(toolCallId) ? "unknown" : "failed";
-      this.recordTerminal(toolCallId, toolName, status);
+      const isWebSearchAwaitingRawResult = this.webSearchAbortStateAtCompletion.has(toolCallId);
+      const status = isWebSearchAwaitingRawResult ? "unknown" : "failed";
+      const runWasAborted = isWebSearchAwaitingRawResult
+        ? this.webSearchAbortStateAtCompletion.get(toolCallId) === true
+        : undefined;
+      this.recordTerminal(toolCallId, toolName, status, undefined, runWasAborted);
     }
     for (const [toolCallId, record] of this.preToolUseFailureByItem) {
       if (!this.completedItemIds.has(toolCallId)) {
@@ -309,7 +313,7 @@ export class CodexNativeToolLifecycleProjector {
       }
     }
     this.activeItems.clear();
-    this.webSearchesAwaitingRawResult.clear();
+    this.webSearchAbortStateAtCompletion.clear();
     this.approvalFailureDispositionByItem.clear();
     this.preToolUseFailureByItem.clear();
   }
@@ -525,7 +529,6 @@ export class CodexAppServerEventProjector {
       threadId,
       turnId,
       {
-        rawWebSearchResultsEnabled: options.rawWebSearchResultsEnabled,
         runAbortSignal: options.runAbortSignal,
       },
     );
