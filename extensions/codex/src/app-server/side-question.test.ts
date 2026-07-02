@@ -1852,13 +1852,17 @@ describe("runCodexAppServerSideQuestion", () => {
         durationMs: undefined,
       },
       {
-        type: "tool.execution.completed",
+        type: "tool.execution.error",
         agentId: "side-agent",
         toolName: "web_search",
         toolCallId: "native-search-1",
         durationMs: expect.any(Number),
       },
     ]);
+    expect(toolEvents.at(-1)).toMatchObject({
+      errorCode: "tool_outcome_unknown",
+      terminalReason: "failed",
+    });
     expect(activeDiagnosticToolKeys(diagnosticEvents)).toEqual(new Set());
     expect(JSON.stringify(toolEvents)).not.toContain("sensitive side-thread query");
   });

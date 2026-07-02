@@ -34,7 +34,7 @@ openclaw audit --kind tool_action --limit 50 --json
 - `--run <id>`: exact run id
 - `--kind <kind>`: `agent_run` or `tool_action`
 - `--status <status>`: `started`, `succeeded`, `failed`, `cancelled`,
-  `timed_out`, or `blocked`
+  `timed_out`, `blocked`, or `unknown`
 - `--after <timestamp>` / `--before <timestamp>`: inclusive ISO timestamp or
   Unix milliseconds
 - `--limit <count>`: page size from 1 to 500; default `100`
@@ -59,8 +59,10 @@ Every record has a stable event id, a monotonically increasing ledger sequence,
 the original run event sequence, timestamp, agent/run provenance, actor, and a
 `redaction: "metadata_only"` marker. Terminal records distinguish success,
 failure, cancellation, timeout, and policy blocks with closed status and error
-codes. Session ids, session keys, run ids, tool call ids, and tool names are
-operator metadata; protect exports as operational records.
+codes. `unknown` is an explicit non-success result when an upstream runtime
+does not expose an authoritative terminal outcome. Session ids, session keys,
+run ids, tool call ids, and tool names are operator metadata; protect exports
+as operational records.
 
 The audit ledger does not replace transcripts, task history, cron run history,
 or logs. It provides a small cross-run index for operator questions without

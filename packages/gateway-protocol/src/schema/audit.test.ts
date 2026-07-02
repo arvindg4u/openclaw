@@ -14,6 +14,7 @@ describe("audit protocol schemas", () => {
         cursor: "42",
       }),
     ).toBe(true);
+    expect(validateAuditListParams({ status: "unknown" })).toBe(true);
     expect(validateAuditListParams({ limit: 501 })).toBe(false);
   });
 
@@ -26,8 +27,8 @@ describe("audit protocol schemas", () => {
       occurredAt: 1,
       kind: "tool_action",
       action: "tool.action.finished",
-      status: "failed",
-      errorCode: "tool_failed",
+      status: "unknown",
+      errorCode: "tool_outcome_unknown",
       actor: { type: "agent", id: "main" },
       agentId: "main",
       sessionKey: "agent:main:main",

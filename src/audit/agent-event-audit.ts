@@ -189,6 +189,10 @@ export function projectToolExecutionEventToAudit(
       ? normalizeOptionalLowercaseString(event.errorCategory)
       : undefined;
   const terminalReason = event.type === "tool.execution.error" ? event.terminalReason : undefined;
+  const diagnosticErrorCode =
+    event.type === "tool.execution.error"
+      ? normalizeOptionalLowercaseString(event.errorCode)
+      : undefined;
   // Modern producers set terminalReason explicitly; errorCategory is only a
   // legacy fallback and must not override a definitive timeout or failure.
   const toolCancelled =
@@ -210,7 +214,9 @@ export function projectToolExecutionEventToAudit(
             ? { status: "cancelled" as const, errorCode: "tool_cancelled" as const }
             : toolTimedOut
               ? { status: "timed_out" as const, errorCode: "tool_timed_out" as const }
-              : { status: "failed" as const, errorCode: "tool_failed" as const };
+              : diagnosticErrorCode === "tool_outcome_unknown"
+                ? { status: "unknown" as const, errorCode: "tool_outcome_unknown" as const }
+                : { status: "failed" as const, errorCode: "tool_failed" as const };
   return {
     sourceSequence: event.seq,
     occurredAt: event.ts,

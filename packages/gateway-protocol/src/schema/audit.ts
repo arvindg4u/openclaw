@@ -21,6 +21,7 @@ export const AuditEventStatusSchema = Type.Union([
   Type.Literal("cancelled"),
   Type.Literal("timed_out"),
   Type.Literal("blocked"),
+  Type.Literal("unknown"),
 ]);
 
 export const AuditEventErrorCodeSchema = Type.Union([
@@ -32,6 +33,7 @@ export const AuditEventErrorCodeSchema = Type.Union([
   Type.Literal("tool_cancelled"),
   Type.Literal("tool_timed_out"),
   Type.Literal("tool_blocked"),
+  Type.Literal("tool_outcome_unknown"),
 ]);
 
 /** One content-free run/tool audit record. */

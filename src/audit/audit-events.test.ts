@@ -387,6 +387,23 @@ describe("agent activity audit projection", () => {
     },
   );
 
+  it("keeps an unavailable tool outcome explicitly unknown", () => {
+    const projected = projectToolExecutionEventToAudit(
+      toolEvent({
+        type: "tool.execution.error",
+        durationMs: 10,
+        errorCategory: "codex_native_tool_outcome_unknown",
+        errorCode: "tool_outcome_unknown",
+        terminalReason: "failed",
+      }),
+    );
+
+    expect(projected).toMatchObject({
+      status: "unknown",
+      errorCode: "tool_outcome_unknown",
+    });
+  });
+
   it("keeps the trusted tool lifecycle active when optional diagnostics are disabled", () => {
     const seen: TrustedToolExecutionEvent[] = [];
     const stop = onTrustedToolExecutionEvent((event) => seen.push(event));

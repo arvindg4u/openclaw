@@ -82,6 +82,8 @@ type CodexNativeToolLifecycleProjectorOptions = {
   runAbortSignal?: AbortSignal;
 };
 
+type CodexNativeToolAuditStatus = ReturnType<typeof itemStatus> | "unknown";
+
 /** Projects metadata-only lifecycle diagnostics for native tool items. */
 export class CodexNativeToolLifecycleProjector {
   private readonly startedAtByItem = new Map<string, number>();
@@ -143,7 +145,11 @@ export class CodexNativeToolLifecycleProjector {
       this.recordStarted(params.item.id, toolName);
       return;
     }
-    if (params.item.type === "webSearch" && this.options.rawWebSearchResultsEnabled !== false) {
+    if (params.item.type === "webSearch") {
+      if (this.options.rawWebSearchResultsEnabled === false) {
+        this.recordTerminal(params.item.id, toolName, "unknown");
+        return;
+      }
       // Prefer the raw status when this listener receives raw response items.
       return;
     }
@@ -180,7 +186,7 @@ export class CodexNativeToolLifecycleProjector {
   private recordTerminal(
     toolCallId: string,
     toolName: string,
-    status: ReturnType<typeof itemStatus>,
+    status: CodexNativeToolAuditStatus,
     itemDurationMs?: number,
   ): void {
     this.completedItemIds.add(toolCallId);
@@ -196,11 +202,15 @@ export class CodexNativeToolLifecycleProjector {
             reason: "codex_native_tool_blocked",
             deniedReason: "codex_native_tool_blocked",
           }
-        : status === "failed"
+        : status === "failed" || status === "unknown"
           ? {
               type: "tool.execution.error" as const,
               durationMs,
-              errorCategory: "codex_native_tool_error",
+              errorCategory:
+                status === "unknown"
+                  ? "codex_native_tool_outcome_unknown"
+                  : "codex_native_tool_error",
+              ...(status === "unknown" ? { errorCode: "tool_outcome_unknown" } : {}),
               terminalReason: this.options.runAbortSignal?.aborted
                 ? resolveCodexToolAbortTerminalReason(this.options.runAbortSignal)
                 : ("failed" as const),

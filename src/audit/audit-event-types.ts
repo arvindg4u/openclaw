@@ -14,7 +14,8 @@ export type AuditEventStatus =
   | "failed"
   | "cancelled"
   | "timed_out"
-  | "blocked";
+  | "blocked"
+  | "unknown";
 
 export type AuditEventErrorCode =
   | "run_failed"
@@ -24,7 +25,8 @@ export type AuditEventErrorCode =
   | "tool_failed"
   | "tool_cancelled"
   | "tool_timed_out"
-  | "tool_blocked";
+  | "tool_blocked"
+  | "tool_outcome_unknown";
 
 export type AuditEventActorType = "agent" | "system";
 
