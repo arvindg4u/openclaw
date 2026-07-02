@@ -9,6 +9,7 @@ import {
 import { sanitizeForLog } from "../../../packages/terminal-core/src/ansi.js";
 import { ACP_TURN_TIMEOUT_DETAIL_CODE } from "../../acp/control-plane/manager.turn-timeout.js";
 import { formatAcpErrorChain } from "../../acp/runtime/errors.js";
+import { resolveAcpToolTerminalOutcome } from "../../acp/tool-status.js";
 import { normalizeReplyPayload } from "../../auto-reply/reply/normalize-reply.js";
 import type { ThinkLevel, VerboseLevel } from "../../auto-reply/thinking.js";
 import { persistSessionTranscriptTurn } from "../../config/sessions/session-accessor.js";
@@ -999,9 +1000,7 @@ function emitAcpToolExecutionEvent(params: {
   const now = Date.now();
   const key = event.toolCallId ? `${params.runId}\0${event.toolCallId}` : undefined;
   const activeTool = key ? ACTIVE_ACP_TOOLS.get(key) : undefined;
-  const status = normalizeOptionalLowercaseString(event.status);
-  const terminalReason = resolveAcpToolTerminalReason(params.abortSignal);
-  const terminal = status === "completed" || status === "failed";
+  const terminalOutcome = resolveAcpToolTerminalOutcome(event.status);
   const toolName = acpAuditToolName(event.kind);
   if (!activeTool) {
     emitTrustedDiagnosticEvent({
@@ -1031,12 +1030,18 @@ function emitAcpToolExecutionEvent(params: {
       }
     }
   }
-  if (!terminal) {
+  if (!terminalOutcome) {
     return;
   }
+  const terminalReason = resolveAcpToolTerminalReason(
+    params.abortSignal,
+    undefined,
+    undefined,
+    terminalOutcome === "cancelled" ? "cancelled" : undefined,
+  );
   const durationMs = Math.max(0, now - (activeTool?.startedAt ?? now));
   emitTrustedDiagnosticEvent(
-    status === "completed"
+    terminalOutcome === "completed"
       ? {
           type: "tool.execution.completed",
           runId: params.runId,

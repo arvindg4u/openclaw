@@ -152,6 +152,48 @@ describe("ACP diagnostic events", () => {
     expect(JSON.stringify(capturedTools)).not.toContain(secret);
   });
 
+  it.each([
+    { status: "completed", type: "tool.execution.completed", terminalReason: undefined },
+    { status: "done", type: "tool.execution.completed", terminalReason: undefined },
+    { status: "failed", type: "tool.execution.error", terminalReason: "failed" },
+    { status: "error", type: "tool.execution.error", terminalReason: "failed" },
+    { status: "cancelled", type: "tool.execution.error", terminalReason: "cancelled" },
+  ] as const)("finishes audit tracking for terminal tool status $status", (expected) => {
+    const runId = `run-tool-${expected.status}`;
+    const toolCallId = `call-${expected.status}`;
+    emitAcpRuntimeEvent({
+      runId,
+      event: {
+        type: "tool_call",
+        tag: "tool_call",
+        text: "running",
+        kind: "execute",
+        toolCallId,
+        status: "in_progress",
+      },
+    });
+    emitAcpRuntimeEvent({
+      runId,
+      event: {
+        type: "tool_call",
+        tag: "tool_call_update",
+        text: expected.status,
+        kind: "execute",
+        toolCallId,
+        status: expected.status,
+      },
+    });
+    emitAcpLifecycleEnd({ runId, resultStatus: "completed" });
+
+    expect(capturedTools).toHaveLength(2);
+    expect(capturedTools[1]).toMatchObject({
+      type: expected.type,
+      toolCallId,
+      ...(expected.terminalReason ? { terminalReason: expected.terminalReason } : {}),
+      ...(expected.status === "cancelled" ? { errorCategory: "aborted" } : {}),
+    });
+  });
+
   it("finishes outstanding tools when the ACP runtime ends", () => {
     const params = {
       runId: "run-incomplete-tool",

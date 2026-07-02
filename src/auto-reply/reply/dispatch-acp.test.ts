@@ -521,6 +521,32 @@ describe("tryDispatchAcpReply", () => {
     expect(auditMocks.emitAcpLifecycleError).not.toHaveBeenCalled();
   });
 
+  it("keeps audit run ids unique when channel message ids repeat", async () => {
+    setReadyAcpResolution();
+
+    await runDispatch({
+      bodyForAgent: "first turn",
+      ctxOverrides: { MessageSid: "channel-local-1" },
+    });
+    await runDispatch({
+      bodyForAgent: "second turn",
+      ctxOverrides: { MessageSid: "channel-local-1" },
+    });
+
+    const auditRunIds = [0, 1].map(
+      (index) =>
+        requireRecord(
+          mockArg(auditMocks.emitAcpLifecycleStart, index, 0, `audit start ${index}`),
+          "audit start",
+        ).runId,
+    );
+    expect(new Set(auditRunIds).size).toBe(2);
+    expect([runTurnCall(0).requestId, runTurnCall(1).requestId]).toEqual([
+      "channel-local-1",
+      "channel-local-1",
+    ]);
+  });
+
   it("routes default ACP output to the originating channel as a final reply", async () => {
     setReadyAcpResolution();
     mockRoutedTextTurn("hello");

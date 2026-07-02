@@ -537,7 +537,7 @@ export async function tryDispatchAcpReply(params: {
       markIdle: params.markIdle,
     });
   const requestId = resolveAcpRequestId(params.ctx);
-  const auditRunId = normalizeOptionalString(params.runId) ?? requestId;
+  const auditRunId = normalizeOptionalString(params.runId) ?? generateSecureUuid();
   const auditRuntime = await loadDispatchAcpAuditRuntime();
   let auditFinished = false;
   let auditTerminalOutcome: "blocked" | undefined;
