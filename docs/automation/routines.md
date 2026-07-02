@@ -52,6 +52,11 @@ openclaw routines delete weekday-standup
 | `action`                                     | Cron payload to execute when the trigger fires              |
 | `status`                                     | Live backing state: enabled, disabled, running, missing, or drifted |
 
+Routine session targets inherit cron semantics. `current` is resolved when the
+backing cron job is created, `session:<id>` keeps a persistent named session
+across runs, and `isolated` is the explicit fresh-session mode for recurring
+message work.
+
 Repeated `routines.create` calls with the same `id` and same routine intent in
 the active cron store are idempotent: OpenClaw returns the existing routine
 instead of creating another cron job. Reusing the same id with different intent

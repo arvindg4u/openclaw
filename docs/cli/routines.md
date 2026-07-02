@@ -87,10 +87,13 @@ openclaw routines create --cron "0 18 * * 1-5" --tz America/Los_Angeles \
 
 Main-session routines require `--system-event` and do not support completion
 delivery flags. Isolated, current, and custom session routines require
-`--message`. Announce delivery requires `--session session:<id>`,
-`--session-key`, or a resolvable `--to` destination; keyless `--to` values need
-`--channel` or a provider-prefixed destination when multiple channels are
-configured. Otherwise message routines default to no completion delivery.
+`--message`. `current` binds to the owner/current session when the backing cron
+job is created; `session:<id>` uses that persistent named session across runs.
+Use `isolated` when each run should get a fresh cron-owned session. Announce
+delivery requires `--session session:<id>`, `--session-key`, or a resolvable
+`--to` destination; keyless `--to` values need `--channel` or a provider-prefixed
+destination when multiple channels are configured. Otherwise message routines
+default to no completion delivery.
 
 ## Idempotency
 

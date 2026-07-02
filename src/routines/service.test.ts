@@ -1471,10 +1471,10 @@ describe("routine service", () => {
     });
   });
 
-  it("keeps one-shot routines durable and resolves current session targets", async () => {
+  it("keeps one-shot routines durable and resolves persistent current targets", async () => {
     await withOpenClawTestState({ prefix: "routine-current-" }, async () => {
       const cron = createFakeCronService();
-      await createRoutine(
+      const created = await createRoutine(
         createRoutineInput({
           id: "current-session",
           owner: { agentId: "ops", sessionKey: "agent:ops:main" },
@@ -1494,6 +1494,33 @@ describe("routine service", () => {
         deleteAfterRun: false,
         sessionTarget: "session:agent:ops:main",
       });
+      expect(created.routine.target.sessionTarget).toBe("session:agent:ops:main");
+      expect(created.routine.target.delivery).toEqual({ mode: "announce", channel: "last" });
+    });
+  });
+
+  it("delegates isolated targets without converting owner sessions to persistent targets", async () => {
+    await withOpenClawTestState({ prefix: "routine-isolated-session-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(
+        createRoutineInput({
+          id: "isolated-owned",
+          owner: { agentId: "ops", sessionKey: "agent:ops:main" },
+          target: {
+            sessionTarget: "isolated",
+            wakeMode: "now",
+          },
+        }),
+        { cron },
+      );
+
+      expect(cron.add.mock.calls[0]?.[0]).toMatchObject({
+        sessionKey: "agent:ops:main",
+        sessionTarget: "isolated",
+        delivery: { mode: "announce", channel: "last" },
+      });
+      expect(created.routine.owner).toEqual({ agentId: "ops", sessionKey: "agent:ops:main" });
+      expect(created.routine.target.sessionTarget).toBe("isolated");
     });
   });
 

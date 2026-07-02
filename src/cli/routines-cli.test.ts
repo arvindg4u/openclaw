@@ -164,6 +164,34 @@ describe("registerRoutinesCli", () => {
     });
   });
 
+  it("passes current session targets with owner context for cron binding", async () => {
+    await runRoutinesCommand([
+      "routines",
+      "create",
+      "every 1h",
+      "check status",
+      "--name",
+      "Current delivery",
+      "--session",
+      "current",
+      "--session-key",
+      "agent:ops:telegram:direct:alice",
+    ]);
+
+    const createCall = callGatewayFromCli.mock.calls.find((call) => call[0] === "routines.create");
+    const params = createCall?.[2] as {
+      owner?: { sessionKey?: string };
+      target?: { sessionTarget?: string; delivery?: { mode?: string; channel?: string } };
+    };
+
+    expect(params?.owner?.sessionKey).toBe("agent:ops:telegram:direct:alice");
+    expect(params?.target?.sessionTarget).toBe("current");
+    expect(params?.target?.delivery).toMatchObject({
+      mode: "announce",
+      channel: "last",
+    });
+  });
+
   it("uses explicit session targets as stable announce recipients", async () => {
     for (const extraArgs of [[], ["--announce"]]) {
       await runRoutinesCommand([
