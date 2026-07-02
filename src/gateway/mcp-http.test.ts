@@ -2,11 +2,13 @@
 // JSON-RPC surface, including hook filtering and context propagation.
 import { request } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AnyAgentTool } from "../agents/tools/common.js";
 import { getFreePortBlockWithPermissionFallback } from "../test-utils/ports.js";
 import { buildMcpToolSchema } from "./mcp-http.schema.js";
 
 type MockGatewayTool = {
   name: string;
+  label: string;
   description: string;
   parameters: Record<string, unknown>;
   execute: (...args: unknown[]) => Promise<{
@@ -77,6 +79,7 @@ const resolveGatewayScopedToolsMock = vi.hoisted(() =>
     tools: [
       {
         name: "message",
+        label: "Message",
         description: "send a message",
         parameters: { type: "object", properties: {} },
         execute: async () => ({
@@ -515,6 +518,7 @@ function getBeforeToolCallHookInput(index: number): BeforeToolCallHookInput {
 function makeMockTool(overrides: Partial<MockGatewayTool> = {}): MockGatewayTool {
   return {
     name: "mockplugin_tool",
+    label: "Mock tool",
     description: "mock tool",
     parameters: { type: "object", properties: {} },
     execute: async () => ({
@@ -946,6 +950,7 @@ describe("mcp loopback server", () => {
       tools: [
         {
           name: "schema_probe",
+          label: "Schema probe",
           description: "exercise no-argument MCP schemas",
           parameters: { type: "object" },
           execute: async () => ({
@@ -1586,7 +1591,7 @@ describe("mcp loopback server", () => {
         method: "tools/call",
         params: { name: "message", arguments: { body: "hello" } },
       },
-      tools: [tool],
+      tools: [tool as unknown as AnyAgentTool],
       toolSchema: buildMockMcpToolSchema([tool]),
       signal: controller.signal,
       onToolCallResult,

@@ -410,7 +410,6 @@ describe("session lifecycle state", () => {
       data: {
         phase: "end",
         livenessState: "abandoned",
-        replayInvalid: true,
         endedAt: 1_550,
       },
       status: "failed",
