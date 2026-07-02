@@ -397,7 +397,7 @@ describe("applySubagentWaitOutcome", () => {
     });
   });
 
-  it("keeps rpc timeout wait snapshots as timeout outcomes", () => {
+  it("keeps explicit cancellation distinct from timeout outcomes", () => {
     const applied = applySubagentWaitOutcome({
       wait: {
         status: "timeout",
@@ -409,7 +409,8 @@ describe("applySubagentWaitOutcome", () => {
     });
 
     expect(applied.outcome).toEqual({
-      status: "timeout",
+      status: "error",
+      error: "subagent run terminated",
       startedAt: 100,
       endedAt: 150,
       elapsedMs: 50,

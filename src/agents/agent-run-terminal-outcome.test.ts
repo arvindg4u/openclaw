@@ -52,7 +52,7 @@ describe("agent run terminal outcome", () => {
     });
 
     expect(rpcCancel.reason).toBe("cancelled");
-    expect(rpcCancel.status).toBe("timeout");
+    expect(rpcCancel.status).toBe("error");
     expect(mergeAgentRunTerminalOutcome(rpcCancel, lateCompletion)).toBe(rpcCancel);
     expect(
       buildAgentRunTerminalOutcome({
@@ -78,7 +78,7 @@ describe("agent run terminal outcome", () => {
 
     expect(restartCancel).toMatchObject({
       reason: "cancelled",
-      status: "timeout",
+      status: "error",
       stopReason: "restart",
     });
     expect(mergeAgentRunTerminalOutcome(restartCancel, lateCompletion)).toBe(restartCancel);

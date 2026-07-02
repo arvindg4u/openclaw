@@ -156,8 +156,7 @@ export function buildAgentRunTerminalOutcome(
     status:
       reason === "completed"
         ? "ok"
-        : reason === "hard_timeout" ||
-            (input.status === "timeout" && (reason === "timed_out" || reason === "cancelled"))
+        : reason === "hard_timeout" || reason === "timed_out"
           ? "timeout"
           : "error",
     ...(error ? { error } : {}),

@@ -26,17 +26,17 @@ const turnInput: AcpRuntimeTurnInput = {
 };
 
 describe("startRuntimeTurn", () => {
-  it("preserves cancellation from a legacy done event", async () => {
-    const turn = startRuntimeTurn(
-      createLegacyRuntime([{ type: "done", stopReason: "cancelled" }]),
-      turnInput,
-    );
+  it.each(["cancel", "cancelled", "manual-cancel"])(
+    "preserves %s cancellation from a legacy done event",
+    async (stopReason) => {
+      const turn = startRuntimeTurn(createLegacyRuntime([{ type: "done", stopReason }]), turnInput);
 
-    expect(await turn.result).toEqual({ status: "cancelled", stopReason: "cancelled" });
-    const events: AcpRuntimeEvent[] = [];
-    for await (const event of turn.events) {
-      events.push(event);
-    }
-    expect(events).toEqual([]);
-  });
+      expect(await turn.result).toEqual({ status: "cancelled", stopReason });
+      const events: AcpRuntimeEvent[] = [];
+      for await (const event of turn.events) {
+        events.push(event);
+      }
+      expect(events).toEqual([]);
+    },
+  );
 });

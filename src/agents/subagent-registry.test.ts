@@ -1798,7 +1798,7 @@ describe("subagent registry seam flow", () => {
     expect(mocks.runSubagentAnnounceFlow).toHaveBeenCalledTimes(1);
   });
 
-  it("records terminal agent.wait timeouts even before session store timing is persisted", async () => {
+  it("records explicit agent.wait cancellation before session timing is persisted", async () => {
     mocks.callGateway.mockImplementation(async (request: { method?: string }) => {
       if (request.method === "agent.wait") {
         return {
@@ -1832,7 +1832,11 @@ describe("subagent registry seam flow", () => {
         .listSubagentRunsForRequester("agent:main:main")
         .find((entry) => entry.runId === "run-terminal-timeout");
       expect(run?.endedAt).toBe(222);
-      expectRecordFields(run?.outcome, { status: "timeout" }, "terminal timeout outcome");
+      expectRecordFields(
+        run?.outcome,
+        { status: "error", error: "subagent run terminated" },
+        "terminal cancellation outcome",
+      );
     });
     expect(mocks.runSubagentAnnounceFlow).toHaveBeenCalledTimes(1);
   });
