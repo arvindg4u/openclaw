@@ -1,4 +1,5 @@
 // Codex plugin module implements side question behavior.
+import { randomUUID } from "node:crypto";
 import {
   buildAgentHookContextChannelFields,
   embeddedAgentLog,
@@ -217,7 +218,8 @@ export async function runCodexAppServerSideQuestion(
     agentDir: params.agentDir,
   });
   const cwd = binding.cwd || params.workspaceDir || process.cwd();
-  const sideRunParams = buildSideRunAttemptParams(params, { cwd, authProfileId });
+  const runId = params.opts?.runId ?? randomUUID();
+  const sideRunParams = buildSideRunAttemptParams(params, { cwd, authProfileId, runId });
   const nativeExecutionBlock = resolveCodexNativeExecutionBlock({
     config: sideRunParams.config,
     sessionKey: sideRunParams.sandboxSessionKey?.trim() || sideRunParams.sessionKey,
@@ -347,6 +349,7 @@ export async function runCodexAppServerSideQuestion(
       sessionAgentId,
       nativeToolSurfaceEnabled,
       nativeProviderWebSearchSupport,
+      runId,
       signal: runAbortController.signal,
     });
     removeRequestHandler = client.addRequestHandler(async (request) => {
@@ -709,7 +712,7 @@ function resolveCodexSideNativeHookRelayTtlMs(params: {
 
 function buildSideRunAttemptParams(
   params: AgentHarnessSideQuestionParams,
-  options: { cwd: string; authProfileId?: string },
+  options: { cwd: string; authProfileId?: string; runId: string },
 ): EmbeddedRunAttemptParams {
   const sideParams = {
     params,
@@ -748,7 +751,7 @@ function buildSideRunAttemptParams(
     authStorage: undefined as never,
     authProfileStore: undefined as never,
     modelRegistry: undefined as never,
-    runId: params.opts?.runId ?? `codex-btw:${params.sessionId}`,
+    runId: options.runId,
     abortSignal: params.opts?.abortSignal,
     onAgentEvent: (event: { stream: string; data: Record<string, unknown> }) => {
       if (event.stream === "approval") {
@@ -768,6 +771,7 @@ async function createCodexSideToolBridge(input: {
   sessionAgentId: string;
   nativeToolSurfaceEnabled: boolean;
   nativeProviderWebSearchSupport: CodexNativeWebSearchSupport;
+  runId: string;
   signal: AbortSignal;
 }): Promise<{ toolBridge: CodexDynamicToolBridge; webSearchPlan: CodexWebSearchPlan }> {
   const runtimeModel =
@@ -796,7 +800,7 @@ async function createCodexSideToolBridge(input: {
           ? input.params.sessionKey
           : undefined,
       sessionId: input.params.sessionId,
-      runId: input.params.opts?.runId ?? `codex-btw:${input.params.sessionId}`,
+      runId: input.runId,
       agentDir:
         input.params.agentDir ?? resolveAgentDir(input.params.cfg ?? {}, input.sessionAgentId),
       workspaceDir: input.cwd,
@@ -895,7 +899,7 @@ async function createCodexSideToolBridge(input: {
         config: input.params.cfg,
         sessionId: input.params.sessionId,
         sessionKey: input.params.sessionKey,
-        runId: input.params.opts?.runId ?? `codex-btw:${input.params.sessionId}`,
+        runId: input.runId,
         currentChannelProvider: messageToolProvider,
         ...hookChannelFields,
       },

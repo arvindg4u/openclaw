@@ -609,6 +609,22 @@ describe("runCodexAppServerSideQuestion", () => {
     expect(toolOptions).toHaveProperty("requireExplicitMessageTarget", true);
   });
 
+  it("allocates one fallback run ID per side-question invocation", async () => {
+    const client = createFakeClient();
+    getSharedCodexAppServerClientMock.mockResolvedValue(client);
+
+    await runCodexAppServerSideQuestion(sideParams());
+    await runCodexAppServerSideQuestion(sideParams());
+
+    const runIds = createOpenClawCodingToolsMock.mock.calls.map(
+      ([options]) => (options as { runId: string }).runId,
+    );
+    expect(runIds).toHaveLength(2);
+    expect(runIds[0]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(runIds[1]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(new Set(runIds).size).toBe(2);
+  });
+
   it("replays app-scoped reviewer policy into side-thread forks", async () => {
     const client = createFakeClient();
     getSharedCodexAppServerClientMock.mockResolvedValue(client);
@@ -1050,6 +1066,9 @@ describe("runCodexAppServerSideQuestion", () => {
     const turnStartCall = client.request.mock.calls.find(([method]) => method === "turn/start");
     expect(turnStartCall?.[1]).not.toHaveProperty("config");
     expect(relayIdDuringFork).toBeDefined();
+    expect(createOpenClawCodingToolsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "run-side-1" }),
+    );
     expect(
       nativeHookRelayTesting.getNativeHookRelayRegistrationForTests(relayIdDuringFork!),
     ).toBeUndefined();
