@@ -5190,6 +5190,47 @@ describe("runCodexAppServerAttempt turn watches", () => {
     ).toMatchObject({ aborted: true, status: "cancelled", stopReason: "stop" });
   });
 
+  it("classifies an upstream hard timeout as timed out lifecycle", async () => {
+    const harness = createStartedThreadHarness();
+    const abortController = new AbortController();
+    const onRunAgentEvent = vi.fn();
+    const params = createParams(
+      path.join(tempDir, "session.jsonl"),
+      path.join(tempDir, "workspace"),
+    );
+    params.abortSignal = abortController.signal;
+    params.onAgentEvent = onRunAgentEvent;
+    const run = runCodexAppServerAttempt(params, { turnTerminalIdleTimeoutMs: 60_000 });
+
+    await harness.waitForMethod("turn/start");
+    const timeoutError = new Error("cron watchdog timeout");
+    timeoutError.name = "TimeoutError";
+    abortController.abort(timeoutError);
+    await harness.notify({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        turn: { id: "turn-1", status: "interrupted" },
+      },
+    });
+
+    const result = await run;
+    expect(result.aborted).toBe(true);
+    expect(result.promptError).toBeNull();
+    expect(
+      onRunAgentEvent.mock.calls
+        .map(([event]) => event)
+        .find((event) => event.stream === "lifecycle" && event.data.phase === "end")?.data,
+    ).toMatchObject({
+      aborted: true,
+      status: "timed_out",
+      stopReason: "timeout",
+      timeoutPhase: "provider",
+      providerStarted: true,
+    });
+  });
+
   it("releases completion when the app-server client closes during an active turn", async () => {
     const harness = createStartedThreadHarness();
     const run = runCodexAppServerAttempt(

@@ -20,6 +20,7 @@ import {
   isActiveHarnessContextEngine,
   loadCodexBundleMcpThreadConfig,
   resolveAgentHarnessBeforePromptBuildResult,
+  resolveAgentRunAbortLifecycleFields,
   resolveContextEngineOwnerPluginId,
   resolveSandboxContext,
   resolveSessionAgentIds,
@@ -1930,7 +1931,10 @@ export async function runCodexAppServerAttempt(
     lifecycleTerminalEmitted = true;
   };
   const buildLifecycleTerminalMeta = (aborted: boolean) => {
-    if (timedOut) {
+    const abortFields = aborted
+      ? resolveAgentRunAbortLifecycleFields(runAbortController.signal)
+      : undefined;
+    if (timedOut || abortFields?.stopReason === "timeout") {
       return {
         aborted: true,
         status: "timed_out",
