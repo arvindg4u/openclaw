@@ -1067,11 +1067,14 @@ describe("mcp loopback server", () => {
         return typeof args.target === "string" ? args.target : undefined;
       },
       onToolCallFinish: ({ args }) => finishedTargets.push(args.target),
-      onToolCallResult: ({ toolName, args, outcome, correlationId, deniedReason }) => {
-        if (outcome === "blocked") {
-          blockedResults.push({ correlationId, deniedReason });
-        } else if (toolName === "message" && args.action === "send") {
-          captured.push({ toolName, args });
+      onToolCallResult: (result) => {
+        if (result.outcome === "blocked") {
+          blockedResults.push({
+            correlationId: result.correlationId,
+            deniedReason: result.deniedReason,
+          });
+        } else if (result.toolName === "message" && result.args.action === "send") {
+          captured.push({ toolName: result.toolName, args: result.args });
         }
       },
     });
@@ -1163,7 +1166,7 @@ describe("mcp loopback server", () => {
         name: "message",
         args: {
           status: testCase.status === "completed-timeout" ? "completed" : testCase.status,
-          ...(testCase.timedOut ? { timedOut: true } : {}),
+          ...("timedOut" in testCase && testCase.timedOut ? { timedOut: true } : {}),
         },
         headers: { "x-openclaw-cli-capture-key": captureKey },
       });
