@@ -216,10 +216,10 @@ function parseRoutineRecord(row: RoutineRecordRow): RoutineStoredRecord {
 }
 
 function bindRoutineRecord(record: RoutineStoredRecord): Insertable<RoutineRecordsTable> {
-  const { cronStoreKey, ...trigger } = record.trigger;
+  const { cronStoreKey: backingCronStoreKey, ...trigger } = record.trigger;
   return {
     routine_id: record.id,
-    backing_cron_store_key: cronStoreKey ?? DEFAULT_ROUTINE_CRON_STORE_KEY,
+    backing_cron_store_key: backingCronStoreKey ?? DEFAULT_ROUTINE_CRON_STORE_KEY,
     routine_json: JSON.stringify({ ...record, trigger }),
   };
 }
