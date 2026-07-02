@@ -612,6 +612,131 @@ describe("workboard controller", () => {
     expect(client.request).not.toHaveBeenCalled();
   });
 
+  it("reconciles live changes without discarding a new-card draft", async () => {
+    const host = {};
+    const state = getWorkboardState(host);
+    const canonicalCard = { ...sampleCard, title: "Canonical card" };
+    const createdCard = { ...sampleCard, id: "card-2", title: "Unsaved new card" };
+    state.loaded = true;
+    state.cards = [sampleCard];
+    state.draftOpen = true;
+    state.draftTitle = createdCard.title;
+    const client = createClient((method) => {
+      if (method === "workboard.cards.list") {
+        return { cards: [canonicalCard], statuses: ["todo", "done"] };
+      }
+      if (method === "workboard.cards.create") {
+        return { card: createdCard };
+      }
+      return {};
+    });
+
+    handleWorkboardChanged({
+      host,
+      client: client as never,
+      payload: { epoch: "epoch-a", revision: 1 },
+    });
+
+    await vi.waitFor(() => expect(state.mutationReadiness).toBe("ready"));
+    expect(state.cards).toEqual([canonicalCard]);
+    expect(state.draftOpen).toBe(true);
+    expect(state.draftTitle).toBe(createdCard.title);
+
+    await saveWorkboardCardDraft({ host, client: client as never });
+
+    expect(client.request).toHaveBeenCalledWith(
+      "workboard.cards.create",
+      expect.objectContaining({ title: createdCard.title }),
+    );
+  });
+
+  it("reconciles live changes without discarding a detail comment", async () => {
+    const host = {};
+    const state = getWorkboardState(host);
+    const canonicalCard = { ...sampleCard, title: "Canonical card" };
+    const commentBody = "Keep this note";
+    const commentedCard = {
+      ...canonicalCard,
+      metadata: { comments: [{ id: "comment-1", body: commentBody, createdAt: 2 }] },
+    } satisfies WorkboardCard;
+    state.loaded = true;
+    state.cards = [sampleCard];
+    state.detailCardId = sampleCard.id;
+    state.detailCommentBody = commentBody;
+    const client = createClient((method) => {
+      if (method === "workboard.cards.list") {
+        return { cards: [canonicalCard], statuses: ["todo", "done"] };
+      }
+      if (method === "workboard.cards.comment") {
+        return { card: commentedCard };
+      }
+      return {};
+    });
+
+    handleWorkboardChanged({
+      host,
+      client: client as never,
+      payload: { epoch: "epoch-a", revision: 1 },
+    });
+
+    await vi.waitFor(() => expect(state.mutationReadiness).toBe("ready"));
+    expect(state.cards).toEqual([canonicalCard]);
+    expect(state.detailCommentBody).toBe(commentBody);
+
+    await addWorkboardCardComment({
+      host,
+      client: client as never,
+      cardId: sampleCard.id,
+      body: state.detailCommentBody,
+    });
+
+    expect(client.request).toHaveBeenCalledWith("workboard.cards.comment", {
+      id: sampleCard.id,
+      body: commentBody,
+    });
+    expect(state.detailCommentBody).toBe("");
+  });
+
+  it("allows an append-only comment while keeping a stale edit blocked", async () => {
+    const host = {};
+    const state = getWorkboardState(host);
+    const commentBody = "Comment without saving stale fields";
+    const commentedCard = {
+      ...sampleCard,
+      metadata: { comments: [{ id: "comment-1", body: commentBody, createdAt: 2 }] },
+    } satisfies WorkboardCard;
+    state.loaded = true;
+    state.cards = [sampleCard];
+    state.draftOpen = true;
+    state.editingCardId = sampleCard.id;
+    state.draftTitle = "Stale title";
+    state.draftCommentBody = commentBody;
+    const client = createClient((method) => {
+      if (method === "workboard.cards.comment") {
+        return { card: commentedCard };
+      }
+      return {};
+    });
+
+    handleWorkboardChanged({
+      host,
+      client: client as never,
+      payload: { epoch: "epoch-a", revision: 1 },
+    });
+    expect(state.mutationReadiness).toBe("stale_edit_draft");
+
+    await addWorkboardCardComment({ host, client: client as never });
+    await saveWorkboardCardDraft({ host, client: client as never });
+
+    expect(client.request).toHaveBeenCalledWith("workboard.cards.comment", {
+      id: sampleCard.id,
+      body: commentBody,
+    });
+    expect(client.request).not.toHaveBeenCalledWith("workboard.cards.update", expect.anything());
+    expect(state.draftCommentBody).toBe("");
+    expect(state.mutationReadiness).toBe("stale_edit_draft");
+  });
+
   it("preserves an in-flight full refresh when diagnostics emits a change", async () => {
     const host = {};
     const client = createClient((method) => {

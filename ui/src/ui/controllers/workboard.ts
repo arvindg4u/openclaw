@@ -976,13 +976,10 @@ function workboardLifecycleTaskRefreshContinuationWaiting(
 
 function shouldDeferWorkboardLiveApply(state: WorkboardUiState): boolean {
   return Boolean(
-    state.draftOpen ||
     state.editingCardId ||
     workboardHasActiveWrites(state) ||
     state.draggedCardId ||
-    state.dispatching ||
-    state.detailCommentBody.trim() ||
-    state.draftCommentBody.trim(),
+    state.dispatching,
   );
 }
 
@@ -1050,6 +1047,10 @@ export function getWorkboardState(host: WorkboardHost): WorkboardUiState {
 
 export function workboardMutationsReady(state: WorkboardUiState): boolean {
   return state.mutationReadiness === "ready";
+}
+
+export function workboardCommentMutationsReady(state: WorkboardUiState): boolean {
+  return state.mutationReadiness !== "canonical_reload_required";
 }
 
 export function workboardHasActiveWrites(state: WorkboardUiState): boolean {
@@ -3742,7 +3743,7 @@ export async function addWorkboardCardComment(params: {
   if (
     !cardId ||
     !params.client ||
-    !workboardMutationsReady(state) ||
+    !workboardCommentMutationsReady(state) ||
     !body ||
     state.dispatching ||
     state.draftSaving ||

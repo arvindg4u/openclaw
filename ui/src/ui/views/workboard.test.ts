@@ -61,6 +61,7 @@ describe("renderWorkboard", () => {
     const state = getWorkboardState(host);
     state.loaded = true;
     state.draftOpen = true;
+    state.editingCardId = "card-1";
     const request = vi.fn(async () => ({ cards: [], statuses: ["todo"] }));
     const client = { request } as unknown as GatewayBrowserClient;
     const props = {
@@ -83,6 +84,7 @@ describe("renderWorkboard", () => {
     expect(request).not.toHaveBeenCalled();
 
     state.draftOpen = false;
+    state.editingCardId = null;
     renderWorkboard(props);
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith("workboard.cards.list", {}));
   });
@@ -627,6 +629,7 @@ describe("renderWorkboard", () => {
     state.draftOpen = true;
     state.editingCardId = "card-1";
     state.draftTitle = "Unsaved edit";
+    state.draftCommentBody = "Append-only note";
     stopWorkboardLifecycleRefresh(host);
     const request = vi.fn(async (method: string) => {
       if (method === "workboard.cards.list") {
@@ -655,6 +658,11 @@ describe("renderWorkboard", () => {
     expect(
       container.querySelector<HTMLButtonElement>(".workboard-modal__actions .primary")?.disabled,
     ).toBe(true);
+    expect(
+      [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+        button.textContent?.includes("Create"),
+      )?.disabled,
+    ).toBe(false);
     expect(container.querySelector<HTMLInputElement>(".workboard-draft__title")?.value).toBe(
       "Unsaved edit",
     );

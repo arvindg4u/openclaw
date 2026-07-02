@@ -25,6 +25,7 @@ import {
   summarizeWorkboardHealth,
   syncWorkboardLifecycle,
   workboardCardMatchesHealthKey,
+  workboardCommentMutationsReady,
   workboardHasActiveWrites,
   workboardMutationsReady,
   WORKBOARD_PRIORITIES,
@@ -215,6 +216,10 @@ function truncateBadgeText(value: string, maxLength = 64): string {
 
 function canMutate(props: WorkboardProps): boolean {
   return props.canWrite !== false && workboardMutationsReady(getWorkboardState(props.host));
+}
+
+function canAppendComment(props: WorkboardProps): boolean {
+  return props.canWrite !== false && workboardCommentMutationsReady(getWorkboardState(props.host));
 }
 
 function canWrite(props: WorkboardProps): boolean {
@@ -1289,6 +1294,8 @@ function renderCardModal(props: WorkboardProps) {
   const draftCommentBusy = editing && state.busyCardIds.has(state.editingCardId ?? "");
   const draftActionsBusy =
     !canMutate(props) || state.loading || state.dispatching || draftCommentBusy;
+  const draftCommentActionsBusy =
+    !canAppendComment(props) || state.loading || state.dispatching || draftCommentBusy;
   return html`
     <div
       class="workboard-modal"
@@ -1475,7 +1482,7 @@ function renderCardModal(props: WorkboardProps) {
                     <button
                       class="btn"
                       type="button"
-                      ?disabled=${draftActionsBusy || !state.draftCommentBody.trim()}
+                      ?disabled=${draftCommentActionsBusy || !state.draftCommentBody.trim()}
                       @click=${() => {
                         void addWorkboardCardComment({
                           host: props.host,
