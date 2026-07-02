@@ -162,7 +162,13 @@ export class CodexNativeToolLifecycleProjector {
     if (rawStatus === "in_progress" || rawStatus === "running") {
       return;
     }
-    const status = rawStatus === "completed" ? "completed" : "failed";
+    const status =
+      rawStatus === "failed" ||
+      rawStatus === "error" ||
+      rawStatus === "cancelled" ||
+      rawStatus === "incomplete"
+        ? "failed"
+        : "completed";
     this.recordTerminal(toolCallId, toolName, status);
   }
 

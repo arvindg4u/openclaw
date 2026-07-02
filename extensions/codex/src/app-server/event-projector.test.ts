@@ -2138,6 +2138,7 @@ describe("CodexAppServerEventProjector", () => {
 
   it.each([
     ["completed", "tool.execution.completed"],
+    [undefined, "tool.execution.completed"],
     ["failed", "tool.execution.error"],
   ] as const)(
     "uses raw %s status for redacted native web-search audit actions",
