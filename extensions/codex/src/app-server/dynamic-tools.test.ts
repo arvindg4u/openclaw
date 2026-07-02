@@ -2784,7 +2784,7 @@ describe("createCodexDynamicToolBridge", () => {
 
   it("preserves hook timeout classification for the outer lifecycle owner", async () => {
     const beforeToolCall = vi.fn(async () => {
-      throw new Error("timed out after 5ms");
+      throw Object.assign(new Error("timed out after 5ms"), { name: "TimeoutError" });
     });
     initializeGlobalHookRunner(
       createMockPluginRegistry([{ hookName: "before_tool_call", handler: beforeToolCall }]),
@@ -2810,6 +2810,107 @@ describe("createCodexDynamicToolBridge", () => {
     expect(result.diagnosticTerminalReason).toBe("timed_out");
     expect(result.sideEffectEvidence).toBeUndefined();
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it.each(["timed_out", "cancelled"] as const)(
+    "preserves structured %s results for the outer lifecycle owner",
+    async (status) => {
+      const bridge = createBridgeWithToolResult("exec", textToolResult("tool stopped", { status }));
+
+      const result = await bridge.handleToolCall({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        callId: `call-${status}`,
+        namespace: null,
+        tool: "exec",
+        arguments: { command: "pwd" },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.diagnosticTerminalType).toBe("error");
+      expect(result.diagnosticTerminalReason).toBe(status);
+    },
+  );
+
+  it("preserves thrown timeout classification for the outer lifecycle owner", async () => {
+    const timeoutError = Object.assign(new Error("tool deadline elapsed"), {
+      name: "TimeoutError",
+    });
+    const onAgentToolResult = vi.fn();
+    const bridge = createCodexDynamicToolBridge({
+      tools: [
+        createTool({
+          name: "exec",
+          execute: vi.fn(async () => {
+            throw timeoutError;
+          }),
+        }),
+      ],
+      signal: new AbortController().signal,
+    });
+
+    const result = await bridge.handleToolCall(
+      {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        callId: "call-timeout",
+        namespace: null,
+        tool: "exec",
+        arguments: { command: "pwd" },
+      },
+      { onAgentToolResult },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.diagnosticTerminalType).toBe("error");
+    expect(result.diagnosticTerminalReason).toBe("timed_out");
+    expect(onAgentToolResult).toHaveBeenCalledWith({
+      toolName: "exec",
+      result: {
+        content: [{ type: "text", text: "tool deadline elapsed" }],
+        details: { status: "timed_out", error: "tool deadline elapsed" },
+      },
+      isError: true,
+    });
+  });
+
+  it("contains hostile thrown values while notifying the outer lifecycle owner", async () => {
+    const hostileError = Object.defineProperty(new Error(), "message", {
+      get() {
+        throw new Error("message getter escaped");
+      },
+    });
+    const onAgentToolResult = vi.fn();
+    const bridge = createCodexDynamicToolBridge({
+      tools: [
+        createTool({
+          name: "exec",
+          execute: vi.fn(async () => {
+            throw hostileError;
+          }),
+        }),
+      ],
+      signal: new AbortController().signal,
+    });
+
+    const result = await bridge.handleToolCall(
+      {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        callId: "call-hostile-error",
+        namespace: null,
+        tool: "exec",
+        arguments: { command: "pwd" },
+      },
+      { onAgentToolResult },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      diagnosticTerminalReason: "failed",
+      contentItems: [{ type: "inputText", text: "OpenClaw dynamic tool call failed." }],
+    });
+    expect(onAgentToolResult).toHaveBeenCalledOnce();
   });
 
   it("preserves report-only approval blocks for the outer lifecycle owner", async () => {
@@ -2917,6 +3018,56 @@ describe("createCodexDynamicToolBridge", () => {
     expect(result).toEqual(expectInputText("compacted output"));
     await vi.waitFor(() => {
       expect(events).toEqual(["before_tool_call", "execute", "middleware", "after_tool_call"]);
+    });
+  });
+
+  it("preserves raw terminal disposition for private observation after middleware", async () => {
+    const registry = createEmptyPluginRegistry();
+    const handler = vi.fn(async (event: { result: AgentToolResult<unknown> }) => ({
+      result: {
+        ...event.result,
+        content: [{ type: "text" as const, text: "compacted timeout" }],
+        details: { stage: "middleware" },
+      },
+    }));
+    registry.agentToolResultMiddlewares.push({
+      pluginId: "timeout-redactor",
+      pluginName: "Timeout Redactor",
+      rawHandler: handler,
+      handler,
+      runtimes: ["codex"],
+      source: "test",
+    });
+    setActivePluginRegistry(registry);
+    const onAgentToolResult = vi.fn();
+    const bridge = createBridgeWithToolResult(
+      "exec",
+      textToolResult("raw timeout", { status: "timed_out" }),
+    );
+
+    const result = await bridge.handleToolCall(
+      {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        callId: "call-raw-timeout",
+        namespace: null,
+        tool: "exec",
+        arguments: { command: "status" },
+      },
+      { onAgentToolResult },
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      diagnosticTerminalReason: "timed_out",
+    });
+    expect(onAgentToolResult).toHaveBeenCalledWith({
+      toolName: "exec",
+      result: {
+        content: [{ type: "text", text: "compacted timeout" }],
+        details: { stage: "middleware", status: "timed_out" },
+      },
+      isError: true,
     });
   });
 

@@ -4,6 +4,8 @@
  */
 import {
   embeddedAgentLog,
+  formatToolExecutionErrorMessage,
+  resolveToolExecutionErrorKind,
   type EmbeddedRunAttemptParams,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
@@ -46,20 +48,24 @@ type DynamicToolTimeoutDetails = {
 export function resolveCodexToolAbortTerminalReason(
   signal: AbortSignal,
 ): "failed" | "cancelled" | "timed_out" {
-  const reason = signal.reason;
-  if (typeof reason === "string") {
-    if (CODEX_TIMEOUT_ABORT_REASONS.has(reason)) {
-      return "timed_out";
+  try {
+    const reason = signal.reason;
+    if (typeof reason === "string") {
+      if (CODEX_TIMEOUT_ABORT_REASONS.has(reason)) {
+        return "timed_out";
+      }
+      // Transport loss is a run failure, not an operator cancellation. Native
+      // and dynamic tool diagnostics share this helper and must agree with it.
+      return reason === "client_closed" ? "failed" : "cancelled";
     }
-    // Transport loss is a run failure, not an operator cancellation. Native
-    // and dynamic tool diagnostics share this helper and must agree with it.
-    return reason === "client_closed" ? "failed" : "cancelled";
-  }
-  if (reason && typeof reason === "object") {
-    const record = reason as { name?: unknown; reason?: unknown };
-    if (record.name === "TimeoutError" || record.reason === "timeout") {
-      return "timed_out";
+    if (reason && typeof reason === "object") {
+      const record = reason as { name?: unknown; reason?: unknown };
+      if (record.name === "TimeoutError" || record.reason === "timeout") {
+        return "timed_out";
+      }
     }
+  } catch {
+    return "cancelled";
   }
   return "cancelled";
 }
@@ -177,22 +183,26 @@ export async function handleDynamicToolCallWithTimeout(params: {
       );
     }
   };
-  const notifyFailedToolResult = (message: string) => {
+  const notifyFailedToolResult = (
+    message: string,
+    terminalReason: "failed" | "cancelled" | "timed_out" = "failed",
+  ) => {
     notifyAgentToolResult({
       toolName: params.call.tool,
       result: {
         content: [{ type: "text", text: message }],
-        details: { status: "failed", error: message },
+        details: { status: terminalReason, error: message },
       },
       isError: true,
     });
   };
   if (params.signal.aborted) {
     const message = "OpenClaw dynamic tool call aborted before execution.";
+    const terminalReason = resolveCodexToolAbortTerminalReason(params.signal);
     params.onFallbackSelected?.();
-    notifyFailedToolResult(message);
+    notifyFailedToolResult(message, terminalReason);
     return failedDynamicToolResponse(message, {
-      terminalReason: resolveCodexToolAbortTerminalReason(params.signal),
+      terminalReason,
     });
   }
 
@@ -202,13 +212,14 @@ export async function handleDynamicToolCallWithTimeout(params: {
   let resolveAbort: ((response: CodexDynamicToolCallResponse) => void) | undefined;
   const abortFromRun = () => {
     const message = "OpenClaw dynamic tool call aborted.";
+    const terminalReason = resolveCodexToolAbortTerminalReason(params.signal);
     params.onFallbackSelected?.();
     controller.abort(params.signal.reason ?? new Error(message));
-    notifyFailedToolResult(message);
+    notifyFailedToolResult(message, terminalReason);
     resolveAbort?.(
       failedDynamicToolResponse(message, {
         sideEffectEvidence: true,
-        terminalReason: resolveCodexToolAbortTerminalReason(params.signal),
+        terminalReason,
       }),
     );
   };
@@ -227,7 +238,7 @@ export async function handleDynamicToolCallWithTimeout(params: {
         ...timeoutDetails.meta,
         consoleMessage: timeoutDetails.consoleMessage,
       });
-      notifyFailedToolResult(timeoutDetails.responseMessage);
+      notifyFailedToolResult(timeoutDetails.responseMessage, "timed_out");
       resolve(
         failedDynamicToolResponse(timeoutDetails.responseMessage, {
           sideEffectEvidence: true,
@@ -253,14 +264,21 @@ export async function handleDynamicToolCallWithTimeout(params: {
       timeoutPromise,
     ]);
     if (!response.success && !didNotifyAgentToolResult) {
-      notifyFailedToolResult(readDynamicToolResponseText(response));
+      notifyFailedToolResult(
+        readDynamicToolResponseText(response),
+        response.diagnosticTerminalReason ?? "failed",
+      );
     }
     return response;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    notifyFailedToolResult(message);
+    const terminalReason = params.signal.aborted
+      ? resolveCodexToolAbortTerminalReason(params.signal)
+      : resolveToolExecutionErrorKind(error);
+    const message = formatToolExecutionErrorMessage(error, "OpenClaw dynamic tool call failed.");
+    notifyFailedToolResult(message, terminalReason);
     return failedDynamicToolResponse(message, {
       sideEffectEvidence: true,
+      terminalReason,
     });
   } finally {
     if (timeout) {

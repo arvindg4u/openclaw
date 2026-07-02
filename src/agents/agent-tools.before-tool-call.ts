@@ -99,10 +99,13 @@ import {
   normalizeCodeModeExecBeforeHookParamsForToolKind,
   reconcileCodeModeExecBeforeHookParams,
 } from "./code-mode-control-tools.js";
-import { isTimeoutError } from "./failover-error.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
 import { normalizeToolName } from "./tool-policy.js";
-import { resolveToolResultFailureKind } from "./tool-result-error.js";
+import {
+  formatToolExecutionErrorMessage,
+  resolveToolExecutionErrorKind,
+  resolveToolResultFailureKind,
+} from "./tool-result-error.js";
 import { copyToolTerminalPresentation } from "./tool-terminal-presentation.js";
 import { getToolTerminalPresentation } from "./tool-terminal-presentation.js";
 import type { AnyAgentTool } from "./tools/common.js";
@@ -373,10 +376,14 @@ function tagBeforeToolCallFailure(
   error: unknown,
   signal?: AbortSignal,
 ): BeforeToolCallFailureError {
-  if (error instanceof BeforeToolCallFailureError) {
-    return error;
+  try {
+    if (error instanceof BeforeToolCallFailureError) {
+      return error;
+    }
+  } catch {
+    // Continue through the guarded formatter and classifier for hostile values.
   }
-  const message = error instanceof Error ? error.message : String(error);
+  const message = formatToolExecutionErrorMessage(error, "before_tool_call failed");
   const disposition = resolveToolErrorDiagnostic(error, signal).terminalReason;
   return new BeforeToolCallFailureError(message, disposition, error);
 }
@@ -385,7 +392,11 @@ function tagBeforeToolCallFailure(
 export function getBeforeToolCallFailureDisposition(
   error: unknown,
 ): BeforeToolCallFailureDisposition | undefined {
-  return error instanceof BeforeToolCallFailureError ? error.disposition : undefined;
+  try {
+    return error instanceof BeforeToolCallFailureError ? error.disposition : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Remember hook-adjusted params for later adapter-side execution. */
@@ -480,14 +491,6 @@ function unwrapErrorCause(err: unknown): unknown {
   return err;
 }
 
-function isToolTimeoutError(err: unknown): boolean {
-  try {
-    return isTimeoutError(err);
-  } catch {
-    return false;
-  }
-}
-
 function resolveToolErrorDiagnostic(
   err: unknown,
   signal?: AbortSignal,
@@ -501,9 +504,7 @@ function resolveToolErrorDiagnostic(
   const errorCode = diagnosticHttpStatusCode(cause);
   const abortFields = resolveAgentRunAbortLifecycleFields(signal);
   const terminalReason = !abortFields.aborted
-    ? isToolTimeoutError(cause)
-      ? "timed_out"
-      : "failed"
+    ? resolveToolExecutionErrorKind(cause)
     : abortFields.stopReason === "timeout"
       ? "timed_out"
       : "cancelled";

@@ -1530,6 +1530,42 @@ describe("mcp loopback server", () => {
     );
   });
 
+  it("preserves thrown timeout outcomes in CLI capture", async () => {
+    const captureKey = "thrown-timeout";
+    const captured = vi.fn();
+    const timeoutError = Object.assign(new Error("tool deadline elapsed"), {
+      name: "TimeoutError",
+    });
+    beginMcpLoopbackToolCallCapture({
+      captureKey,
+      onToolCallResult: captured,
+    });
+    mockScopedTools([
+      makeMessageTool({
+        execute: async () => {
+          throw timeoutError;
+        },
+      }),
+    ]);
+    const { runtime } = await startLoopbackServerForTest();
+
+    const response = await sendLoopbackToolCall({
+      token: runtime.ownerToken,
+      name: "message",
+      args: { action: "send", target: "chat123", message: "late" },
+      headers: { "x-openclaw-cli-capture-key": captureKey },
+    });
+
+    expect((await readMcpPayload(response)).result?.isError).toBe(true);
+    expect(captured).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolName: "message",
+        outcome: "timed_out",
+        result: timeoutError,
+      }),
+    );
+  });
+
   it("ignores calls after a capture is cleared", () => {
     const captureKey = "cleared-capture";
     const captured = vi.fn();

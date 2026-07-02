@@ -577,7 +577,7 @@ describe("before_tool_call loop detection behavior", () => {
     { label: "fails", error: new Error("hook crashed"), terminalReason: "failed" },
     {
       label: "times out",
-      error: new Error("timed out after 5ms"),
+      error: Object.assign(new Error("timed out after 5ms"), { name: "TimeoutError" }),
       terminalReason: "timed_out",
     },
   ] as const)(

@@ -150,6 +150,12 @@ export {
   isToolResultError,
   sanitizeToolResult,
 } from "../agents/embedded-agent-subscribe.tools.js";
+export {
+  formatToolExecutionErrorMessage,
+  resolveToolExecutionErrorKind,
+  resolveToolResultFailureKind,
+  type ToolResultFailureKind,
+} from "../agents/tool-result-error.js";
 export { normalizeUsage } from "../agents/usage.js";
 export { resolveOpenClawAgentDir } from "./agent-dir-compat.js";
 export {

@@ -2,8 +2,11 @@
 // Implements initialize, tools/list, tools/call, and notification handling.
 import crypto from "node:crypto";
 import { runBeforeToolCallHook, type HookContext } from "../agents/agent-tools.before-tool-call.js";
-import { resolveToolResultFailureKind } from "../agents/tool-result-error.js";
-import { formatErrorMessage } from "../infra/errors.js";
+import {
+  formatToolExecutionErrorMessage,
+  resolveToolExecutionErrorKind,
+  resolveToolResultFailureKind,
+} from "../agents/tool-result-error.js";
 import type { McpLoopbackToolCallOutcome } from "./mcp-http.loopback-runtime.js";
 import {
   MCP_LOOPBACK_SERVER_NAME,
@@ -164,10 +167,10 @@ export async function handleMcpJsonRpc(params: {
         // A disconnected request does not identify the enclosing run outcome,
         // but its payload may prove partial delivery and prevent a duplicate send.
         reportToolCallResult({
-          outcome: params.signal?.aborted ? "unknown" : "failed",
+          outcome: params.signal?.aborted ? "unknown" : resolveToolExecutionErrorKind(error),
           result: error,
         });
-        const message = formatErrorMessage(error);
+        const message = formatToolExecutionErrorMessage(error, "tool execution failed");
         return jsonRpcResult(id, {
           content: [{ type: "text", text: message || "tool execution failed" }],
           isError: true,

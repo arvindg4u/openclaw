@@ -1,4 +1,57 @@
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
+import { formatErrorMessage } from "../infra/errors.js";
+
+const TOOL_TIMEOUT_ERROR_CODES = new Set([
+  "ERR_TIMEOUT",
+  "ESOCKETTIMEDOUT",
+  "ETIMEDOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+]);
+
+function readToolErrorField(error: object, key: string): unknown {
+  try {
+    return key in error ? (error as Record<string, unknown>)[key] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function hasStructuredToolTimeoutIdentity(error: unknown): boolean {
+  const pending = [error];
+  const seen = new Set<unknown>();
+  while (pending.length > 0 && seen.size < 8) {
+    const current = pending.shift();
+    if (!current || typeof current !== "object" || seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+    const name = readToolErrorField(current, "name");
+    if (name === "TimeoutError") {
+      return true;
+    }
+    const code = readToolErrorField(current, "code");
+    if (typeof code === "string" && TOOL_TIMEOUT_ERROR_CODES.has(code.trim().toUpperCase())) {
+      return true;
+    }
+    for (const key of ["reason", "status"] as const) {
+      const value = readToolErrorField(current, key);
+      const normalized = normalizeOptionalLowercaseString(value);
+      if (normalized === "timeout" || normalized === "timed_out") {
+        return true;
+      }
+      if (value && typeof value === "object") {
+        pending.push(value);
+      }
+    }
+    const cause = readToolErrorField(current, "cause");
+    if (cause && typeof cause === "object") {
+      pending.push(cause);
+    }
+  }
+  return false;
+}
 
 export function readToolResultDetails(result: unknown): Record<string, unknown> | undefined {
   if (!result || typeof result !== "object") {
@@ -49,6 +102,24 @@ export function isToolResultError(result: unknown): boolean {
 }
 
 export type ToolResultFailureKind = "blocked" | "cancelled" | "failed" | "timed_out";
+
+/** Classify a thrown tool error without inferring cancellation from message text. */
+export function resolveToolExecutionErrorKind(error: unknown): "failed" | "timed_out" {
+  try {
+    return hasStructuredToolTimeoutIdentity(error) ? "timed_out" : "failed";
+  } catch {
+    return "failed";
+  }
+}
+
+/** Format a redacted tool error without allowing hostile getters to escape observability. */
+export function formatToolExecutionErrorMessage(error: unknown, fallback: string): string {
+  try {
+    return formatErrorMessage(error) || fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 /** Classify a resolved structured tool result through the shared terminal contract. */
 export function resolveToolResultFailureKind(result: unknown): ToolResultFailureKind | undefined {

@@ -13,6 +13,7 @@ import {
   extractToolResultMediaArtifact,
   filterToolResultMediaUrls,
   finalizeToolTerminalPresentation,
+  formatToolExecutionErrorMessage,
   getBeforeToolCallFailureDisposition,
   HEARTBEAT_RESPONSE_TOOL_NAME,
   embeddedAgentLog,
@@ -28,6 +29,8 @@ import {
   isMessagingToolSendAction,
   normalizeHeartbeatToolResponse,
   projectRuntimeToolInputSchema,
+  resolveToolExecutionErrorKind,
+  resolveToolResultFailureKind,
   runAgentHarnessAfterToolCallHook,
   sanitizeToolResult,
   setBeforeToolCallDiagnosticsEnabled,
@@ -45,6 +48,7 @@ import {
   isRecord,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { CodexDynamicToolsLoading } from "./config.js";
+import { resolveCodexToolAbortTerminalReason } from "./dynamic-tool-execution.js";
 import { invalidInlineImageText, sanitizeInlineImageDataUrl } from "./image-payload-sanitizer.js";
 import type {
   CodexDynamicToolCallOutputContentItem,
@@ -537,7 +541,20 @@ export function createCodexDynamicToolBridge(params: {
           result: middlewareResult,
         });
         const resultIsError = rawIsError || isCodexToolResultError(result);
-        notifyAgentToolResult(options?.onAgentToolResult, toolName, result, resultIsError);
+        const finalResultFailureKind = resolveToolResultFailureKind(result);
+        const rawResultFailureKind = resolveToolResultFailureKind(rawResult);
+        const resultFailureKind = finalResultFailureKind ?? rawResultFailureKind;
+        const observerResult =
+          !finalResultFailureKind && rawResultFailureKind
+            ? {
+                ...result,
+                details: {
+                  ...(isRecord(result.details) ? result.details : {}),
+                  status: rawResultFailureKind,
+                },
+              }
+            : result;
+        notifyAgentToolResult(options?.onAgentToolResult, toolName, observerResult, resultIsError);
         void runAgentHarnessAfterToolCallHook({
           toolName,
           toolCallId: call.callId,
@@ -580,7 +597,8 @@ export function createCodexDynamicToolBridge(params: {
           isError: resultIsError,
           messagingTarget: confirmedMessagingTarget,
         });
-        const terminalType = inferToolResultDiagnosticTerminalType(result, resultIsError);
+        const terminalType =
+          resultFailureKind === "blocked" ? "blocked" : resultIsError ? "error" : "completed";
         const response = withDiagnosticTerminalType(
           {
             contentItems: convertToolContents(result.content, toolResultMaxChars),
@@ -588,6 +606,7 @@ export function createCodexDynamicToolBridge(params: {
           },
           terminalType,
         );
+        withDiagnosticFailureDisposition(response, resultFailureKind);
         const blocksSourceReplyTermination = hasExplicitNonSourceMessageRoute(
           executedArgs,
           params.hookContext,
@@ -646,8 +665,16 @@ export function createCodexDynamicToolBridge(params: {
             isReplaySafeToolCall(toolName, executedArgs));
         return withSideEffectEvidence(response, !replaySafe);
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
         const beforeToolCallDisposition = getBeforeToolCallFailureDisposition(error);
+        const executionDisposition =
+          beforeToolCallDisposition ??
+          (signal.aborted
+            ? resolveCodexToolAbortTerminalReason(signal)
+            : resolveToolExecutionErrorKind(error));
+        const errorMessage = formatToolExecutionErrorMessage(
+          error,
+          "OpenClaw dynamic tool call failed.",
+        );
         const adjustedExecutedArgs = consumeAdjustedParamsForToolCall(
           call.callId,
           toolResultHookContext.runId,
@@ -658,7 +685,7 @@ export function createCodexDynamicToolBridge(params: {
         executionPrevented =
           executionPrevented ||
           consumePreExecutionBlockedToolCall(call.callId, toolResultHookContext.runId);
-        const failedResult = failedToolResult(errorMessage);
+        const failedResult = failedToolResult(errorMessage, executionDisposition);
         finalizeToolTerminalPresentation({
           toolCallId: call.callId,
           runId: toolResultHookContext.runId,
@@ -694,7 +721,7 @@ export function createCodexDynamicToolBridge(params: {
           (isReplaySafeToolInstance(toolEntry.tool) &&
             isReplaySafeToolCall(toolName, executedArgs));
         return withSideEffectEvidence(
-          withBeforeToolCallFailureDisposition(
+          withDiagnosticFailureDisposition(
             {
               contentItems: [
                 {
@@ -704,7 +731,7 @@ export function createCodexDynamicToolBridge(params: {
               ],
               success: false,
             },
-            beforeToolCallDisposition,
+            executionDisposition,
           ),
           didStartExecution && !replaySafe,
         );
@@ -732,10 +759,13 @@ function notifyAgentToolResult(
   }
 }
 
-function failedToolResult(message: string): AgentToolResult<unknown> {
+function failedToolResult(
+  message: string,
+  status: "blocked" | CodexDynamicToolDiagnosticTerminalReason = "failed",
+): AgentToolResult<unknown> {
   return {
     content: [{ type: "text", text: message }],
-    details: { status: "failed", error: message },
+    details: { status, error: message },
   };
 }
 
@@ -1213,20 +1243,6 @@ function isAsyncStartedToolResult(result: AgentToolResult<unknown>): boolean {
   return isRecord(details) && details.async === true && details.status === "started";
 }
 
-function inferToolResultDiagnosticTerminalType(
-  result: AgentToolResult<unknown>,
-  isError: boolean,
-): CodexDynamicToolDiagnosticTerminalType {
-  const details = result.details;
-  if (isRecord(details) && typeof details.status === "string") {
-    const status = details.status.trim().toLowerCase();
-    if (status === "blocked") {
-      return "blocked";
-    }
-  }
-  return isError ? "error" : "completed";
-}
-
 function withDiagnosticTerminalType<T extends CodexDynamicToolCallResponse>(
   response: T,
   terminalType: CodexDynamicToolDiagnosticTerminalType,
@@ -1239,12 +1255,15 @@ function withDiagnosticTerminalType<T extends CodexDynamicToolCallResponse>(
   return response;
 }
 
-function withBeforeToolCallFailureDisposition<T extends CodexDynamicToolCallResponse>(
+function withDiagnosticFailureDisposition<T extends CodexDynamicToolCallResponse>(
   response: T,
   disposition: "blocked" | CodexDynamicToolDiagnosticTerminalReason | undefined,
 ): T {
+  if (!disposition) {
+    return response;
+  }
   withDiagnosticTerminalType(response, disposition === "blocked" ? "blocked" : "error");
-  if (disposition && disposition !== "blocked") {
+  if (disposition !== "blocked") {
     Object.defineProperty(response, "diagnosticTerminalReason", {
       configurable: true,
       enumerable: false,

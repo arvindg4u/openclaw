@@ -232,7 +232,7 @@ describe("dynamic tool execution helpers", () => {
           },
         ],
         details: {
-          status: "failed",
+          status: "timed_out",
           error: "OpenClaw dynamic tool call timed out after 1ms while running tool message.",
         },
       },
@@ -275,7 +275,7 @@ describe("dynamic tool execution helpers", () => {
       result: {
         content: [{ type: "text", text: "OpenClaw dynamic tool call aborted before execution." }],
         details: {
-          status: "failed",
+          status: "cancelled",
           error: "OpenClaw dynamic tool call aborted before execution.",
         },
       },
@@ -349,6 +349,112 @@ describe("dynamic tool execution helpers", () => {
       success: false,
       diagnosticTerminalReason: "timed_out",
     });
+  });
+
+  it("preserves timeout provenance when the dynamic tool bridge rejects", async () => {
+    const timeoutError = Object.assign(new Error("tool deadline elapsed"), {
+      name: "TimeoutError",
+    });
+    const onAgentToolResult = vi.fn();
+
+    const result = await handleDynamicToolCallWithTimeout({
+      call: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        callId: "call-rejected-timeout",
+        namespace: null,
+        tool: "memory_search",
+        arguments: {},
+      },
+      toolBridge: {
+        handleToolCall: vi.fn(async () => {
+          throw timeoutError;
+        }),
+      },
+      signal: new AbortController().signal,
+      timeoutMs: 1_000,
+      onAgentToolResult,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      diagnosticTerminalReason: "timed_out",
+    });
+    expect(onAgentToolResult).toHaveBeenCalledWith({
+      toolName: "memory_search",
+      result: {
+        content: [{ type: "text", text: "tool deadline elapsed" }],
+        details: { status: "timed_out", error: "tool deadline elapsed" },
+      },
+      isError: true,
+    });
+  });
+
+  it("contains hostile rejected values while notifying the private observer", async () => {
+    const hostileError = Object.defineProperty(new Error(), "message", {
+      get() {
+        throw new Error("message getter escaped");
+      },
+    });
+    const onAgentToolResult = vi.fn();
+
+    const result = await handleDynamicToolCallWithTimeout({
+      call: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        callId: "call-hostile-error",
+        namespace: null,
+        tool: "memory_search",
+        arguments: {},
+      },
+      toolBridge: {
+        handleToolCall: vi.fn(async () => {
+          throw hostileError;
+        }),
+      },
+      signal: new AbortController().signal,
+      timeoutMs: 1_000,
+      onAgentToolResult,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      diagnosticTerminalReason: "failed",
+      contentItems: [{ type: "inputText", text: "OpenClaw dynamic tool call failed." }],
+    });
+    expect(onAgentToolResult).toHaveBeenCalledOnce();
+  });
+
+  it("contains hostile abort reasons while notifying the private observer", async () => {
+    const hostileReason = Object.defineProperty({}, "name", {
+      get() {
+        throw new Error("name getter escaped");
+      },
+    });
+    const controller = new AbortController();
+    controller.abort(hostileReason);
+    const onAgentToolResult = vi.fn();
+
+    const result = await handleDynamicToolCallWithTimeout({
+      call: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        callId: "call-hostile-abort",
+        namespace: null,
+        tool: "memory_search",
+        arguments: {},
+      },
+      toolBridge: { handleToolCall: vi.fn() },
+      signal: controller.signal,
+      timeoutMs: 1_000,
+      onAgentToolResult,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      diagnosticTerminalReason: "cancelled",
+    });
+    expect(onAgentToolResult).toHaveBeenCalledOnce();
   });
 
   it("logs process poll timeout context separately from session idle", async () => {
