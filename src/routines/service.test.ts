@@ -19,6 +19,7 @@ type FakeCronService = CronServiceContract & {
   jobs: Map<string, CronJob>;
   add: ReturnType<typeof vi.fn<CronServiceContract["add"]>>;
   update: ReturnType<typeof vi.fn<CronServiceContract["update"]>>;
+  updateWithPrecondition: ReturnType<typeof vi.fn<CronServiceContract["updateWithPrecondition"]>>;
   remove: ReturnType<typeof vi.fn<CronServiceContract["remove"]>>;
   readJob: ReturnType<typeof vi.fn<CronServiceContract["readJob"]>>;
 };
@@ -138,6 +139,14 @@ function createFakeCronService(): FakeCronService {
       current.state = nextState;
       current.updatedAtMs = nextUpdatedAtMs;
       return current;
+    }),
+    updateWithPrecondition: vi.fn(async (id, patch, precondition) => {
+      const current = jobs.get(id);
+      if (!current) {
+        throw new Error(`missing cron job: ${id}`);
+      }
+      precondition(structuredClone(current), Date.now());
+      return await service.update(id, patch);
     }),
     remove: vi.fn(async (id: string) => {
       const removed = jobs.delete(id);
@@ -1142,6 +1151,43 @@ describe("routine service", () => {
           backing: "drifted",
           driftReason: expect.stringContaining("changed intent"),
         },
+      });
+    });
+  });
+
+  it("rejects enabling when the backing cron drifts inside the cron-locked update", async () => {
+    await withOpenClawTestState({ prefix: "routine-enable-atomic-drift-" }, async () => {
+      const cron = createFakeCronService();
+      const created = await createRoutine(createRoutineInput({ enabled: false }), { cron });
+      const cronJobId = created.routine.trigger.cronJobId;
+      const cronJob = cron.jobs.get(cronJobId);
+      if (!cronJob) {
+        throw new Error("expected backing cron job");
+      }
+      cron.update.mockClear();
+      cron.updateWithPrecondition.mockImplementationOnce(async (id, patch, precondition) => {
+        const current = cron.jobs.get(id);
+        if (!current) {
+          throw new Error(`missing cron job: ${id}`);
+        }
+        const drifted = {
+          ...current,
+          schedule: { kind: "every" as const, everyMs: 120_000 },
+          updatedAtMs: current.updatedAtMs + 1,
+        };
+        cron.jobs.set(id, drifted);
+        precondition(structuredClone(drifted), Date.now());
+        return await cron.update(id, patch);
+      });
+
+      await expect(setRoutineEnabled(created.routine.id, true, { cron })).rejects.toThrow(
+        "changed intent",
+      );
+
+      expect(cron.update).not.toHaveBeenCalled();
+      expect(cron.jobs.get(cronJobId)).toMatchObject({
+        enabled: false,
+        schedule: { kind: "every", everyMs: 120_000 },
       });
     });
   });

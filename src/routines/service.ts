@@ -725,17 +725,21 @@ function assertRoutineBackingCronJobCanRemainLinked(
   );
 }
 
-function assertRoutineCanBeEnabled(cronJob: CronJob): void {
+function assertRoutineCanBeEnabled(cronJob: CronJob, nowMs = Date.now()): void {
   assertRoutineBackingCronJobCanRemainLinked(cronJob);
-  assertOneShotScheduleCanBeEnabled(cronJob.schedule, cronJob.id);
+  assertOneShotScheduleCanBeEnabled(cronJob.schedule, cronJob.id, nowMs);
 }
 
-function assertOneShotScheduleCanBeEnabled(schedule: RoutineSchedule, cronJobId: string): void {
+function assertOneShotScheduleCanBeEnabled(
+  schedule: RoutineSchedule,
+  cronJobId: string,
+  nowMs = Date.now(),
+): void {
   if (schedule.kind !== "at") {
     return;
   }
   const atMs = parseAbsoluteTimeMs(schedule.at);
-  if (atMs === null || atMs <= Date.now()) {
+  if (atMs === null || atMs <= nowMs) {
     throw routineInvalidRequest(
       `cannot enable expired one-shot routine ${cronJobId}; create a new routine or reschedule it`,
     );
@@ -1058,6 +1062,30 @@ function assertRoutineCreateIntentMatchesRecord(
   }
 }
 
+async function updateRoutineBackingCronJobEnabled(params: {
+  record: RoutineRecord;
+  cronJob: CronJob;
+  context: RoutineCronContext;
+  enabled: boolean;
+}): Promise<CronJob> {
+  if (!params.enabled) {
+    return await params.context.cron.update(params.cronJob.id, { enabled: false });
+  }
+  return await params.context.cron.updateWithPrecondition(
+    params.cronJob.id,
+    { enabled: true },
+    (current, nowMs) => {
+      assertRoutineBackingCronJobMatchesRecord(params.record, current);
+      if (isTerminalOneShotCronJob(current)) {
+        throw routineInvalidRequest(
+          `cannot enable completed one-shot routine ${current.id}; create a new routine or reschedule it`,
+        );
+      }
+      assertRoutineCanBeEnabled(current, nowMs);
+    },
+  );
+}
+
 async function createRoutineBackingCronJob(params: {
   record: RoutineRecord;
   normalized: NormalizedRoutineCreate;
@@ -1128,7 +1156,12 @@ async function maybeEnableRoutineBackingCronJob(params: {
     return params.cronJob;
   }
   assertRoutineCanBeEnabled(params.cronJob);
-  return await params.context.cron.update(params.cronJob.id, { enabled: true });
+  return await updateRoutineBackingCronJobEnabled({
+    record: params.record,
+    cronJob: params.cronJob,
+    context: params.context,
+    enabled: true,
+  });
 }
 
 function isTerminalOneShotCronJob(cronJob: CronJob): boolean {
@@ -1182,7 +1215,12 @@ async function maybeApplyRoutineToggleStage(params: {
   if (params.cronJob.enabled === enabled) {
     return params.cronJob;
   }
-  return await params.context.cron.update(params.cronJob.id, { enabled });
+  return await updateRoutineBackingCronJobEnabled({
+    record: params.record,
+    cronJob: params.cronJob,
+    context: params.context,
+    enabled,
+  });
 }
 
 async function maybeRecoverRoutineBackingCronJob(params: {
@@ -1499,7 +1537,12 @@ export async function setRoutineEnabled(
       upsertRoutineRecordToSqlite(stagedToggleRecord);
     }
     if (shouldToggleCron) {
-      await context.cron.update(cronJob.id, { enabled });
+      await updateRoutineBackingCronJobEnabled({
+        record: stagedToggleRecord ?? record,
+        cronJob,
+        context,
+        enabled,
+      });
     }
     const updatedCronJob = await context.cron.readJob(cronJob.id);
     const updatedRecord = clearRoutineInternalStages({

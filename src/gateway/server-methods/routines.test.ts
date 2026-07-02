@@ -40,6 +40,20 @@ function createRoutineContext() {
       jobs.set(id, updated);
       return updated;
     }),
+    updateWithPrecondition: vi.fn(
+      async (
+        id: string,
+        patch: CronJobPatch,
+        precondition: (job: CronJob, nowMs: number) => void,
+      ) => {
+        const current = jobs.get(id);
+        if (!current) {
+          throw new Error(`missing cron job: ${id}`);
+        }
+        precondition(structuredClone(current), Date.now());
+        return await cron.update(id, patch);
+      },
+    ),
     readJob: vi.fn(async (id: string) => jobs.get(id)),
     getDefaultAgentId: vi.fn(() => "main"),
   };
