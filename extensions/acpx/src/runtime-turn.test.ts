@@ -33,6 +33,10 @@ describe("startRuntimeTurn", () => {
     );
 
     expect(await turn.result).toEqual({ status: "cancelled", stopReason: "cancelled" });
-    expect(await Array.fromAsync(turn.events)).toEqual([]);
+    const events: AcpRuntimeEvent[] = [];
+    for await (const event of turn.events) {
+      events.push(event);
+    }
+    expect(events).toEqual([]);
   });
 });
