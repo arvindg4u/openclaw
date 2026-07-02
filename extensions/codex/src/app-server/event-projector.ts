@@ -109,6 +109,13 @@ export class CodexNativeToolLifecycleProjector {
       }
       return;
     }
+    if (notification.method === "rawResponseItem/completed") {
+      const item = isJsonObject(params.item) ? params.item : undefined;
+      if (item) {
+        this.recordRawWebSearchResult(item);
+      }
+      return;
+    }
     if (notification.method !== "item/started" && notification.method !== "item/completed") {
       return;
     }
@@ -131,16 +138,46 @@ export class CodexNativeToolLifecycleProjector {
       this.recordStarted(params.item.id, toolName);
       return;
     }
+    if (params.item.type === "webSearch") {
+      // The normalized item omits status; rawResponseItem/completed retains it.
+      return;
+    }
 
-    this.completedItemIds.add(params.item.id);
-    this.activeItems.delete(params.item.id);
-    const startedAt = this.startedAtByItem.get(params.item.id);
-    this.startedAtByItem.delete(params.item.id);
     const itemDurationMs =
       typeof params.item.durationMs === "number" ? params.item.durationMs : undefined;
+    this.recordTerminal(params.item.id, toolName, itemStatus(params.item), itemDurationMs);
+  }
+
+  private recordRawWebSearchResult(item: JsonObject): void {
+    if (readString(item, "type") !== "web_search_call") {
+      return;
+    }
+    const toolCallId = readString(item, "id");
+    if (!toolCallId || this.completedItemIds.has(toolCallId)) {
+      return;
+    }
+    const toolName = "web_search";
+    this.recordStarted(toolCallId, toolName);
+    const rawStatus = readString(item, "status");
+    if (rawStatus === "in_progress" || rawStatus === "running") {
+      return;
+    }
+    const status = rawStatus === "completed" ? "completed" : "failed";
+    this.recordTerminal(toolCallId, toolName, status);
+  }
+
+  private recordTerminal(
+    toolCallId: string,
+    toolName: string,
+    status: ReturnType<typeof itemStatus>,
+    itemDurationMs?: number,
+  ): void {
+    this.completedItemIds.add(toolCallId);
+    this.activeItems.delete(toolCallId);
+    const startedAt = this.startedAtByItem.get(toolCallId);
+    this.startedAtByItem.delete(toolCallId);
     const durationMs =
       itemDurationMs ?? (startedAt === undefined ? 0 : Math.max(0, Date.now() - startedAt));
-    const status = itemStatus(params.item);
     const terminalEvent =
       status === "blocked"
         ? {
@@ -162,7 +199,7 @@ export class CodexNativeToolLifecycleProjector {
               durationMs,
             };
     emitTrustedDiagnosticEvent({
-      ...this.buildBase(params.item.id, toolName),
+      ...this.buildBase(toolCallId, toolName),
       ...terminalEvent,
     });
   }
@@ -2569,9 +2606,7 @@ function itemName(item: CodexThreadItem): string | undefined {
 }
 
 function auditNativeToolName(item: CodexThreadItem): string | undefined {
-  // The app-server web-search item drops the Responses terminal status. Omit it
-  // from audit projection rather than inventing success for failed/incomplete calls.
-  if (item.type === "dynamicToolCall" || item.type === "webSearch") {
+  if (item.type === "dynamicToolCall") {
     return undefined;
   }
   const progressName = itemName(item);

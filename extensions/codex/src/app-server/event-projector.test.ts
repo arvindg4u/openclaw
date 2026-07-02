@@ -2136,29 +2136,54 @@ describe("CodexAppServerEventProjector", () => {
     },
   );
 
-  it("does not project status-less native web searches as successful audit actions", async () => {
-    const diagnosticEvents: DiagnosticEventPayload[] = [];
-    const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
-    const projector = await createProjector();
-    const item = {
-      id: "web-search-audit-1",
-      type: "webSearch",
-      query: "sensitive query",
-      action: { type: "search", query: "sensitive query", queries: null },
-    };
+  it.each([
+    ["completed", "tool.execution.completed"],
+    ["failed", "tool.execution.error"],
+  ] as const)(
+    "uses raw %s status for redacted native web-search audit actions",
+    async (status, terminalType) => {
+      const diagnosticEvents: DiagnosticEventPayload[] = [];
+      const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
+      const projector = await createProjector();
+      const item = {
+        id: "web-search-audit-1",
+        type: "webSearch",
+        query: "sensitive query",
+        action: { type: "search", query: "sensitive query", queries: null },
+      };
 
-    try {
-      await projector.handleNotification(forCurrentTurn("item/started", { item }));
-      await projector.handleNotification(forCurrentTurn("item/completed", { item }));
-      await flushDiagnosticEvents();
-    } finally {
-      unsubscribe();
-    }
+      try {
+        await projector.handleNotification(forCurrentTurn("item/started", { item }));
+        await projector.handleNotification(forCurrentTurn("item/completed", { item }));
+        await projector.handleNotification(
+          forCurrentTurn("rawResponseItem/completed", {
+            item: {
+              id: item.id,
+              type: "web_search_call",
+              status,
+              action: item.action,
+            },
+          }),
+        );
+        await flushDiagnosticEvents();
+      } finally {
+        unsubscribe();
+      }
 
-    expect(
-      diagnosticEvents.filter((event) => "toolCallId" in event && event.toolCallId === item.id),
-    ).toEqual([]);
-  });
+      expect(
+        diagnosticEvents
+          .filter((event) => "toolCallId" in event && event.toolCallId === item.id)
+          .map((event) => ({
+            type: event.type,
+            toolName: "toolName" in event ? event.toolName : null,
+          })),
+      ).toEqual([
+        { type: "tool.execution.started", toolName: "web_search" },
+        { type: terminalType, toolName: "web_search" },
+      ]);
+      expect(JSON.stringify(diagnosticEvents)).not.toContain("sensitive");
+    },
+  );
 
   it("projects native image-generation error status as a failed audit action", async () => {
     const diagnosticEvents: DiagnosticEventPayload[] = [];
