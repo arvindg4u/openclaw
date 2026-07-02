@@ -181,6 +181,15 @@ export function projectAgentEventToAudit(event: AgentEventPayload): AuditEventIn
 export function projectToolExecutionEventToAudit(
   event: TrustedToolExecutionEvent,
 ): AuditEventInput | undefined {
+  // Schema quarantine describes tool availability before invocation. Without
+  // a call identity it must not become a durable tool-action claim.
+  if (
+    event.type === "tool.execution.blocked" &&
+    event.deniedReason === "unsupported_tool_schema" &&
+    !nonEmptyString(event.toolCallId)
+  ) {
+    return undefined;
+  }
   const runId = nonEmptyString(event.runId);
   const toolName = nonEmptyString(event.toolName);
   if (!runId || !toolName) {

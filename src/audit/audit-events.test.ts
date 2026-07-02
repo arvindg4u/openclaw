@@ -352,6 +352,19 @@ describe("agent activity audit projection", () => {
     expect(projected).not.toHaveProperty("reason");
   });
 
+  it("does not project pre-invocation schema quarantine as a tool action", () => {
+    const projected = projectToolExecutionEventToAudit(
+      toolEvent({
+        type: "tool.execution.blocked",
+        toolCallId: undefined,
+        deniedReason: "unsupported_tool_schema",
+        reason: "unsupported input schema",
+      }),
+    );
+
+    expect(projected).toBeUndefined();
+  });
+
   it.each(["aborted", "AbortError", "cancelled"])(
     "classifies trusted tool error category %s as cancellation",
     (errorCategory) => {
