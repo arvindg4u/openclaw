@@ -246,7 +246,6 @@ import {
 } from "./plugins.js";
 import { PushTestParamsSchema, PushTestResultSchema } from "./push.js";
 import {
-  RoutineRecordSchema,
   RoutineViewSchema,
   RoutinesCreateParamsSchema,
   RoutinesCreateResultSchema,
@@ -568,7 +567,6 @@ export const ProtocolSchemas = {
   CronRunParams: CronRunParamsSchema,
   CronRunsParams: CronRunsParamsSchema,
   CronRunLogEntry: CronRunLogEntrySchema,
-  RoutineRecord: RoutineRecordSchema,
   RoutineView: RoutineViewSchema,
   RoutinesListParams: RoutinesListParamsSchema,
   RoutinesListResult: RoutinesListResultSchema,

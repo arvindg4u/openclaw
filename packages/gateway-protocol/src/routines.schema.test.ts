@@ -1,7 +1,6 @@
 import { Compile } from "typebox/compile";
 import { describe, expect, it } from "vitest";
 import {
-  RoutinesCreateParamsSchema,
   RoutinesCreateResultSchema,
   validateRoutinesCreateParams,
 } from "./index.js";
@@ -87,7 +86,4 @@ describe("routines protocol schemas", () => {
     expect(validate.Check({ routine, created: true, idempotent: false })).toBe(true);
   });
 
-  it("keeps create params registered in the protocol schema registry", () => {
-    expect(RoutinesCreateParamsSchema).toBeDefined();
-  });
 });

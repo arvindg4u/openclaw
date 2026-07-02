@@ -6419,56 +6419,6 @@ public struct CronRunLogEntry: Codable, Sendable {
     }
 }
 
-public struct RoutineRecord: Codable, Sendable {
-    public let id: String
-    public let name: String
-    public let description: String?
-    public let enabled: Bool
-    public let owner: [String: AnyCodable]
-    public let target: [String: AnyCodable]
-    public let trigger: [String: AnyCodable]
-    public let action: AnyCodable
-    public let createdatms: Int
-    public let updatedatms: Int
-
-    public init(
-        id: String,
-        name: String,
-        description: String?,
-        enabled: Bool,
-        owner: [String: AnyCodable],
-        target: [String: AnyCodable],
-        trigger: [String: AnyCodable],
-        action: AnyCodable,
-        createdatms: Int,
-        updatedatms: Int)
-    {
-        self.id = id
-        self.name = name
-        self.description = description
-        self.enabled = enabled
-        self.owner = owner
-        self.target = target
-        self.trigger = trigger
-        self.action = action
-        self.createdatms = createdatms
-        self.updatedatms = updatedatms
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id
-        case name
-        case description
-        case enabled
-        case owner
-        case target
-        case trigger
-        case action
-        case createdatms = "createdAtMs"
-        case updatedatms = "updatedAtMs"
-    }
-}
-
 public struct RoutineView: Codable, Sendable {
     public let id: String
     public let name: String

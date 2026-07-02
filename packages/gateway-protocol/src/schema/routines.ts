@@ -120,7 +120,7 @@ const RoutineRecordFields = {
   updatedAtMs: Type.Integer({ minimum: 0 }),
 };
 
-export const RoutineRecordSchema = Type.Object(RoutineRecordFields, {
+const RoutineRecordSchema = Type.Object(RoutineRecordFields, {
   additionalProperties: false,
 });
 
@@ -217,7 +217,6 @@ export const RoutinesDeleteResultSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export type RoutineRecord = Static<typeof RoutineRecordSchema>;
 export type RoutineView = Static<typeof RoutineViewSchema>;
 export type RoutinesCreateParams = Static<typeof RoutinesCreateParamsSchema>;
 export type RoutinesListParams = Static<typeof RoutinesListParamsSchema>;
