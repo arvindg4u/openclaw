@@ -1177,6 +1177,8 @@ describe("mcp loopback server", () => {
         headers: { "x-openclaw-cli-capture-key": captureKey },
       });
       expect(response.status).toBe(200);
+      const payload = await readMcpPayload(response);
+      expect(payload.result?.isError).toBe(testCase.expected !== "completed");
     }
 
     expect(captured).toEqual([

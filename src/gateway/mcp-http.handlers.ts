@@ -159,7 +159,7 @@ export async function handleMcpJsonRpc(params: {
         );
         return jsonRpcResult(id, {
           content: normalizeToolCallContent(result),
-          isError: false,
+          isError: failureKind !== undefined,
         });
       } catch (error) {
         // A disconnected request does not identify the enclosing run outcome,
