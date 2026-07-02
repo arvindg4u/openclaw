@@ -693,7 +693,7 @@ describe("runCliAgent reliability", () => {
           message: "sent before overflow",
         },
         result: { status: "sent" },
-        isError: false,
+        outcome: "completed",
       });
       markMcpLoopbackToolCallFinished(captureHandle);
       return createManagedRun({
