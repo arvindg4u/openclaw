@@ -45,10 +45,15 @@ type DynamicToolTimeoutDetails = {
 /** Preserves timeout provenance when an enclosing run aborts an active tool. */
 export function resolveCodexToolAbortTerminalReason(
   signal: AbortSignal,
-): "cancelled" | "timed_out" {
+): "failed" | "cancelled" | "timed_out" {
   const reason = signal.reason;
   if (typeof reason === "string") {
-    return CODEX_TIMEOUT_ABORT_REASONS.has(reason) ? "timed_out" : "cancelled";
+    if (CODEX_TIMEOUT_ABORT_REASONS.has(reason)) {
+      return "timed_out";
+    }
+    // Transport loss is a run failure, not an operator cancellation. Native
+    // and dynamic tool diagnostics share this helper and must agree with it.
+    return reason === "client_closed" ? "failed" : "cancelled";
   }
   if (reason && typeof reason === "object") {
     const record = reason as { name?: unknown; reason?: unknown };

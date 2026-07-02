@@ -307,6 +307,27 @@ describe("dynamic tool execution helpers", () => {
     expect(result.diagnosticTerminalReason).toBe("timed_out");
   });
 
+  it("classifies app-server client closure as a failed tool outcome", async () => {
+    const controller = new AbortController();
+    controller.abort("client_closed");
+
+    const result = await handleDynamicToolCallWithTimeout({
+      call: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        callId: "call-client-closed",
+        namespace: null,
+        tool: "memory_search",
+        arguments: {},
+      },
+      toolBridge: { handleToolCall: vi.fn() },
+      signal: controller.signal,
+      timeoutMs: 1_000,
+    });
+
+    expect(result.diagnosticTerminalReason).toBe("failed");
+  });
+
   it("preserves enclosing timeout provenance for active tool aborts", async () => {
     const controller = new AbortController();
     const resultPromise = handleDynamicToolCallWithTimeout({
