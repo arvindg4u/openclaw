@@ -47,3 +47,35 @@ export function isToolResultError(result: unknown): boolean {
   const exitCode = details?.exitCode;
   return typeof exitCode === "number" && Number.isFinite(exitCode) && exitCode !== 0;
 }
+
+export type ToolResultFailureKind = "blocked" | "cancelled" | "failed" | "timed_out";
+
+/** Classify a resolved structured tool result through the shared terminal contract. */
+export function resolveToolResultFailureKind(result: unknown): ToolResultFailureKind | undefined {
+  if (!isToolResultError(result)) {
+    return undefined;
+  }
+  const status = readToolResultStatus(result);
+  if (
+    status === "blocked" ||
+    status === "denied" ||
+    status === "forbidden" ||
+    status === "disabled" ||
+    status === "approval-unavailable"
+  ) {
+    return "blocked";
+  }
+  const details = readToolResultDetails(result);
+  if (details?.timedOut === true || status === "timeout" || status === "timed_out") {
+    return "timed_out";
+  }
+  if (
+    status === "aborted" ||
+    status === "cancelled" ||
+    status === "canceled" ||
+    status === "killed"
+  ) {
+    return "cancelled";
+  }
+  return "failed";
+}

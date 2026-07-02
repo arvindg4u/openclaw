@@ -7,6 +7,7 @@ import {
   beginMcpLoopbackToolCallCapture,
   clearMcpLoopbackToolCallCapture,
   type McpLoopbackToolCallStart,
+  type McpLoopbackToolCallTerminalOutcome,
   waitForMcpLoopbackToolCallCaptureIdle,
 } from "../../gateway/mcp-http.loopback-runtime.js";
 import { shouldLogVerbose } from "../../globals.js";
@@ -591,7 +592,7 @@ export async function executePreparedCliRun(
         { toolName: string; args: Record<string, unknown>; target?: MessagingToolSend }
       >();
       const activeCliTools = new Map<string, { toolName: string; loopbackBound: boolean }>();
-      const blockedCliTools = new Map<string, string>();
+      const cliToolTerminalOutcomes = new Map<string, McpLoopbackToolCallTerminalOutcome>();
       const messagingToolSentTexts: string[] = [];
       const messagingToolSentTextKeys = new Set<string>();
       const messagingToolSentMediaUrls: string[] = [];
@@ -868,6 +869,8 @@ export async function executePreparedCliRun(
             },
             onToolCallStart: (call) => {
               let correlationId: string | undefined;
+              // The CLI stream and loopback HTTP call use different ids. Bind
+              // admission order once so the trusted terminal updates that action.
               for (const [toolCallId, activeTool] of activeCliTools) {
                 if (
                   !activeTool.loopbackBound &&
@@ -906,28 +909,24 @@ export async function executePreparedCliRun(
               }
               inFlightPreparedMessagingCalls.delete(call);
             },
-            onToolCallResult: ({
-              toolName,
-              args: toolArgs,
-              result,
-              isError,
-              outcome,
-              correlationId,
-              deniedReason,
-            }) => {
-              if (outcome === "blocked" && correlationId) {
-                blockedCliTools.set(correlationId, deniedReason ?? "plugin-before-tool-call");
+            onToolCallResult: (call) => {
+              if (call.outcome !== "completed" && call.correlationId) {
+                const terminalOutcome =
+                  call.outcome === "blocked"
+                    ? { outcome: call.outcome, deniedReason: call.deniedReason }
+                    : { outcome: call.outcome };
+                cliToolTerminalOutcomes.set(call.correlationId, terminalOutcome);
               }
-              const normalizedToolName = normalizeCliMessagingToolName(toolName);
-              if (!isMessagingToolDeliveryAction(normalizedToolName, toolArgs)) {
+              const normalizedToolName = normalizeCliMessagingToolName(call.toolName);
+              if (!isMessagingToolDeliveryAction(normalizedToolName, call.args)) {
                 return;
               }
               commitMessagingToolResult({
                 toolName: normalizedToolName,
-                target: extractCliMessagingTarget(context, normalizedToolName, toolArgs),
-                args: toolArgs,
-                result,
-                isError,
+                target: extractCliMessagingTarget(context, normalizedToolName, call.args),
+                args: call.args,
+                result: "result" in call ? call.result : undefined,
+                isError: call.outcome !== "completed",
               });
             },
           });
@@ -1043,11 +1042,14 @@ export async function executePreparedCliRun(
         }) => {
           const activeTool = activeParsedTools.get(event.toolCallId);
           activeParsedTools.delete(event.toolCallId);
-          const blockedReason = blockedCliTools.get(event.toolCallId);
-          blockedCliTools.delete(event.toolCallId);
+          const trustedOutcome = cliToolTerminalOutcomes.get(event.toolCallId);
+          cliToolTerminalOutcomes.delete(event.toolCallId);
           const toolName = activeTool?.toolName ?? event.name;
           const now = Date.now();
-          const terminalReason = resolveToolTerminalReason();
+          const terminalReason =
+            trustedOutcome && trustedOutcome.outcome !== "blocked"
+              ? trustedOutcome.outcome
+              : resolveToolTerminalReason();
           const diagnosticBase = {
             runId: params.runId,
             sessionId: params.sessionId,
@@ -1060,14 +1062,14 @@ export async function executePreparedCliRun(
             durationMs: Math.max(0, now - (activeTool?.startedAt ?? now)),
           };
           emitTrustedDiagnosticEvent(
-            blockedReason
+            trustedOutcome?.outcome === "blocked"
               ? {
                   type: "tool.execution.blocked",
                   ...diagnosticBase,
-                  deniedReason: blockedReason,
+                  deniedReason: trustedOutcome.deniedReason,
                   reason: "blocked by before-tool policy",
                 }
-              : event.isError
+              : trustedOutcome || event.isError
                 ? {
                     type: "tool.execution.error",
                     ...diagnosticBase,
@@ -1169,10 +1171,10 @@ export async function executePreparedCliRun(
             onAssistantDelta: emitCliAssistantDelta,
             onToolUseStart: emitCliToolUseStart,
             onToolResult: emitCliToolResult,
-            resolveToolResultBlockedReason: (event) => {
-              const blockedReason = blockedCliTools.get(event.toolCallId);
-              blockedCliTools.delete(event.toolCallId);
-              return blockedReason;
+            resolveToolResultTerminalOutcome: (event) => {
+              const outcome = cliToolTerminalOutcomes.get(event.toolCallId);
+              cliToolTerminalOutcomes.delete(event.toolCallId);
+              return outcome;
             },
             onCommentaryText:
               emitLiveEvents && context.params.emitCommentaryText

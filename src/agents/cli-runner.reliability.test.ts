@@ -627,7 +627,6 @@ describe("runCliAgent reliability", () => {
             mediaUrl: "https://example.com/done.png",
           },
           result: { status: "sent" },
-          isError: false,
           outcome: "completed",
         });
         markMcpLoopbackToolCallFinished(captureHandle);
@@ -757,7 +756,6 @@ describe("runCliAgent reliability", () => {
             sourceReply: { text: "sent before failure" },
           },
         },
-        isError: false,
         outcome: "completed",
       });
       markMcpLoopbackToolCallFinished(captureHandle);
@@ -832,7 +830,6 @@ describe("runCliAgent reliability", () => {
             sourceReply: { text: "sent through source reply" },
           },
         },
-        isError: false,
         outcome: "completed",
       });
       markMcpLoopbackToolCallFinished(captureHandle);
@@ -907,7 +904,6 @@ describe("runCliAgent reliability", () => {
             sourceReply: { text: "visible source reply" },
           },
         },
-        isError: false,
         outcome: "completed",
       });
       markMcpLoopbackToolCallFinished(captureHandle);
@@ -984,7 +980,6 @@ describe("runCliAgent reliability", () => {
           message: "sent without a terminal reply",
         },
         result: { status: "sent" },
-        isError: false,
         outcome: "completed",
       });
       markMcpLoopbackToolCallFinished(captureHandle);

@@ -5,15 +5,19 @@ type McpLoopbackRuntime = {
   nonOwnerToken: string;
 };
 
+export type McpLoopbackToolCallTerminalOutcome =
+  | { outcome: "blocked"; deniedReason: string }
+  | { outcome: "cancelled" | "failed" | "timed_out"; result?: unknown };
+
+export type McpLoopbackToolCallOutcome =
+  | { outcome: "completed"; result?: unknown }
+  | McpLoopbackToolCallTerminalOutcome;
+
 export type McpLoopbackToolCallResult = {
   toolName: string;
   args: Record<string, unknown>;
-  result?: unknown;
-  isError: boolean;
-  outcome: "blocked" | "completed" | "failed";
   correlationId?: string;
-  deniedReason?: string;
-};
+} & McpLoopbackToolCallOutcome;
 
 export type McpLoopbackToolCallStart = Pick<McpLoopbackToolCallResult, "toolName" | "args">;
 
@@ -229,30 +233,29 @@ export function updateMcpLoopbackToolCallCapture(
 }
 
 /** Report a completed call without letting observer failures alter tool execution. */
-export function recordMcpLoopbackToolCallResult(params: {
-  captureHandle: McpLoopbackToolCallCaptureHandle;
-  toolName: string;
-  args: Record<string, unknown>;
-  result?: unknown;
-  isError: boolean;
-  outcome: "blocked" | "completed" | "failed";
-  deniedReason?: string;
-}): void {
+export function recordMcpLoopbackToolCallResult(
+  params: {
+    captureHandle: McpLoopbackToolCallCaptureHandle;
+    toolName: string;
+    args: Record<string, unknown>;
+  } & McpLoopbackToolCallOutcome,
+): void {
   const toolName = params.toolName.trim();
   if (!toolName) {
     return;
   }
   try {
+    const outcome: McpLoopbackToolCallOutcome =
+      params.outcome === "blocked"
+        ? { outcome: "blocked", deniedReason: params.deniedReason }
+        : { outcome: params.outcome, result: params.result };
     params.captureHandle.capture.onToolCallResult({
       toolName,
       args: params.args,
-      result: params.result,
-      isError: params.isError,
-      outcome: params.outcome,
+      ...outcome,
       ...(params.captureHandle.correlationId
         ? { correlationId: params.captureHandle.correlationId }
         : {}),
-      ...(params.deniedReason ? { deniedReason: params.deniedReason } : {}),
     });
   } catch {
     // Delivery observation is diagnostic state; it must not turn a successful tool call into error.

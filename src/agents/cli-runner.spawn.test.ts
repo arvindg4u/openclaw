@@ -1375,7 +1375,6 @@ describe("runCliAgent spawn path", () => {
         toolName: "message",
         args: { action: "send", target: "chat123", message: "done" },
         result: { status: "sent" },
-        isError: false,
         outcome: "completed",
       });
       markMcpLoopbackToolCallFinished(captureHandle);
@@ -2210,7 +2209,6 @@ ${JSON.stringify({
           captureHandle,
           toolName: "message",
           args: { action: "react" },
-          isError: true,
           outcome: "blocked",
           deniedReason: "plugin-approval",
         });

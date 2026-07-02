@@ -2,7 +2,9 @@
 // Implements initialize, tools/list, tools/call, and notification handling.
 import crypto from "node:crypto";
 import { runBeforeToolCallHook, type HookContext } from "../agents/agent-tools.before-tool-call.js";
+import { resolveToolResultFailureKind } from "../agents/tool-result-error.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import type { McpLoopbackToolCallOutcome } from "./mcp-http.loopback-runtime.js";
 import {
   MCP_LOOPBACK_SERVER_NAME,
   MCP_LOOPBACK_SERVER_VERSION,
@@ -47,14 +49,12 @@ export async function handleMcpJsonRpc(params: {
   toolSchema: McpToolSchemaEntry[];
   hookContext?: HookContext;
   signal?: AbortSignal;
-  onToolCallResult?: (call: {
-    toolName: string;
-    args: Record<string, unknown>;
-    result?: unknown;
-    isError: boolean;
-    outcome: "blocked" | "completed" | "failed";
-    deniedReason?: string;
-  }) => void;
+  onToolCallResult?: (
+    call: {
+      toolName: string;
+      args: Record<string, unknown>;
+    } & McpLoopbackToolCallOutcome,
+  ) => void;
   onToolCallPrepared?: (call: { toolName: string; args: Record<string, unknown> }) => void;
 }): Promise<object | null> {
   const { id, method, params: methodParams } = params.message;
@@ -107,20 +107,12 @@ export async function handleMcpJsonRpc(params: {
       }
       const toolCallId = `mcp-${crypto.randomUUID()}`;
       let executedToolArgs = toolArgs;
-      const reportToolCallResult = (
-        result: unknown,
-        isError: boolean,
-        outcome: "blocked" | "completed" | "failed",
-        deniedReason?: string,
-      ) => {
+      const reportToolCallResult = (outcome: McpLoopbackToolCallOutcome) => {
         try {
           params.onToolCallResult?.({
             toolName,
             args: executedToolArgs,
-            result,
-            isError,
-            outcome,
-            ...(deniedReason ? { deniedReason } : {}),
+            ...outcome,
           });
         } catch {
           // Observability callbacks must never alter the tool result returned to the MCP client.
@@ -142,7 +134,11 @@ export async function handleMcpJsonRpc(params: {
           const deniedReason = hookFailed
             ? undefined
             : (hookResult.deniedReason ?? "plugin-before-tool-call");
-          reportToolCallResult(undefined, true, outcome, deniedReason);
+          reportToolCallResult(
+            outcome === "blocked"
+              ? { outcome, deniedReason: deniedReason ?? "plugin-before-tool-call" }
+              : { outcome },
+          );
           return jsonRpcResult(id, {
             content: [{ type: "text", text: hookResult.reason }],
             isError: true,
@@ -155,13 +151,18 @@ export async function handleMcpJsonRpc(params: {
           // Observability callbacks must never alter the tool result returned to the MCP client.
         }
         const result = await tool.execute(toolCallId, hookResult.params, params.signal);
-        reportToolCallResult(result, false, "completed");
+        const failureKind = resolveToolResultFailureKind(result);
+        reportToolCallResult(
+          failureKind === "blocked"
+            ? { outcome: "blocked", deniedReason: "tool_result_blocked" }
+            : { outcome: failureKind ?? "completed", result },
+        );
         return jsonRpcResult(id, {
           content: normalizeToolCallContent(result),
           isError: false,
         });
       } catch (error) {
-        reportToolCallResult(error, true, "failed");
+        reportToolCallResult({ outcome: "failed", result: error });
         const message = formatErrorMessage(error);
         return jsonRpcResult(id, {
           content: [{ type: "text", text: message || "tool execution failed" }],

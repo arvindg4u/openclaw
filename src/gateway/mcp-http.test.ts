@@ -9,7 +9,10 @@ type MockGatewayTool = {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
-  execute: (...args: unknown[]) => Promise<{ content: Array<{ type: string; text: string }> }>;
+  execute: (...args: unknown[]) => Promise<{
+    content: Array<{ type: string; text: string }>;
+    details?: Record<string, unknown>;
+  }>;
 };
 
 type MockGatewayScopedTools = {
@@ -1123,6 +1126,59 @@ describe("mcp loopback server", () => {
     ]);
   });
 
+  it("classifies resolved structured results for CLI capture", async () => {
+    const captureKey = "structured-results";
+    const captured: unknown[] = [];
+    beginMcpLoopbackToolCallCapture({
+      captureKey,
+      onToolCallStart: ({ args }) => String(args.status),
+      onToolCallResult: (result) => {
+        captured.push({
+          outcome: result.outcome,
+          correlationId: result.correlationId,
+          ...(result.outcome === "blocked" ? { deniedReason: result.deniedReason } : {}),
+        });
+      },
+    });
+    mockScopedTools([
+      makeMessageTool({
+        execute: async (_toolCallId, args) => ({
+          content: [{ type: "text", text: "result" }],
+          details: args as Record<string, unknown>,
+        }),
+      }),
+    ]);
+    const { runtime } = await startLoopbackServerForTest();
+    const cases = [
+      { status: "completed", expected: "completed" },
+      { status: "failed", expected: "failed" },
+      { status: "blocked", expected: "blocked" },
+      { status: "cancelled", expected: "cancelled" },
+      { status: "completed-timeout", expected: "timed_out", timedOut: true },
+    ] as const;
+
+    for (const testCase of cases) {
+      const response = await sendLoopbackToolCall({
+        token: runtime.ownerToken,
+        name: "message",
+        args: {
+          status: testCase.status === "completed-timeout" ? "completed" : testCase.status,
+          ...(testCase.timedOut ? { timedOut: true } : {}),
+        },
+        headers: { "x-openclaw-cli-capture-key": captureKey },
+      });
+      expect(response.status).toBe(200);
+    }
+
+    expect(captured).toEqual(
+      cases.map(({ status, expected }) => ({
+        outcome: expected,
+        correlationId: status === "completed-timeout" ? "completed" : status,
+        ...(expected === "blocked" ? { deniedReason: "tool_result_blocked" } : {}),
+      })),
+    );
+  });
+
   it("updates capture accounting with hook-rewritten tool arguments", async () => {
     const captureKey = "hook-rewritten-send";
     const updatedCalls = vi.fn();
@@ -1198,7 +1254,6 @@ describe("mcp loopback server", () => {
       toolName: "message",
       args: { action: "send", target: "chat123" },
       result: { content: "x".repeat(20 * 1024) },
-      isError: false,
       outcome: "completed",
     });
     markMcpLoopbackToolCallFinished(captureHandle);
@@ -1237,7 +1292,6 @@ describe("mcp loopback server", () => {
       toolName: "message",
       args: { action: "send", target: "first-turn" },
       result: { status: "sent" },
-      isError: false,
       outcome: "completed",
     });
     markMcpLoopbackToolCallFinished(firstHandle);
@@ -1309,7 +1363,7 @@ describe("mcp loopback server", () => {
       expect.objectContaining({
         toolName: "message",
         args: { action: "send", target: "late-body" },
-        isError: false,
+        outcome: "completed",
       }),
     );
   });
@@ -1390,7 +1444,7 @@ describe("mcp loopback server", () => {
     expect(captured).toHaveBeenCalledWith(
       expect.objectContaining({
         toolName: "message",
-        isError: true,
+        outcome: "failed",
         result: expect.objectContaining({ sentBeforeError: true }),
       }),
     );

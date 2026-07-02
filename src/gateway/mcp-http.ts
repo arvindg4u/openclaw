@@ -285,15 +285,10 @@ export async function startMcpLoopbackServer(port = 0): Promise<{
                   }
                 : undefined,
               onToolCallResult: cliCaptureHandle
-                ? ({ toolName: resultToolName, args, result, isError, outcome, deniedReason }) => {
+                ? (result) => {
                     recordMcpLoopbackToolCallResult({
                       captureHandle: cliCaptureHandle,
-                      toolName: resultToolName,
-                      args,
-                      result,
-                      isError,
-                      outcome,
-                      ...(deniedReason ? { deniedReason } : {}),
+                      ...result,
                     });
                   }
                 : undefined,

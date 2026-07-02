@@ -44,21 +44,26 @@ function recordMcpLoopbackToolCallResult(params: {
   args: Record<string, unknown>;
   result?: unknown;
   isError: boolean;
-  outcome?: "blocked" | "completed" | "failed";
+  outcome?: "blocked" | "cancelled" | "completed" | "failed" | "timed_out";
   deniedReason?: string;
 }): void {
   const captureHandle = markMcpLoopbackToolCallStarted(params);
   if (!captureHandle) {
     return;
   }
+  const outcome = params.outcome ?? (params.isError ? "failed" : "completed");
+  const result =
+    outcome === "blocked"
+      ? {
+          outcome,
+          deniedReason: params.deniedReason ?? "plugin-before-tool-call",
+        }
+      : { outcome, result: params.result };
   recordMcpLoopbackToolCallResultForHandle({
     captureHandle,
     toolName: params.toolName,
     args: params.args,
-    result: params.result,
-    isError: params.isError,
-    outcome: params.outcome ?? (params.isError ? "failed" : "completed"),
-    ...(params.deniedReason ? { deniedReason: params.deniedReason } : {}),
+    ...result,
   });
   markMcpLoopbackToolCallFinished(captureHandle);
 }
@@ -537,7 +542,27 @@ describe("executePreparedCliRun supervisor output capture", () => {
     expect(JSON.stringify(toolEvents)).not.toContain(secret);
   });
 
-  it("preserves loopback policy blocks for parsed CLI tools", async () => {
+  it.each([
+    {
+      name: "policy block",
+      outcome: "blocked",
+      deniedReason: "plugin-approval",
+      expected: { type: "tool.execution.blocked", deniedReason: "plugin-approval" },
+    },
+    {
+      name: "resolved failure",
+      outcome: "failed",
+      deniedReason: undefined,
+      expected: { type: "tool.execution.error", terminalReason: "failed" },
+    },
+    {
+      name: "resolved timeout",
+      outcome: "timed_out",
+      deniedReason: undefined,
+      expected: { type: "tool.execution.error", terminalReason: "timed_out" },
+    },
+  ] as const)("preserves loopback $name for parsed CLI tools", async (testCase) => {
+    const toolCallId = `call-${testCase.outcome}`;
     const toolEvents: TrustedToolExecutionEvent[] = [];
     const stop = onTrustedToolExecutionEvent((event) => toolEvents.push(event));
     supervisorSpawnMock.mockImplementationOnce(async (...args: unknown[]) => {
@@ -550,7 +575,7 @@ describe("executePreparedCliRun supervisor output capture", () => {
             content: [
               {
                 type: "mcp_tool_use",
-                id: "call-blocked",
+                id: toolCallId,
                 name: "mcp__openclaw__message",
                 input: { action: "react" },
               },
@@ -563,8 +588,8 @@ describe("executePreparedCliRun supervisor output capture", () => {
         toolName: "message",
         args: { action: "react" },
         isError: true,
-        outcome: "blocked",
-        deniedReason: "plugin-approval",
+        outcome: testCase.outcome,
+        ...(testCase.deniedReason ? { deniedReason: testCase.deniedReason } : {}),
       });
       input.onStdout?.(
         `${JSON.stringify({
@@ -574,7 +599,7 @@ describe("executePreparedCliRun supervisor output capture", () => {
             content: [
               {
                 type: "tool_result",
-                tool_use_id: "call-blocked",
+                tool_use_id: toolCallId,
                 content: "blocked",
                 is_error: true,
               },
@@ -603,12 +628,8 @@ describe("executePreparedCliRun supervisor output capture", () => {
     }
 
     expect(toolEvents).toMatchObject([
-      { type: "tool.execution.started", toolCallId: "call-blocked" },
-      {
-        type: "tool.execution.blocked",
-        toolCallId: "call-blocked",
-        deniedReason: "plugin-approval",
-      },
+      { type: "tool.execution.started", toolCallId },
+      { ...testCase.expected, toolCallId },
     ]);
   });
 
