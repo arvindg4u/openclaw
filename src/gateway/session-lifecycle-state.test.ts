@@ -405,6 +405,17 @@ describe("session lifecycle state", () => {
       status: "timeout",
       abortedLastRun: false,
     },
+    {
+      name: "maps abandoned lifecycle ends to failed sessions",
+      data: {
+        phase: "end",
+        livenessState: "abandoned",
+        replayInvalid: true,
+        endedAt: 1_550,
+      },
+      status: "failed",
+      abortedLastRun: false,
+    },
   ])("$name", ({ data, status, abortedLastRun }) => {
     expectPersistedLifecyclePatch({
       data,

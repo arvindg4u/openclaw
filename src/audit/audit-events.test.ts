@@ -340,6 +340,7 @@ describe("agent activity audit projection", () => {
     ],
     [{ phase: "error", timeoutPhase: "provider" }, "timed_out", "run_timed_out"],
     [{ phase: "error", livenessState: "blocked" }, "blocked", "run_blocked"],
+    [{ phase: "end", livenessState: "abandoned", replayInvalid: true }, "failed", "run_failed"],
   ] as const)("classifies terminal run metadata %#", (data, status, errorCode) => {
     const projected = projectAgentEventToAudit(agentEvent({ seq: 4, data, stream: "lifecycle" }));
     expect(projected).toMatchObject({

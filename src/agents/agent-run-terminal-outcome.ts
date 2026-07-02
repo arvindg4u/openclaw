@@ -1,5 +1,10 @@
 /** Normalizes agent run wait/liveness/timeout metadata into sticky terminal outcomes. */
-import { formatBlockedLivenessError, isBlockedLivenessState } from "../shared/agent-liveness.js";
+import {
+  formatAbandonedLivenessError,
+  formatBlockedLivenessError,
+  isAbandonedLivenessState,
+  isBlockedLivenessState,
+} from "../shared/agent-liveness.js";
 import {
   AGENT_RUN_ABORTED_ERROR,
   AGENT_RUN_RESTART_ABORT_STOP_REASON,
@@ -22,6 +27,7 @@ type AgentRunTerminalReason =
   | "cancelled"
   | "aborted"
   | "blocked"
+  | "abandoned"
   | "failed";
 
 /** Normalized terminal outcome for an agent run. */
@@ -118,26 +124,31 @@ export function buildAgentRunTerminalOutcome(
   const cancelled =
     restartCancelled || (input.status !== "ok" && isCancellationStopReason(stopReason));
   const blocked = isBlockedLivenessState(livenessState);
+  const abandoned = isAbandonedLivenessState(livenessState);
   const error = hardTimeout
     ? rawError
     : blocked
       ? formatBlockedLivenessError(rawError)
-      : aborted && !rawError
-        ? AGENT_RUN_ABORTED_ERROR
-        : rawError;
+      : abandoned
+        ? formatAbandonedLivenessError(rawError)
+        : aborted && !rawError
+          ? AGENT_RUN_ABORTED_ERROR
+          : rawError;
   const reason: AgentRunTerminalReason = hardTimeout
     ? "hard_timeout"
     : blocked
       ? "blocked"
-      : aborted
-        ? "aborted"
-        : cancelled
-          ? "cancelled"
-          : input.status === "timeout"
-            ? "timed_out"
-            : input.status === "error"
-              ? "failed"
-              : "completed";
+      : abandoned
+        ? "abandoned"
+        : aborted
+          ? "aborted"
+          : cancelled
+            ? "cancelled"
+            : input.status === "timeout"
+              ? "timed_out"
+              : input.status === "error"
+                ? "failed"
+                : "completed";
   return {
     reason,
     status:
