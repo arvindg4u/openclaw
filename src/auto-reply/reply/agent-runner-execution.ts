@@ -67,7 +67,7 @@ import {
   AGENT_RUN_RESTART_ABORT_STOP_REASON,
   createAgentRunRestartAbortError,
   isAgentRunRestartAbortReason,
-  resolveAgentRunAbortLifecycleFields,
+  resolveAgentRunErrorLifecycleFields,
 } from "../../agents/run-termination.js";
 import { buildAgentRuntimeOutcomePlan } from "../../agents/runtime-plan/build.js";
 import { resolveGroupSessionKey, type SessionEntry } from "../../config/sessions.js";
@@ -2318,8 +2318,8 @@ async function runAgentTurnWithFallbackInternal(
                 sessionKey: params.sessionKey,
                 startedAt: cliLifecycleStartedAt,
                 getLifecycleGeneration: () => lifecycleGeneration,
-                resolveAbortLifecycleFields: () => ({
-                  ...resolveAgentRunAbortLifecycleFields(runAbortSignal),
+                resolveTerminationFields: (error) => ({
+                  ...resolveAgentRunErrorLifecycleFields(error, runAbortSignal),
                   ...(isReplyOperationRestartAbort(params.replyOperation)
                     ? {
                         aborted: true as const,
@@ -2560,8 +2560,8 @@ async function runAgentTurnWithFallbackInternal(
                 runId,
                 sessionKey: params.sessionKey,
                 getLifecycleGeneration: () => lifecycleGeneration,
-                resolveAbortLifecycleFields: () => ({
-                  ...resolveAgentRunAbortLifecycleFields(runAbortSignal),
+                resolveTerminationFields: (error) => ({
+                  ...resolveAgentRunErrorLifecycleFields(error, runAbortSignal),
                   ...(isReplyOperationRestartAbort(params.replyOperation)
                     ? {
                         aborted: true as const,
@@ -3421,7 +3421,7 @@ async function runAgentTurnWithFallbackInternal(
             ? params.opts.abortSignal
             : undefined;
       const abortLifecycleFields = {
-        ...resolveAgentRunAbortLifecycleFields(abortedSignal),
+        ...resolveAgentRunErrorLifecycleFields(err, abortedSignal),
         ...(isReplyOperationRestartAbort(params.replyOperation)
           ? {
               aborted: true as const,

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { FailoverError } from "./failover-error.js";
 import {
   createAgentRunDirectAbortError,
   createAgentRunRestartAbortError,
   isAgentRunDirectAbortReason,
   isAbortedAgentStopReason,
   resolveAgentRunAbortLifecycleFields,
+  resolveAgentRunErrorLifecycleFields,
 } from "./run-termination.js";
 
 describe("resolveAgentRunAbortLifecycleFields", () => {
@@ -55,5 +57,43 @@ describe("resolveAgentRunAbortLifecycleFields", () => {
     });
     expect(isAgentRunDirectAbortReason(error)).toBe(true);
     expect(isAgentRunDirectAbortReason(createAgentRunRestartAbortError())).toBe(false);
+  });
+});
+
+describe("resolveAgentRunErrorLifecycleFields", () => {
+  it("attributes structured provider watchdog timeouts", () => {
+    const error = new FailoverError("CLI timed out", { reason: "timeout" });
+
+    expect(resolveAgentRunErrorLifecycleFields(error, undefined)).toEqual({
+      stopReason: "timeout",
+      timeoutPhase: "provider",
+    });
+  });
+
+  it("does not reclassify ordinary provider failures", () => {
+    const error = new FailoverError("CLI failed", { reason: "server_error" });
+
+    expect(resolveAgentRunErrorLifecycleFields(error, undefined)).toEqual({});
+  });
+
+  it("reads the final structured timeout from a fallback summary cause", () => {
+    const timeout = new FailoverError("CLI timed out", { reason: "timeout" });
+    const error = new Error("All model fallback candidates failed", { cause: timeout });
+
+    expect(resolveAgentRunErrorLifecycleFields(error, undefined)).toEqual({
+      stopReason: "timeout",
+      timeoutPhase: "provider",
+    });
+  });
+
+  it("preserves explicit cancellation over a concurrent timeout error", () => {
+    const controller = new AbortController();
+    controller.abort();
+    const error = new FailoverError("CLI timed out", { reason: "timeout" });
+
+    expect(resolveAgentRunErrorLifecycleFields(error, controller.signal)).toEqual({
+      aborted: true,
+      stopReason: "aborted",
+    });
   });
 });

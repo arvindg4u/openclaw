@@ -1,6 +1,7 @@
 // Tests CLI dispatch arguments and runtime selection for agent runner turns.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EmbeddedAgentRunResult } from "../../agents/embedded-agent-runner/types.js";
+import { FailoverError } from "../../agents/failover-error.js";
 import { createAgentRunRestartAbortError } from "../../agents/run-termination.js";
 import {
   emitAgentEvent,
@@ -121,6 +122,44 @@ describe("runCliAgentWithLifecycle", () => {
       stopReason: "restart",
     });
     expect(events.some((event) => event.stream === "assistant")).toBe(false);
+  });
+
+  it("attributes a structured CLI watchdog timeout on the terminal event", async () => {
+    const events: Array<{ stream?: string; data?: Record<string, unknown> }> = [];
+    const stop = onAgentEvent((event) => {
+      if (event.runId === "run-timeout") {
+        events.push(event);
+      }
+    });
+    cliDispatchState.runCliAgentMock.mockRejectedValueOnce(
+      new FailoverError("CLI produced no output", { reason: "timeout" }),
+    );
+
+    await expect(
+      runCliAgentWithLifecycle({
+        runId: "run-timeout",
+        provider: "claude-cli",
+        runParams: {
+          sessionId: "session-1",
+          sessionFile: "/tmp/session.jsonl",
+          workspaceDir: "/tmp/workspace",
+          prompt: "hello",
+          provider: "claude-cli",
+          model: "claude",
+          thinkLevel: "off",
+          timeoutMs: 1_000,
+          runId: "run-timeout",
+        },
+      }),
+    ).rejects.toThrow("CLI produced no output");
+    stop();
+
+    expect(
+      events.find((event) => event.stream === "lifecycle" && event.data?.phase === "error")?.data,
+    ).toMatchObject({
+      stopReason: "timeout",
+      timeoutPhase: "provider",
+    });
   });
 
   it("propagates yielded result metadata on lifecycle end", async () => {

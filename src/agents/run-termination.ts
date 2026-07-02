@@ -1,3 +1,6 @@
+import { isFailoverError } from "./failover-error.js";
+import type { AgentRunTimeoutPhase } from "./run-timeout-attribution.js";
+
 /**
  * Shared agent run termination constants.
  *
@@ -60,6 +63,36 @@ export function resolveAgentRunAbortLifecycleFields(signal: AbortSignal | undefi
   return {
     aborted: true,
     stopReason,
+  };
+}
+
+/** Preserve structured provider watchdog timeouts when no abort signal was raised. */
+export function resolveAgentRunErrorLifecycleFields(
+  error: unknown,
+  signal: AbortSignal | undefined,
+): {
+  aborted?: true;
+  stopReason?:
+    | typeof AGENT_RUN_ABORTED_STOP_REASON
+    | typeof AGENT_RUN_RESTART_ABORT_STOP_REASON
+    | "timeout";
+  timeoutPhase?: AgentRunTimeoutPhase;
+} {
+  const abortFields = resolveAgentRunAbortLifecycleFields(signal);
+  if (abortFields.aborted) {
+    return abortFields;
+  }
+  const failoverError = isFailoverError(error)
+    ? error
+    : error instanceof Error && isFailoverError(error.cause)
+      ? error.cause
+      : undefined;
+  if (failoverError?.reason !== "timeout") {
+    return {};
+  }
+  return {
+    stopReason: "timeout",
+    timeoutPhase: "provider",
   };
 }
 

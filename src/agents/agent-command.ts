@@ -138,6 +138,7 @@ import {
   isAgentRunDirectAbortReason,
   isAgentRunRestartAbortReason,
   resolveAgentRunAbortLifecycleFields,
+  resolveAgentRunErrorLifecycleFields,
 } from "./run-termination.js";
 import { normalizeSpawnedRunMetadata } from "./spawned-context.js";
 import { resolveAgentTimeoutMs } from "./timeout.js";
@@ -1824,7 +1825,7 @@ async function agentCommandInternal(
           startedAt,
           endedAt: Date.now(),
           error: error instanceof Error ? error.message : "Agent run failed",
-          ...resolveAgentRunAbortLifecycleFields(opts.abortSignal),
+          ...resolveAgentRunErrorLifecycleFields(error, opts.abortSignal),
         },
       });
     };
@@ -2154,9 +2155,9 @@ async function agentCommandInternal(
           continue;
         }
         if (!attemptLifecycleState.lifecycleEnded) {
-          const abortLifecycleFields = isAgentRunDirectAbortReason(err)
+          const errorLifecycleFields = isAgentRunDirectAbortReason(err)
             ? { aborted: true as const, stopReason: "aborted" as const }
-            : resolveAgentRunAbortLifecycleFields(opts.abortSignal);
+            : resolveAgentRunErrorLifecycleFields(err, opts.abortSignal);
           emitAgentEvent({
             runId,
             lifecycleGeneration,
@@ -2166,7 +2167,7 @@ async function agentCommandInternal(
               startedAt,
               endedAt: Date.now(),
               error: err instanceof Error ? err.message : "Agent run failed",
-              ...abortLifecycleFields,
+              ...errorLifecycleFields,
             },
           });
         }

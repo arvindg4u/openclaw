@@ -19,6 +19,7 @@ import {
 import {
   isAgentRunRestartAbortReason,
   resolveAgentRunAbortLifecycleFields,
+  resolveAgentRunErrorLifecycleFields,
 } from "../../agents/run-termination.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { updateSessionEntry } from "../../config/sessions/session-accessor.js";
@@ -537,7 +538,7 @@ async function runCliAgentWithLifecycleInternal(
           startedAt,
           endedAt: Date.now(),
           error: String(err),
-          ...resolveAgentRunAbortLifecycleFields(params.runParams.abortSignal),
+          ...resolveAgentRunErrorLifecycleFields(err, params.runParams.abortSignal),
         },
       });
       lifecycleTerminalEmitted = true;

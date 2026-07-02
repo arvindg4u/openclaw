@@ -20,7 +20,7 @@ import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-a
 import { isCliProvider } from "../../agents/model-selection-cli.js";
 import {
   isAgentRunRestartAbortReason,
-  resolveAgentRunAbortLifecycleFields,
+  resolveAgentRunErrorLifecycleFields,
 } from "../../agents/run-termination.js";
 import {
   buildAgentRuntimeDeliveryPlan,
@@ -985,8 +985,8 @@ export function createFollowupRunner(params: {
                   sessionKey: replySessionKey,
                   startedAt: cliLifecycleStartedAt,
                   getLifecycleGeneration: () => lifecycleGeneration,
-                  resolveAbortLifecycleFields: () =>
-                    resolveAgentRunAbortLifecycleFields(runAbortSignal),
+                  resolveTerminationFields: (error) =>
+                    resolveAgentRunErrorLifecycleFields(error, runAbortSignal),
                 });
                 let droppedCliSessionReplacement = false;
                 pendingLifecycleTerminal = { provider, model, backstop: lifecycleBackstop };
@@ -1154,8 +1154,8 @@ export function createFollowupRunner(params: {
                 runId,
                 sessionKey: replySessionKey,
                 getLifecycleGeneration: () => lifecycleGeneration,
-                resolveAbortLifecycleFields: () =>
-                  resolveAgentRunAbortLifecycleFields(runAbortSignal),
+                resolveTerminationFields: (error) =>
+                  resolveAgentRunErrorLifecycleFields(error, runAbortSignal),
               });
               pendingLifecycleTerminal = { provider, model, backstop: lifecycleBackstop };
               const followupCurrentMessageId = resolveFollowupCurrentMessageId();
