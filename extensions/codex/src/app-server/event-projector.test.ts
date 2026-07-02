@@ -2137,12 +2137,14 @@ describe("CodexAppServerEventProjector", () => {
   );
 
   it.each([
-    ["completed", "tool.execution.completed"],
-    [undefined, "tool.execution.completed"],
-    ["failed", "tool.execution.error"],
+    ["completed", "tool.execution.completed", undefined, undefined],
+    ["failed", "tool.execution.error", "failed", undefined],
+    ["cancelled", "tool.execution.error", "cancelled", undefined],
+    [undefined, "tool.execution.error", "failed", "tool_outcome_unknown"],
+    ["future_status", "tool.execution.error", "failed", "tool_outcome_unknown"],
   ] as const)(
     "uses raw %s status for redacted native web-search audit actions",
-    async (status, terminalType) => {
+    async (status, terminalType, terminalReason, errorCode) => {
       const diagnosticEvents: DiagnosticEventPayload[] = [];
       const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
       const projector = await createProjector();
@@ -2177,10 +2179,17 @@ describe("CodexAppServerEventProjector", () => {
           .map((event) => ({
             type: event.type,
             toolName: "toolName" in event ? event.toolName : null,
+            terminalReason: "terminalReason" in event ? event.terminalReason : undefined,
+            errorCode: "errorCode" in event ? event.errorCode : undefined,
           })),
       ).toEqual([
-        { type: "tool.execution.started", toolName: "web_search" },
-        { type: terminalType, toolName: "web_search" },
+        {
+          type: "tool.execution.started",
+          toolName: "web_search",
+          terminalReason: undefined,
+          errorCode: undefined,
+        },
+        { type: terminalType, toolName: "web_search", terminalReason, errorCode },
       ]);
       expect(JSON.stringify(diagnosticEvents)).not.toContain("sensitive");
     },

@@ -83,7 +83,7 @@ type CodexNativeToolLifecycleProjectorOptions = {
   runAbortSignal?: AbortSignal;
 };
 
-type CodexNativeToolAuditStatus = ReturnType<typeof itemStatus> | "unknown";
+type CodexNativeToolAuditStatus = ReturnType<typeof itemStatus> | "cancelled" | "unknown";
 
 /** Projects metadata-only lifecycle diagnostics for native tool items. */
 export class CodexNativeToolLifecycleProjector {
@@ -187,13 +187,14 @@ export class CodexNativeToolLifecycleProjector {
     if (rawStatus === "in_progress" || rawStatus === "running") {
       return;
     }
-    const status =
-      rawStatus === "failed" ||
-      rawStatus === "error" ||
-      rawStatus === "cancelled" ||
-      rawStatus === "incomplete"
-        ? "failed"
-        : "completed";
+    const status: CodexNativeToolAuditStatus =
+      rawStatus === "completed"
+        ? "completed"
+        : rawStatus === "cancelled"
+          ? "cancelled"
+          : rawStatus === "failed" || rawStatus === "error" || rawStatus === "incomplete"
+            ? "failed"
+            : "unknown";
     this.recordTerminal(toolCallId, toolName, status);
   }
 
@@ -224,18 +225,22 @@ export class CodexNativeToolLifecycleProjector {
             reason: "codex_native_tool_blocked",
             deniedReason: "codex_native_tool_blocked",
           }
-        : status === "failed" || status === "unknown"
+        : status === "failed" || status === "cancelled" || status === "unknown"
           ? {
               type: "tool.execution.error" as const,
               durationMs,
               errorCategory:
                 status === "unknown"
                   ? "codex_native_tool_outcome_unknown"
-                  : "codex_native_tool_error",
+                  : status === "cancelled"
+                    ? "aborted"
+                    : "codex_native_tool_error",
               ...(status === "unknown" ? { errorCode: "tool_outcome_unknown" } : {}),
               terminalReason: this.options.runAbortSignal?.aborted
                 ? resolveCodexToolAbortTerminalReason(this.options.runAbortSignal)
-                : ("failed" as const),
+                : status === "cancelled"
+                  ? ("cancelled" as const)
+                  : ("failed" as const),
             }
           : {
               type: "tool.execution.completed" as const,

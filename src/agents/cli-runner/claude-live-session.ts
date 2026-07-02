@@ -58,6 +58,7 @@ type ClaudeLiveTurn = {
   activeToolTimer: NodeJS.Timeout | null;
   activeTools: Map<string, ClaudeLiveActiveTool>;
   observedStdout: boolean;
+  completedToolCallIds: Set<string>;
   toolEventCount: number;
   streamingParser: ReturnType<typeof createCliJsonlStreamingParser>;
   execPermission: ClaudeLiveExecPermission;
@@ -101,7 +102,7 @@ type ClaudeLiveActiveTool = {
   startedAt: number;
 };
 type ClaudeLiveToolTerminalOutcome =
-  | { outcome: "blocked"; deniedReason: string }
+  | { outcome: "blocked"; deniedReason: string; reason?: string }
   | { outcome: "cancelled" | "failed" | "timed_out" | "unknown" };
 const CLAUDE_LIVE_IDLE_TIMEOUT_MS = 10 * 60 * 1_000;
 const CLAUDE_LIVE_ACTIVE_TOOL_PROGRESS_MS = 10_000;
@@ -564,6 +565,9 @@ function stopClaudeLiveActiveToolHeartbeatIfIdle(turn: ClaudeLiveTurn): void {
 }
 
 function markClaudeLiveToolStarted(turn: ClaudeLiveTurn, tool: CliToolUseStartDelta): void {
+  if (turn.completedToolCallIds.has(tool.toolCallId) || turn.activeTools.has(tool.toolCallId)) {
+    return;
+  }
   const now = Date.now();
   turn.activeTools.set(tool.toolCallId, {
     toolName: tool.name,
@@ -589,6 +593,9 @@ function markClaudeLiveToolCompleted(
   result: CliToolResultDelta,
   terminalOutcome?: ClaudeLiveToolTerminalOutcome,
 ): void {
+  if (turn.completedToolCallIds.has(result.toolCallId)) {
+    return;
+  }
   turn.toolEventCount += 1;
   const activeTool = turn.activeTools.get(result.toolCallId);
   if (!activeTool) {
@@ -596,6 +603,7 @@ function markClaudeLiveToolCompleted(
     return;
   }
   turn.activeTools.delete(result.toolCallId);
+  turn.completedToolCallIds.add(result.toolCallId);
   const event = {
     ...claudeLiveDiagnosticBase(turn),
     toolName: activeTool.toolName,
@@ -609,7 +617,7 @@ function markClaudeLiveToolCompleted(
       type: "tool.execution.blocked",
       ...event,
       deniedReason: terminalOutcome.deniedReason,
-      reason: "blocked by before-tool policy",
+      reason: terminalOutcome.reason ?? "blocked by before-tool policy",
     });
   } else if (terminalOutcome?.outcome === "unknown") {
     emitTrustedDiagnosticEvent({
@@ -634,6 +642,19 @@ function markClaudeLiveToolCompleted(
   }
   emitClaudeLiveProgress(turn, "cli_live:tool_result");
   stopClaudeLiveActiveToolHeartbeatIfIdle(turn);
+}
+
+function markClaudeLiveToolDenied(turn: ClaudeLiveTurn, tool: CliToolUseStartDelta): void {
+  markClaudeLiveToolStarted(turn, tool);
+  markClaudeLiveToolCompleted(
+    turn,
+    { toolCallId: tool.toolCallId, name: tool.name, isError: true },
+    {
+      outcome: "blocked",
+      deniedReason: "cli_live_exec_policy",
+      reason: "blocked by CLI live execution policy",
+    },
+  );
 }
 
 function failActiveClaudeLiveTools(turn: ClaudeLiveTurn, error: unknown): void {
@@ -805,8 +826,16 @@ function handleClaudeLiveControlRequest(
     return;
   }
   const toolUseId = typeof request.tool_use_id === "string" ? request.tool_use_id : undefined;
+  const toolName = typeof request.tool_name === "string" ? request.tool_name.trim() : "";
   const toolInput = isRecord(request.input) ? request.input : {};
   const allowed = turn.execPermission.security === "full" && turn.execPermission.ask === "off";
+  if (!allowed && toolUseId && toolName) {
+    markClaudeLiveToolDenied(turn, {
+      toolCallId: toolUseId,
+      name: toolName,
+      args: toolInput,
+    });
+  }
   writeClaudeLiveControlResponse(session, {
     type: "control_response",
     response: {
@@ -1116,6 +1145,7 @@ function createTurn(params: {
     activeToolTimer: null,
     activeTools: new Map(),
     observedStdout: false,
+    completedToolCallIds: new Set(),
     toolEventCount: 0,
     streamingParser: createCliJsonlStreamingParser({
       backend: params.context.preparedBackend.backend,

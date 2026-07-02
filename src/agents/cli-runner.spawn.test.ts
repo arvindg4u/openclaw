@@ -2508,6 +2508,16 @@ ${JSON.stringify({
   );
 
   it("answers Claude live control_request can_use_tool with deny when exec policy is restrictive", async () => {
+    const diagnosticEvents: Array<Record<string, unknown>> = [];
+    const stopDiagnostics = onInternalDiagnosticEvent((event) => {
+      if (
+        event.type.startsWith("tool.execution.") &&
+        "toolCallId" in event &&
+        event.toolCallId === "tool-deny-1"
+      ) {
+        diagnosticEvents.push(event as unknown as Record<string, unknown>);
+      }
+    });
     let stdoutListener: ((chunk: string) => void) | undefined;
     const writes: string[] = [];
     const stdin = {
@@ -2529,6 +2539,36 @@ ${JSON.stringify({
   type: "system",
   subtype: "init",
   session_id: "live-control-deny",
+})}
+${JSON.stringify({
+  type: "assistant",
+  session_id: "live-control-deny",
+  message: {
+    role: "assistant",
+    content: [
+      {
+        type: "tool_use",
+        id: "tool-deny-1",
+        name: "Bash",
+        input: { command: "rm -rf /" },
+      },
+    ],
+  },
+})}
+${JSON.stringify({
+  type: "user",
+  session_id: "live-control-deny",
+  message: {
+    role: "user",
+    content: [
+      {
+        type: "tool_result",
+        tool_use_id: "tool-deny-1",
+        content: "denied",
+        is_error: true,
+      },
+    ],
+  },
 })}
 ${JSON.stringify({
   type: "result",
@@ -2555,18 +2595,26 @@ ${JSON.stringify({
       };
     });
 
-    const result = await executePreparedCliRun(
-      buildPreparedCliRunContext({
-        provider: "claude-cli",
-        model: "sonnet",
-        runId: "run-control-deny",
-        prompt: "hello",
-        backend: { liveSession: "claude-stdio" },
-        config: {
-          tools: { exec: { security: "allowlist", ask: "on-miss" } },
-        } as PreparedCliRunContext["params"]["config"],
-      }),
-    );
+    const result = await (async () => {
+      try {
+        const value = await executePreparedCliRun(
+          buildPreparedCliRunContext({
+            provider: "claude-cli",
+            model: "sonnet",
+            runId: "run-control-deny",
+            prompt: "hello",
+            backend: { liveSession: "claude-stdio" },
+            config: {
+              tools: { exec: { security: "allowlist", ask: "on-miss" } },
+            } as PreparedCliRunContext["params"]["config"],
+          }),
+        );
+        await waitForDiagnosticEventsDrained();
+        return value;
+      } finally {
+        stopDiagnostics();
+      }
+    })();
     expect(result.text).toBe("ok");
     const controlResponse = writes.find((entry) => entry.includes('"control_response"'));
     expect(controlResponse, "control_response written to stdin").toBeDefined();
@@ -2581,6 +2629,22 @@ ${JSON.stringify({
     expect(parsed.response.response.behavior).toBe("deny");
     expect(parsed.response.response.decisionClassification).toBe("user_reject");
     expect(parsed.response.response.message).toContain("security=allowlist");
+    expect(diagnosticEvents).toMatchObject([
+      {
+        type: "tool.execution.started",
+        toolCallId: "tool-deny-1",
+        toolName: "Bash",
+        paramsSummary: { kind: "object" },
+      },
+      {
+        type: "tool.execution.blocked",
+        toolCallId: "tool-deny-1",
+        toolName: "Bash",
+        deniedReason: "cli_live_exec_policy",
+      },
+    ]);
+    expect(diagnosticEvents).toHaveLength(2);
+    expect(JSON.stringify(diagnosticEvents)).not.toContain("rm -rf");
     const spawnArg = supervisorSpawnMock.mock.calls.at(-1)?.[0] as { argv?: string[] };
     expect(requireArgAfter(spawnArg.argv, "--permission-mode")).toBe("default");
   });
