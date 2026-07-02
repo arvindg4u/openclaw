@@ -318,6 +318,94 @@ describe("workboard controller", () => {
     expect(state.lastRefreshError).toBe("task confirmation unavailable");
   });
 
+  it("applies a listed terminal task when another exact lookup fails during load", async () => {
+    vi.useFakeTimers();
+    const host = {};
+    const state = getWorkboardState(host);
+    const requestUpdate = vi.fn();
+    const completedTask = { ...sampleTask, status: "completed" as const };
+    const completedCard = {
+      ...sampleCard,
+      status: "running",
+      taskId: completedTask.taskId,
+      sessionKey: completedTask.childSessionKey,
+      runId: completedTask.runId,
+    } satisfies WorkboardCard;
+    const unresolvedTask = {
+      ...sampleTask,
+      id: "task-2",
+      taskId: "task-2",
+      childSessionKey: "subagent:workboard-default-card-2",
+      runId: "run-2",
+    } satisfies WorkboardTaskSummary;
+    const unresolvedCard = {
+      ...sampleCard,
+      id: "card-2",
+      status: "running",
+      taskId: unresolvedTask.taskId,
+      sessionKey: unresolvedTask.childSessionKey,
+      runId: unresolvedTask.runId,
+    } satisfies WorkboardCard;
+    state.tasksByCardId.set(unresolvedCard.id, unresolvedTask);
+    const client = createClient((method, params) => {
+      if (method === "workboard.cards.list") {
+        return {
+          cards: [completedCard, unresolvedCard],
+          statuses: ["todo", "running", "review", "done"],
+        };
+      }
+      if (method === "tasks.list") {
+        return { tasks: [completedTask] };
+      }
+      if (method === "tasks.get") {
+        expect(params).toEqual({ taskId: unresolvedTask.taskId });
+        throw new Error("task confirmation unavailable");
+      }
+      if (method === "workboard.cards.update") {
+        return { card: { ...completedCard, status: "review" } };
+      }
+      return {};
+    });
+
+    await loadWorkboard({ host, client: client as never, force: true, requestUpdate });
+
+    expect(state.lifecycleTaskRefreshFailed).toBe(true);
+    expect(state.lifecycleTaskRefreshRetryAt).not.toBeNull();
+    expect(state.lifecycleUnconfirmedTaskIds).toEqual(new Set([unresolvedTask.taskId]));
+    vi.clearAllMocks();
+
+    await syncWorkboardLifecycle({
+      host,
+      client: client as never,
+      sessions: [],
+      requestUpdate,
+    });
+
+    expect(client.request).toHaveBeenCalledOnce();
+    expect(client.request).toHaveBeenCalledWith("workboard.cards.update", {
+      id: completedCard.id,
+      patch: expect.objectContaining({ status: "review" }),
+    });
+    expect(state.cards.find((card) => card.id === completedCard.id)?.status).toBe("review");
+    expect(state.cards.find((card) => card.id === unresolvedCard.id)?.status).toBe("running");
+    expect(state.lifecycleTasksPrepared).toBe(false);
+
+    vi.clearAllMocks();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(requestUpdate).toHaveBeenCalledOnce();
+    await syncWorkboardLifecycle({
+      host,
+      client: client as never,
+      sessions: [],
+      requestUpdate,
+    });
+
+    expect(client.request).toHaveBeenCalledWith("tasks.get", {
+      taskId: unresolvedTask.taskId,
+    });
+  });
+
   it("keeps live-refresh task failures sticky until a full refresh succeeds", async () => {
     const host = {};
     const state = getWorkboardState(host);
@@ -363,6 +451,7 @@ describe("workboard controller", () => {
     expect(failedTaskRequests).toBe(1);
     expect(state.lifecycleTaskRefreshFailed).toBe(true);
     expect(state.lifecycleTaskRefreshRetryAt).toBe(retryAt);
+    expect(state.lifecycleUnconfirmedTaskIds).toEqual(new Set(["task-31"]));
     expect(state.lifecycleTasksPrepared).toBe(false);
     expect(state.lastRefreshError).toBe("task-31 unavailable");
 
@@ -6327,7 +6416,7 @@ describe("workboard controller", () => {
     expect(client.request.mock.calls.filter(([method]) => method === "tasks.get")).toHaveLength(32);
     expect(client.request).not.toHaveBeenCalledWith("workboard.cards.update", expect.anything());
     expect(state.lifecycleTaskRefreshFailed).toBe(true);
-    expect(state.lifecycleTasksPrepared).toBe(true);
+    expect(state.lifecycleTasksPrepared).toBe(false);
   });
 
   it("exact-confirms a tracked replacement omitted from lifecycle task listing", async () => {

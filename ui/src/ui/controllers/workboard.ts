@@ -2385,6 +2385,7 @@ async function loadWorkboardInternal(
       let preserveLifecycleTaskRefreshFailure = false;
       let nextTaskRefreshError: string | null = null;
       let nextUnfilteredCursor: string | null | undefined;
+      const confirmedLifecycleTaskIds = new Set<string>();
       if (taskLinkState.cards.length > 0) {
         const preparedTaskSummaries = taskLinkState.cards.flatMap((card) => {
           const task = previousTasksByCardId.get(card.id);
@@ -2415,6 +2416,10 @@ async function loadWorkboardInternal(
           let missingTaskIds: ReadonlySet<string>;
           let taskRefreshError: string | null;
           if (pollResult) {
+            for (const task of pollResult.tasks) {
+              confirmedLifecycleTaskIds.add(task.id);
+              confirmedLifecycleTaskIds.add(task.taskId);
+            }
             taskSummaries = [
               ...pollResult.tasks,
               ...preparedTaskSummaries.filter(
@@ -2436,6 +2441,10 @@ async function loadWorkboardInternal(
               ),
               [],
             );
+            for (const task of [...listedTaskSummaries, ...confirmationResult.tasks]) {
+              confirmedLifecycleTaskIds.add(task.id);
+              confirmedLifecycleTaskIds.add(task.taskId);
+            }
             const previousTasksToPreserve = confirmationResult.error
               ? preparedTaskSummaries.filter(
                   (task) => !confirmationResult.missingTaskIds.has(task.taskId),
@@ -2491,10 +2500,18 @@ async function loadWorkboardInternal(
       resetWorkboardLifecycleTaskConfirmations(state, { host: params.host });
       const recoveredFromLifecycleTaskRefresh =
         state.lifecycleTaskRefreshFailed && !lifecycleTaskRefreshFailed;
-      if (!preserveLifecycleTaskRefreshFailure) {
+      if (preserveLifecycleTaskRefreshFailure) {
+        // A successful bounded poll can safely unblock its own task ids without
+        // consuming the earlier failure's retry deadline for uncovered links.
+        for (const taskId of confirmedLifecycleTaskIds) {
+          state.lifecycleUnconfirmedTaskIds.delete(taskId);
+        }
+      } else {
+        const confirmedTaskIds = lifecycleTaskRefreshFailed ? confirmedLifecycleTaskIds : undefined;
         setWorkboardLifecycleTaskRefreshFailed(state, lifecycleTaskRefreshFailed, {
           host: params.host,
           requestUpdate: params.requestUpdate,
+          confirmedTaskIds,
         });
       }
       if (!lifecycleTaskRefreshFailed) {
@@ -3456,8 +3473,7 @@ export async function syncWorkboardLifecycle(params: {
   if (
     !params.client ||
     !state.loaded ||
-    ((taskRefreshRetryPending || taskRefreshContinuationWaiting) &&
-      workboardLifecycleRequiresTaskRefresh(state)) ||
+    (taskRefreshContinuationWaiting && workboardLifecycleRequiresTaskRefresh(state)) ||
     workboardLifecycleSyncBlocked(params.host, state)
   ) {
     return;
@@ -3514,7 +3530,7 @@ export async function syncWorkboardLifecycle(params: {
   // Read-only operators still need task-refresh recovery. Gate only the
   // lifecycle card writeback after the shared task snapshot is current.
   if (params.canWrite === false) {
-    setWorkboardLifecycleTasksPrepared(state, true, {
+    setWorkboardLifecycleTasksPrepared(state, !state.lifecycleTaskRefreshFailed, {
       host: params.host,
       preparedAt: tasksPreparedAt ?? Date.now(),
       requestUpdate: params.requestUpdate,
@@ -3628,7 +3644,7 @@ export async function syncWorkboardLifecycle(params: {
         isCurrentWorkboardLoadGeneration(params.host, generation) &&
         isCurrentWorkboardLifecycleReconciliationEpoch(params.host, reconciliationEpoch)
       ) {
-        setWorkboardLifecycleTasksPrepared(state, true, {
+        setWorkboardLifecycleTasksPrepared(state, !state.lifecycleTaskRefreshFailed, {
           host: params.host,
           preparedAt: tasksPreparedAt ?? Date.now(),
           requestUpdate: params.requestUpdate,
@@ -3641,7 +3657,7 @@ export async function syncWorkboardLifecycle(params: {
     !lifecycleWriteStarted &&
     isCurrentWorkboardLifecycleReconciliationEpoch(params.host, reconciliationEpoch)
   ) {
-    setWorkboardLifecycleTasksPrepared(state, true, {
+    setWorkboardLifecycleTasksPrepared(state, !state.lifecycleTaskRefreshFailed, {
       host: params.host,
       preparedAt: tasksPreparedAt ?? Date.now(),
       requestUpdate: params.requestUpdate,
