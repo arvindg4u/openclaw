@@ -3355,11 +3355,13 @@ describe("runCodexAppServerAttempt turn watches", () => {
   it("does not treat global rate-limit notifications as turn progress", async () => {
     const warn = vi.spyOn(embeddedAgentLog, "warn").mockImplementation(() => undefined);
     const harness = createStartedThreadHarness();
+    const onRunAgentEvent = vi.fn();
     const params = createParams(
       path.join(tempDir, "session.jsonl"),
       path.join(tempDir, "workspace"),
     );
     params.timeoutMs = 200;
+    params.onAgentEvent = onRunAgentEvent;
 
     const run = runCodexAppServerAttempt(params, { turnCompletionIdleTimeoutMs: 15 });
     await harness.waitForMethod("turn/start");
@@ -3422,6 +3424,17 @@ describe("runCodexAppServerAttempt turn watches", () => {
         turnId: "turn-1",
       }),
     );
+    expect(
+      onRunAgentEvent.mock.calls
+        .map(([event]) => event)
+        .find((event) => event.stream === "lifecycle" && event.data.phase === "error")?.data,
+    ).toMatchObject({
+      aborted: true,
+      status: "timed_out",
+      stopReason: "timeout",
+      timeoutPhase: "provider",
+      providerStarted: true,
+    });
   });
 
   it("clears the thread binding after a completion-idle timeout so the next turn starts fresh", async () => {
@@ -5146,11 +5159,13 @@ describe("runCodexAppServerAttempt turn watches", () => {
   it("keeps upstream cancellation aborted when Codex completes the turn as interrupted", async () => {
     const harness = createStartedThreadHarness();
     const abortController = new AbortController();
+    const onRunAgentEvent = vi.fn();
     const params = createParams(
       path.join(tempDir, "session.jsonl"),
       path.join(tempDir, "workspace"),
     );
     params.abortSignal = abortController.signal;
+    params.onAgentEvent = onRunAgentEvent;
     const run = runCodexAppServerAttempt(params, { turnTerminalIdleTimeoutMs: 60_000 });
 
     await harness.waitForMethod("turn/start");
@@ -5168,6 +5183,11 @@ describe("runCodexAppServerAttempt turn watches", () => {
     expect(result.aborted).toBe(true);
     expect(result.timedOut).toBe(false);
     expect(result.promptError).toBeNull();
+    expect(
+      onRunAgentEvent.mock.calls
+        .map(([event]) => event)
+        .find((event) => event.stream === "lifecycle" && event.data.phase === "end")?.data,
+    ).toMatchObject({ aborted: true, status: "cancelled", stopReason: "stop" });
   });
 
   it("releases completion when the app-server client closes during an active turn", async () => {

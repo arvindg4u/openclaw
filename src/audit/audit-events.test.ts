@@ -289,7 +289,7 @@ describe("agent activity audit projection", () => {
 
   it.each([
     [{ phase: "error", error: "raw failure" }, "failed", "run_failed"],
-    [{ phase: "end", aborted: true }, "timed_out", "run_timed_out"],
+    [{ phase: "end", aborted: true }, "cancelled", "run_cancelled"],
     [
       { phase: "end", aborted: true, stopReason: "aborted", providerStarted: true },
       "cancelled",
@@ -512,8 +512,8 @@ describe("agent activity audit projection", () => {
 
     expect(inputs.at(-1)).toMatchObject({
       action: "agent.run.finished",
-      status: "timed_out",
-      errorCode: "run_timed_out",
+      status: "cancelled",
+      errorCode: "run_cancelled",
     });
   });
 });

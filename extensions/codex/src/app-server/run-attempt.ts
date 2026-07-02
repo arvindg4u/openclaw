@@ -1881,6 +1881,20 @@ export async function runCodexAppServerAttempt(
     });
     lifecycleTerminalEmitted = true;
   };
+  const buildLifecycleTerminalMeta = (aborted: boolean) => {
+    if (timedOut) {
+      return {
+        aborted: true,
+        status: "timed_out",
+        stopReason: "timeout",
+        timeoutPhase: "provider",
+        providerStarted: true,
+      } as const;
+    }
+    return aborted
+      ? ({ aborted: true, status: "cancelled", stopReason: "stop" } as const)
+      : undefined;
+  };
 
   const executionPhaseKeys = new Set<string>();
   const emitExecutionPhaseOnce = (
@@ -3457,11 +3471,12 @@ export async function runCodexAppServerAttempt(
       emitLifecycleTerminal({
         phase: "error",
         error: formatErrorMessage(finalPromptError),
+        ...buildLifecycleTerminalMeta(finalAborted),
       });
     } else {
       emitLifecycleTerminal({
         phase: "end",
-        ...(finalAborted ? { aborted: true } : {}),
+        ...buildLifecycleTerminalMeta(finalAborted),
       });
     }
     return {
@@ -3484,6 +3499,7 @@ export async function runCodexAppServerAttempt(
     emitLifecycleTerminal({
       phase: "error",
       error: "codex app-server run completed without lifecycle terminal event",
+      ...buildLifecycleTerminalMeta(runAbortController.signal.aborted && !clientClosedAbort),
     });
     if (trajectoryRecorder && !trajectoryEndRecorded) {
       trajectoryRecorder.recordEvent("session.ended", {

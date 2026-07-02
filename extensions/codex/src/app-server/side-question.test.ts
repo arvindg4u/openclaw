@@ -1658,6 +1658,69 @@ describe("runCodexAppServerSideQuestion", () => {
     });
   });
 
+  it("aborts active side tools before waiting for thread cleanup", async () => {
+    const client = createFakeClient();
+    let releaseUnsubscribe: (() => void) | undefined;
+    const unsubscribePending = new Promise<void>((resolve) => {
+      releaseUnsubscribe = resolve;
+    });
+    let toolAborted = false;
+    toolExecuteMock.mockImplementation(
+      (_callId: string, _args: unknown, signal?: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => {
+              toolAborted = true;
+              reject(new Error("side tool aborted"));
+            },
+            { once: true },
+          );
+        }),
+    );
+    client.request.mockImplementation(async (method: string) => {
+      if (method === "thread/fork") {
+        return threadResult("side-thread");
+      }
+      if (method === "thread/inject_items") {
+        return {};
+      }
+      if (method === "turn/start") {
+        setTimeout(() => {
+          void client.handleRequest({
+            id: 42,
+            method: "item/tool/call",
+            params: {
+              threadId: "side-thread",
+              turnId: "turn-1",
+              callId: "tool-1",
+              tool: "wiki_status",
+              arguments: {},
+            },
+          });
+          client.emit(turnCompleted("side-thread", "turn-1", "Finished answer."));
+        }, 0);
+        return turnStartResult("turn-1");
+      }
+      if (method === "thread/unsubscribe") {
+        await unsubscribePending;
+        return {};
+      }
+      throw new Error(`unexpected request: ${method}`);
+    });
+    getSharedCodexAppServerClientMock.mockResolvedValue(client);
+
+    const run = runCodexAppServerSideQuestion(sideParams());
+    await vi.waitFor(() =>
+      expect(client.request.mock.calls.some(([method]) => method === "thread/unsubscribe")).toBe(
+        true,
+      ),
+    );
+    expect(toolAborted).toBe(true);
+    releaseUnsubscribe?.();
+    await expect(run).resolves.toEqual({ text: "Finished answer." });
+  });
+
   it("clears side-thread dynamic tool diagnostics at the app-server request boundary", async () => {
     const client = createFakeClient();
     const diagnosticEvents: DiagnosticEventPayload[] = [];

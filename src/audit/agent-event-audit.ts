@@ -74,14 +74,19 @@ function classifyRunTerminal(
 } {
   const stopReason = nonEmptyString(data.stopReason);
   const timeoutPhase = normalizeAgentRunTimeoutPhase(data.timeoutPhase);
-  const explicitlyTimedOut = stopReason === "timeout" || timeoutPhase !== undefined;
   const terminalStatus = normalizeOptionalLowercaseString(data.status);
+  const explicitlyTimedOut =
+    stopReason === "timeout" ||
+    timeoutPhase !== undefined ||
+    terminalStatus === "timeout" ||
+    terminalStatus === "timed_out";
   const explicitlyCancelled =
-    stopReason === "aborted" ||
-    (data.aborted === true && (stopReason === "rpc" || stopReason === "stop")) ||
-    terminalStatus === "cancelled" ||
-    terminalStatus === "canceled" ||
-    terminalStatus === "aborted";
+    !explicitlyTimedOut &&
+    (data.aborted === true ||
+      stopReason === "aborted" ||
+      terminalStatus === "cancelled" ||
+      terminalStatus === "canceled" ||
+      terminalStatus === "aborted");
   // The terminal helper accepts wait statuses, so normalize explicit lifecycle
   // cancellation to its canonical stop signal without persisting the raw reason.
   const outcomeStopReason = explicitlyCancelled && !explicitlyTimedOut ? "stop" : stopReason;
@@ -92,9 +97,7 @@ function classifyRunTerminal(
         ? "error"
         : explicitlyCancelled
           ? "error"
-          : data.aborted === true
-            ? "timeout"
-            : "ok",
+          : "ok",
     stopReason: outcomeStopReason,
     livenessState: data.livenessState,
     timeoutPhase,

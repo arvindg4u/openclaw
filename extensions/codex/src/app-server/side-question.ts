@@ -561,6 +561,11 @@ export async function runCodexAppServerSideQuestion(
     try {
       params.opts?.abortSignal?.removeEventListener("abort", abortFromUpstream);
       removeRequestHandler?.();
+      // Stop dispatched side tools before cleanup waits on the app server;
+      // otherwise a stuck tool can outlive the side turn that owns it.
+      if (!runAbortController.signal.aborted) {
+        runAbortController.abort("codex_side_question_finished");
+      }
       try {
         await cleanupCodexSideThread(client, {
           threadId: childThreadId,
@@ -571,9 +576,6 @@ export async function runCodexAppServerSideQuestion(
       } finally {
         removeNotificationHandler();
         nativeToolLifecycleProjector?.finalizeActive();
-        if (!runAbortController.signal.aborted) {
-          runAbortController.abort("codex_side_question_finished");
-        }
       }
     } finally {
       releaseLeasedSharedCodexAppServerClient(client);
