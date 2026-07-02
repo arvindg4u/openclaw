@@ -346,30 +346,20 @@ describe("gateway tool defaults", () => {
     expect(call.agentRuntimeIdentityToken).toEqual(expect.any(String));
   });
 
-  it.each([
-    "routines.list",
-    "routines.get",
-    "routines.create",
-    "routines.enable",
-    "routines.disable",
-    "routines.delete",
-  ])(
-    "marks local %s calls from trusted tool context with agent runtime identity",
-    async (method) => {
-      mocks.callGateway.mockResolvedValueOnce({ ok: true });
+  it("does not mark routine helper calls with agent runtime identity", async () => {
+    mocks.callGateway.mockResolvedValueOnce({ ok: true });
 
-      await withGatewayToolCallerIdentity(
-        { agentId: "ops", sessionKey: "agent:ops:telegram:direct:alice" },
-        async () => {
-          await callGatewayTool(method, {}, { id: "routine-1" });
-        },
-      );
+    await withGatewayToolCallerIdentity(
+      { agentId: "ops", sessionKey: "agent:ops:telegram:direct:alice" },
+      async () => {
+        await callGatewayTool("routines.list", {}, {});
+      },
+    );
 
-      const call = capturedGatewayCall();
-      expect(call.method).toBe(method);
-      expect(call.agentRuntimeIdentityToken).toEqual(expect.any(String));
-    },
-  );
+    const call = capturedGatewayCall();
+    expect(call.method).toBe("routines.list");
+    expect(call).not.toHaveProperty("agentRuntimeIdentityToken");
+  });
 
   it("marks local wake calls from trusted tool context with agent runtime identity", async () => {
     mocks.callGateway.mockResolvedValueOnce({ ok: true });

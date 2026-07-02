@@ -219,12 +219,6 @@ const AGENT_RUNTIME_IDENTITY_METHODS = new Set<string>([
   "cron.remove",
   "cron.run",
   "cron.runs",
-  "routines.list",
-  "routines.get",
-  "routines.create",
-  "routines.enable",
-  "routines.disable",
-  "routines.delete",
 ]);
 
 function resolveApprovalRuntimeTokenForGatewayTool(params: {

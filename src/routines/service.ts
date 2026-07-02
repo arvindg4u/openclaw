@@ -1187,6 +1187,26 @@ function stageRoutineRecordForToggle(
   };
 }
 
+function restoreRoutineRecordAfterRejectedToggle(params: {
+  record: RoutineStoredRecord;
+  cronJob: CronJob;
+}): void {
+  const restored = hasRoutineInternalStage(params.record)
+    ? clearRoutineInternalStages({
+        ...params.record,
+        enabled: params.cronJob.enabled,
+        updatedAtMs: Date.now(),
+      })
+    : params.record;
+  try {
+    upsertRoutineRecordToSqlite(restored);
+  } catch (err) {
+    throw new Error(`failed to clear rejected routine toggle: ${formatErrorMessage(err)}`, {
+      cause: err,
+    });
+  }
+}
+
 function hasRoutineInternalStage(record: RoutineStoredRecord): boolean {
   return (
     record.createStage === "creating" ||
@@ -1509,10 +1529,6 @@ export async function setRoutineEnabled(
       };
     }
     const changed = record.enabled !== enabled || cronJob.enabled !== enabled;
-    if (enabled && changed) {
-      assertRoutineCanBeEnabled(cronJob);
-      assertRoutineBackingCronJobMatchesRecord(record, cronJob);
-    }
     if (!changed) {
       const cleanRecord = hasRoutineInternalStage(record)
         ? clearRoutineInternalStages({
@@ -1530,19 +1546,34 @@ export async function setRoutineEnabled(
       };
     }
     const shouldToggleCron = cronJob.enabled !== enabled;
-    const stagedToggleRecord = shouldToggleCron
-      ? stageRoutineRecordForToggle(record, enabled)
-      : undefined;
-    if (stagedToggleRecord) {
-      upsertRoutineRecordToSqlite(stagedToggleRecord);
-    }
-    if (shouldToggleCron) {
-      await updateRoutineBackingCronJobEnabled({
-        record: stagedToggleRecord ?? record,
-        cronJob,
-        context,
-        enabled,
-      });
+    let stagedToggleRecord: RoutineStoredRecord | undefined;
+    try {
+      if (enabled) {
+        assertRoutineCanBeEnabled(cronJob);
+        assertRoutineBackingCronJobMatchesRecord(record, cronJob);
+      }
+      stagedToggleRecord = shouldToggleCron
+        ? stageRoutineRecordForToggle(record, enabled)
+        : undefined;
+      if (stagedToggleRecord) {
+        upsertRoutineRecordToSqlite(stagedToggleRecord);
+      }
+      if (shouldToggleCron) {
+        await updateRoutineBackingCronJobEnabled({
+          record: stagedToggleRecord ?? record,
+          cronJob,
+          context,
+          enabled,
+        });
+      }
+    } catch (err) {
+      if (
+        isRoutineInvalidRequestError(err) &&
+        (stagedToggleRecord || hasRoutineInternalStage(record))
+      ) {
+        restoreRoutineRecordAfterRejectedToggle({ record, cronJob });
+      }
+      throw err;
     }
     const updatedCronJob = await context.cron.readJob(cronJob.id);
     const updatedRecord = clearRoutineInternalStages({

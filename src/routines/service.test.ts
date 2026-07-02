@@ -1187,6 +1187,8 @@ describe("routine service", () => {
       );
 
       expect(cron.update).not.toHaveBeenCalled();
+      expect(readStoredRoutineJson()).toMatchObject({ enabled: false });
+      expect(readStoredRoutineJson()).not.toHaveProperty("enableStage");
       expect(cron.jobs.get(cronJobId)).toMatchObject({
         enabled: false,
         schedule: { kind: "every", everyMs: 120_000 },
@@ -1613,7 +1615,8 @@ describe("routine service", () => {
         "unsupported schedule",
       );
       expect(cron.update).not.toHaveBeenCalled();
-      expect(readStoredRoutineJson()).toMatchObject({ enableStage: "enabling" });
+      expect(readStoredRoutineJson()).toMatchObject({ enabled: false });
+      expect(readStoredRoutineJson()).not.toHaveProperty("enableStage");
     });
   });
 
