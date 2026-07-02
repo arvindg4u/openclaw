@@ -178,6 +178,7 @@ const acpManagerRuntimeMocks = vi.hoisted(() => ({
   getAcpSessionManager: vi.fn(),
 }));
 const agentEventMocks = vi.hoisted(() => ({
+  emitAgentAuditEvent: vi.fn(),
   emitAgentEvent: vi.fn(),
   onAgentEvent: vi.fn<(listener: unknown) => () => void>(() => () => {}),
 }));
@@ -511,6 +512,7 @@ vi.mock("../../bindings/records.js", () => ({
     sessionBindingMocks.touch(...args),
 }));
 vi.mock("../../infra/agent-events.js", () => ({
+  emitAgentAuditEvent: (params: unknown) => agentEventMocks.emitAgentAuditEvent(params),
   emitAgentEvent: (params: unknown) => agentEventMocks.emitAgentEvent(params),
   onAgentEvent: (listener: unknown) => agentEventMocks.onAgentEvent(listener),
 }));
@@ -1101,6 +1103,7 @@ describe("dispatchReplyFromConfig", () => {
     acpMocks.getAcpRuntimeBackend.mockReset();
     acpMocks.requireAcpRuntimeBackend.mockReset();
     agentEventMocks.emitAgentEvent.mockReset();
+    agentEventMocks.emitAgentAuditEvent.mockReset();
     agentEventMocks.onAgentEvent.mockReset();
     agentEventMocks.onAgentEvent.mockReturnValue(() => {});
     sessionBindingMocks.listBySession.mockReset();
@@ -5269,7 +5272,7 @@ describe("dispatchReplyFromConfig", () => {
             stream?: unknown;
           },
       )
-      .find((event) => event.runId === "run-acp-lifecycle-end");
+      .find((event) => event.runId === "run-acp-lifecycle-end" && event.data?.phase === "end");
     expect(lifecycleEvent?.sessionKey).toBe("agent:codex-acp:session-1");
     expect(lifecycleEvent?.stream).toBe("lifecycle");
     expect(lifecycleEvent?.data?.phase).toBe("end");
@@ -5335,7 +5338,7 @@ describe("dispatchReplyFromConfig", () => {
             stream?: unknown;
           },
       )
-      .find((event) => event.runId === "run-acp-lifecycle-error");
+      .find((event) => event.runId === "run-acp-lifecycle-error" && event.data?.phase === "error");
     expect(lifecycleEvent?.sessionKey).toBe("agent:codex-acp:session-1");
     expect(lifecycleEvent?.stream).toBe("lifecycle");
     expect(lifecycleEvent?.data?.phase).toBe("error");

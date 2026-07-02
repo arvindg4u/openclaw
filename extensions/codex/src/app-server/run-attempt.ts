@@ -178,6 +178,7 @@ import {
   hasPendingDynamicToolTerminalDiagnostic,
   isDynamicToolTerminalDiagnosticEvent,
   isMatchingDynamicToolTerminalDiagnostic,
+  resolveCodexToolAbortTerminalReason,
   resolveDynamicToolCallTimeoutMs,
   resolveTerminalDynamicToolBatchAction,
   shouldBlockTerminalReleaseForNonTerminalDynamicToolResult,
@@ -203,11 +204,13 @@ import {
   clearPendingCodexNativeHookRelayUnregistersForTests,
   CODEX_NATIVE_HOOK_RELAY_TTL_GRACE_MS,
   createCodexNativeHookRelay,
+  emitCodexNativePreToolUseFailureDiagnostic,
   flushPendingCodexNativeHookRelayUnregistersForTests,
   resolveCodexNativeHookRelayEvents,
   resolveCodexNativeHookRelayTtlMs,
   resolveCodexNativeHookRelayUnregisterGraceMs,
   scheduleCodexNativeHookRelayUnregister,
+  type CodexNativePreToolUseFailure,
 } from "./native-hook-relay.js";
 import { registerCodexNativeSubagentMonitor } from "./native-subagent-monitor.js";
 import { describeCodexNotificationCorrelation } from "./notification-correlation.js";
@@ -1420,6 +1423,41 @@ export async function runCodexAppServerAttempt(
     trajectoryEndRecorded = true;
   };
   let nativeHookRelay: NativeHookRelayRegistrationHandle | undefined;
+  const pendingNativePreToolUseFailures: CodexNativePreToolUseFailure[] = [];
+  const projectorRef: { current?: CodexAppServerEventProjector } = {};
+  let nativePreToolUseFailureFallbackActive = false;
+  let nativePreToolUseFailureFallbackTerminalReason:
+    | CodexNativePreToolUseFailure["disposition"]
+    | undefined;
+  const emitNativePreToolUseFailure = (failure: CodexNativePreToolUseFailure) => {
+    emitCodexNativePreToolUseFailureDiagnostic({
+      agentId: sessionAgentId,
+      sessionId: params.sessionId,
+      sessionKey: sandboxSessionKey,
+      runId: params.runId,
+      signal: runAbortController.signal,
+      failure,
+      ...(nativePreToolUseFailureFallbackActive
+        ? {
+            terminalReason: nativePreToolUseFailureFallbackTerminalReason ?? failure.disposition,
+          }
+        : {}),
+    });
+  };
+  const flushPendingNativePreToolUseFailures = () => {
+    for (const failure of pendingNativePreToolUseFailures.splice(0)) {
+      emitNativePreToolUseFailure(failure);
+    }
+  };
+  const activateNativePreToolUseFailureFallback = () => {
+    if (!nativePreToolUseFailureFallbackActive) {
+      nativePreToolUseFailureFallbackTerminalReason = runAbortController.signal.aborted
+        ? resolveCodexToolAbortTerminalReason(runAbortController.signal)
+        : undefined;
+      nativePreToolUseFailureFallbackActive = true;
+    }
+    flushPendingNativePreToolUseFailures();
+  };
   let releaseSharedClientLease: (() => void) | undefined;
   let sharedCodexClientRetiredForOneShotCleanup = false;
   const releaseSharedClientLeaseOnce = () => {
@@ -1495,6 +1533,16 @@ export async function runCodexAppServerAttempt(
       startupTimeoutMs,
       turnStartTimeoutMs: params.timeoutMs,
       signal: runAbortController.signal,
+      onPreToolUseFailure: (failure) => {
+        const projector = projectorRef.current;
+        if (projector) {
+          projector.recordNativeToolPreToolUseFailure(failure);
+        } else if (nativePreToolUseFailureFallbackActive) {
+          emitNativePreToolUseFailure(failure);
+        } else {
+          pendingNativePreToolUseFailures.push(failure);
+        }
+      },
     });
     return {
       configPatch: nativeHookRelay
@@ -1608,6 +1656,7 @@ export async function runCodexAppServerAttempt(
       data: { phase: "thread_ready", threadId: thread.threadId },
     });
   } catch (error) {
+    activateNativePreToolUseFailureFallback();
     nativeHookRelay?.unregister();
     await releaseSandboxExecEnvironment();
     params.abortSignal?.removeEventListener("abort", abortFromUpstream);
@@ -1688,7 +1737,6 @@ export async function runCodexAppServerAttempt(
   let terminalDynamicToolReleaseCheckScheduled = false;
   let currentTurnHadNonTerminalDynamicToolResult = false;
   const turnIdRef: { current?: string } = {};
-  const projectorRef: { current?: CodexAppServerEventProjector } = {};
   const userInputBridgeRef: {
     current?: ReturnType<typeof createCodexUserInputBridge>;
   } = {};
@@ -2919,6 +2967,7 @@ export async function runCodexAppServerAttempt(
       }
       notificationCleanup();
       requestCleanup();
+      activateNativePreToolUseFailureFallback();
       nativeHookRelay?.unregister();
       await releaseSandboxExecEnvironment();
       await runAgentCleanupStep({
@@ -2951,6 +3000,7 @@ export async function runCodexAppServerAttempt(
     }
   }
   if (!turn) {
+    activateNativePreToolUseFailureFallback();
     await releaseSharedClientLeaseAndRetireOneShotClient();
     throw new Error("codex app-server turn/start failed without an error");
   }
@@ -3033,6 +3083,9 @@ export async function runCodexAppServerAttempt(
   turnWatches.touchActivity("turn:start", { arm: true });
   turnWatches.armAttemptIdleWatch();
   turnWatches.touchActivity("turn:start", { attemptProgress: true });
+  for (const failure of pendingNativePreToolUseFailures.splice(0)) {
+    activeProjector.recordNativeToolPreToolUseFailure(failure);
+  }
   for (const notification of pendingNotifications.splice(0)) {
     await enqueueNotification(notification);
   }

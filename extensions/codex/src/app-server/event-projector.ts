@@ -29,6 +29,10 @@ import { asDateTimestampMs } from "openclaw/plugin-sdk/number-runtime";
 import { resolveCodexToolAbortTerminalReason } from "./dynamic-tool-execution.js";
 import { resolveCodexLocalRuntimeAttribution } from "./local-runtime-attribution.js";
 import {
+  emitCodexNativePreToolUseFailureDiagnostic,
+  type CodexNativePreToolUseFailure,
+} from "./native-hook-relay.js";
+import {
   readCodexNotificationThreadId,
   readCodexNotificationTurnId,
 } from "./notification-correlation.js";
@@ -84,6 +88,10 @@ type CodexNativeToolLifecycleProjectorOptions = {
 };
 
 type CodexNativeToolAuditStatus = ReturnType<typeof itemStatus> | "cancelled" | "unknown";
+type CodexNativePreToolUseFailureRecord = {
+  failure: CodexNativePreToolUseFailure;
+  terminalReason: CodexNativePreToolUseFailure["disposition"];
+};
 
 /** Projects metadata-only lifecycle diagnostics for native tool items. */
 export class CodexNativeToolLifecycleProjector {
@@ -94,6 +102,8 @@ export class CodexNativeToolLifecycleProjector {
     string,
     Exclude<BeforeToolCallFailureDisposition, "blocked">
   >();
+  private readonly preToolUseFailureByItem = new Map<string, CodexNativePreToolUseFailureRecord>();
+  private finalized = false;
 
   constructor(
     private readonly context: CodexNativeToolLifecycleContext,
@@ -173,6 +183,26 @@ export class CodexNativeToolLifecycleProjector {
     }
   }
 
+  recordPreToolUseFailure(failure: CodexNativePreToolUseFailure): void {
+    if (this.completedItemIds.has(failure.toolCallId)) {
+      return;
+    }
+    const record: CodexNativePreToolUseFailureRecord = {
+      failure,
+      terminalReason: this.options.runAbortSignal?.aborted
+        ? resolveCodexToolAbortTerminalReason(this.options.runAbortSignal)
+        : failure.disposition,
+    };
+    if (this.finalized) {
+      // Relay subprocesses can settle after result construction. Emit the
+      // item-less fallback here because no later notification drain remains.
+      this.completedItemIds.add(failure.toolCallId);
+      this.emitPreToolUseFailure(record, failure.toolName, failure.durationMs);
+      return;
+    }
+    this.preToolUseFailureByItem.set(failure.toolCallId, record);
+  }
+
   private recordRawWebSearchResult(item: JsonObject): void {
     if (readString(item, "type") !== "web_search_call") {
       return;
@@ -204,6 +234,8 @@ export class CodexNativeToolLifecycleProjector {
     status: CodexNativeToolAuditStatus,
     itemDurationMs?: number,
   ): void {
+    const preToolUseFailure = this.preToolUseFailureByItem.get(toolCallId);
+    this.preToolUseFailureByItem.delete(toolCallId);
     const approvalFailureDisposition = this.approvalFailureDispositionByItem.get(toolCallId);
     this.approvalFailureDispositionByItem.delete(toolCallId);
     this.completedItemIds.add(toolCallId);
@@ -212,6 +244,10 @@ export class CodexNativeToolLifecycleProjector {
     this.startedAtByItem.delete(toolCallId);
     const durationMs =
       itemDurationMs ?? (startedAt === undefined ? 0 : Math.max(0, Date.now() - startedAt));
+    if (preToolUseFailure) {
+      this.emitPreToolUseFailure(preToolUseFailure, toolName, durationMs);
+      return;
+    }
     const terminalEvent = approvalFailureDisposition
       ? {
           type: "tool.execution.error" as const,
@@ -253,27 +289,38 @@ export class CodexNativeToolLifecycleProjector {
   }
 
   finalizeActive(): void {
-    const terminalReason = this.options.runAbortSignal?.aborted
-      ? resolveCodexToolAbortTerminalReason(this.options.runAbortSignal)
-      : "failed";
+    this.finalized = true;
     for (const [toolCallId, { toolName }] of this.activeItems) {
-      const startedAt = this.startedAtByItem.get(toolCallId);
-      const approvalFailureDisposition = this.approvalFailureDispositionByItem.get(toolCallId);
-      emitTrustedDiagnosticEvent({
-        type: "tool.execution.error",
-        ...this.buildBase(toolCallId, toolName),
-        durationMs: startedAt === undefined ? 0 : Math.max(0, Date.now() - startedAt),
-        errorCategory: approvalFailureDisposition
-          ? "codex_native_tool_approval"
-          : "codex_native_tool_error",
-        terminalReason: approvalFailureDisposition ?? terminalReason,
-      });
-      this.completedItemIds.add(toolCallId);
-      this.startedAtByItem.delete(toolCallId);
-      this.approvalFailureDispositionByItem.delete(toolCallId);
+      this.recordTerminal(toolCallId, toolName, "failed");
+    }
+    for (const [toolCallId, record] of this.preToolUseFailureByItem) {
+      if (!this.completedItemIds.has(toolCallId)) {
+        this.recordTerminal(
+          toolCallId,
+          record.failure.toolName,
+          "failed",
+          record.failure.durationMs,
+        );
+      }
     }
     this.activeItems.clear();
     this.approvalFailureDispositionByItem.clear();
+    this.preToolUseFailureByItem.clear();
+  }
+
+  private emitPreToolUseFailure(
+    record: CodexNativePreToolUseFailureRecord,
+    toolName: string,
+    durationMs: number,
+  ): void {
+    emitCodexNativePreToolUseFailureDiagnostic({
+      agentId: this.context.agentId,
+      sessionId: this.context.sessionId,
+      sessionKey: this.context.sessionKey,
+      runId: this.context.runId,
+      failure: { ...record.failure, toolName, durationMs },
+      terminalReason: record.terminalReason,
+    });
   }
 
   private recordSnapshotItem(item: CodexThreadItem): void {
@@ -553,6 +600,10 @@ export class CodexAppServerEventProjector {
     disposition: Exclude<BeforeToolCallFailureDisposition, "blocked">,
   ): void {
     this.nativeToolLifecycleProjector.recordApprovalFailureDisposition(toolCallId, disposition);
+  }
+
+  recordNativeToolPreToolUseFailure(failure: CodexNativePreToolUseFailure): void {
+    this.nativeToolLifecycleProjector.recordPreToolUseFailure(failure);
   }
 
   async handleNotification(notification: CodexServerNotification): Promise<void> {

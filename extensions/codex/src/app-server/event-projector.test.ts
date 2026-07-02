@@ -2821,16 +2821,144 @@ describe("CodexAppServerEventProjector", () => {
       expect(
         diagnosticEvents
           .filter((event) => event.type.startsWith("tool.execution."))
-          .map((event) => ({
-            type: event.type,
-            ...("terminalReason" in event ? { terminalReason: event.terminalReason } : {}),
-          })),
+          .map((event) =>
+            "terminalReason" in event
+              ? { type: event.type, terminalReason: event.terminalReason }
+              : { type: event.type },
+          ),
       ).toEqual([
         { type: "tool.execution.started" },
         { type: "tool.execution.error", terminalReason: disposition },
       ]);
     },
   );
+
+  it("coalesces a native pre-tool failure with the matching item terminal", async () => {
+    const projector = await createProjector();
+    const diagnosticEvents: DiagnosticEventPayload[] = [];
+    const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
+    const item = {
+      type: "commandExecution" as const,
+      id: "cmd-pre-tool-failure",
+      command: "pnpm test extensions/codex",
+      cwd: "/workspace",
+      processId: null,
+      source: "agent" as const,
+      commandActions: [],
+      aggregatedOutput: null,
+      exitCode: null,
+    };
+
+    try {
+      projector.recordNativeToolPreToolUseFailure({
+        toolName: "exec",
+        toolCallId: item.id,
+        disposition: "timed_out",
+        durationMs: 5,
+      });
+      await projector.handleNotification(
+        forCurrentTurn("item/started", {
+          item: { ...item, status: "inProgress", durationMs: null },
+        }),
+      );
+      await projector.handleNotification(
+        forCurrentTurn("item/completed", {
+          item: { ...item, status: "declined", durationMs: 7 },
+        }),
+      );
+      await flushDiagnosticEvents();
+    } finally {
+      unsubscribe();
+    }
+
+    expect(
+      diagnosticEvents
+        .filter(
+          (event) =>
+            event.type.startsWith("tool.execution.") &&
+            "toolCallId" in event &&
+            event.toolCallId === item.id,
+        )
+        .map((event) =>
+          event.type === "tool.execution.error"
+            ? {
+                type: event.type,
+                toolName: event.toolName,
+                durationMs: event.durationMs,
+                errorCategory: event.errorCategory,
+                terminalReason: event.terminalReason,
+              }
+            : {
+                type: event.type,
+                toolName: "toolName" in event ? event.toolName : undefined,
+              },
+        ),
+    ).toEqual([
+      { type: "tool.execution.started", toolName: "bash" },
+      {
+        type: "tool.execution.error",
+        toolName: "bash",
+        durationMs: 7,
+        errorCategory: "before_tool_call",
+        terminalReason: "timed_out",
+      },
+    ]);
+  });
+
+  it("finalizes a native pre-tool failure when no item arrives", async () => {
+    const runAbortController = new AbortController();
+    const projector = await createProjector(undefined, {
+      runAbortSignal: runAbortController.signal,
+    });
+    const diagnosticEvents: DiagnosticEventPayload[] = [];
+    const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
+
+    try {
+      projector.recordNativeToolPreToolUseFailure({
+        toolName: "exec",
+        toolCallId: "native-no-item",
+        disposition: "failed",
+        durationMs: 5,
+      });
+      runAbortController.abort("codex_side_question_finished");
+      projector.buildResult(buildEmptyToolTelemetry());
+      projector.recordNativeToolPreToolUseFailure({
+        toolName: "exec",
+        toolCallId: "native-late-no-item",
+        disposition: "failed",
+        durationMs: 6,
+      });
+      await flushDiagnosticEvents();
+    } finally {
+      unsubscribe();
+    }
+
+    expect(
+      diagnosticEvents.filter(
+        (event) =>
+          event.type.startsWith("tool.execution.") &&
+          "toolCallId" in event &&
+          (event.toolCallId === "native-no-item" || event.toolCallId === "native-late-no-item"),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        type: "tool.execution.error",
+        toolName: "exec",
+        toolCallId: "native-no-item",
+        durationMs: 5,
+        errorCategory: "before_tool_call",
+        terminalReason: "failed",
+      }),
+      expect.objectContaining({
+        type: "tool.execution.error",
+        toolName: "exec",
+        toolCallId: "native-late-no-item",
+        durationMs: 6,
+        errorCategory: "before_tool_call",
+        terminalReason: "cancelled",
+      }),
+    ]);
+  });
 
   it("clears a recovered declined native tool error", async () => {
     const projector = await createProjector();

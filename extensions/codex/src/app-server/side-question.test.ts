@@ -1,5 +1,8 @@
 // Codex tests cover side question plugin behavior.
-import { nativeHookRelayTesting } from "openclaw/plugin-sdk/agent-harness-runtime";
+import {
+  nativeHookRelayTesting,
+  type NativeHookRelayRegistrationHandle,
+} from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
   onInternalDiagnosticEvent,
   resetDiagnosticEventsForTest,
@@ -1604,6 +1607,132 @@ describe("runCodexAppServerSideQuestion", () => {
     const config = (forkCall[1] as { config?: Record<string, unknown> }).config;
     const relayId = extractRelayIdFromThreadConfig(config);
     expect(relayId).toBe(relayIdDuringFork);
+  });
+
+  it("emits a buffered native pre-tool failure when side turn startup fails", async () => {
+    const client = createFakeClient();
+    const diagnosticEvents: DiagnosticEventPayload[] = [];
+    const unsubscribeDiagnostics = onInternalDiagnosticEvent((event) =>
+      diagnosticEvents.push(event),
+    );
+    let relayId: string | undefined;
+    let reportPreToolUseFailure:
+      | NonNullable<NativeHookRelayRegistrationHandle["onPreToolUseFailure"]>
+      | undefined;
+    client.request.mockImplementation(async (method: string, requestParams: unknown) => {
+      if (method === "thread/fork") {
+        relayId = extractRelayIdFromThreadConfig(
+          (requestParams as { config?: Record<string, unknown> }).config,
+        );
+        return threadResult("side-thread");
+      }
+      if (method === "thread/inject_items") {
+        return {};
+      }
+      if (method === "turn/start") {
+        if (!relayId) {
+          throw new Error("Expected native hook relay id");
+        }
+        reportPreToolUseFailure =
+          nativeHookRelayTesting.getNativeHookRelayRegistrationForTests(
+            relayId,
+          )?.onPreToolUseFailure;
+        throw new Error("side turn start exploded");
+      }
+      if (method === "thread/unsubscribe" || method === "turn/interrupt") {
+        return {};
+      }
+      throw new Error(`unexpected request: ${method}`);
+    });
+    getSharedCodexAppServerClientMock.mockResolvedValue(client);
+
+    try {
+      await expect(
+        runCodexAppServerSideQuestion(sideParams(), {
+          nativeHookRelay: { enabled: true },
+        }),
+      ).rejects.toThrow("side turn start exploded");
+      await reportPreToolUseFailure?.({
+        toolName: "exec",
+        toolCallId: "side-turn-start-failure-tool",
+        disposition: "failed",
+        durationMs: 5,
+      });
+      await flushDiagnosticEvents();
+    } finally {
+      unsubscribeDiagnostics();
+    }
+
+    expect(diagnosticEvents).toContainEqual(
+      expect.objectContaining({
+        type: "tool.execution.error",
+        toolCallId: "side-turn-start-failure-tool",
+        terminalReason: "failed",
+      }),
+    );
+  });
+
+  it("preserves a late native pre-tool failure after side turn cleanup", async () => {
+    const client = createFakeClient();
+    const diagnosticEvents: DiagnosticEventPayload[] = [];
+    const unsubscribeDiagnostics = onInternalDiagnosticEvent((event) =>
+      diagnosticEvents.push(event),
+    );
+    let reportPreToolUseFailure:
+      | NonNullable<NativeHookRelayRegistrationHandle["onPreToolUseFailure"]>
+      | undefined;
+    client.request.mockImplementation(async (method: string, requestParams: unknown) => {
+      if (method === "thread/fork") {
+        const relayId = extractRelayIdFromThreadConfig(
+          (requestParams as { config?: Record<string, unknown> }).config,
+        );
+        reportPreToolUseFailure =
+          nativeHookRelayTesting.getNativeHookRelayRegistrationForTests(
+            relayId,
+          )?.onPreToolUseFailure;
+        return threadResult("side-thread");
+      }
+      if (method === "thread/inject_items") {
+        return {};
+      }
+      if (method === "turn/start") {
+        queueMicrotask(() => {
+          client.emit(agentDelta("side-thread", "turn-1", "Side answer."));
+          client.emit(turnCompleted("side-thread", "turn-1", "Side answer."));
+        });
+        return turnStartResult("turn-1");
+      }
+      if (method === "thread/unsubscribe" || method === "turn/interrupt") {
+        return {};
+      }
+      throw new Error(`unexpected request: ${method}`);
+    });
+    getSharedCodexAppServerClientMock.mockResolvedValue(client);
+
+    try {
+      await expect(
+        runCodexAppServerSideQuestion(sideParams(), {
+          nativeHookRelay: { enabled: true },
+        }),
+      ).resolves.toEqual({ text: "Side answer." });
+      await reportPreToolUseFailure?.({
+        toolName: "exec",
+        toolCallId: "late-side-tool",
+        disposition: "failed",
+        durationMs: 5,
+      });
+      await flushDiagnosticEvents();
+    } finally {
+      unsubscribeDiagnostics();
+    }
+
+    expect(diagnosticEvents).toContainEqual(
+      expect.objectContaining({
+        type: "tool.execution.error",
+        toolCallId: "late-side-tool",
+        terminalReason: "failed",
+      }),
+    );
   });
 
   it("bridges side-thread dynamic tool requests to OpenClaw tools", async () => {

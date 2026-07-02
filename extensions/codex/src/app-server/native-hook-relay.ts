@@ -44,7 +44,7 @@ type PendingCodexNativeHookRelayUnregister = {
   unregister: () => void;
 };
 
-type CodexNativePreToolUseFailure = {
+export type CodexNativePreToolUseFailure = {
   toolName: string;
   toolCallId: string;
   disposition: Exclude<BeforeToolCallFailureDisposition, "blocked">;
@@ -119,8 +119,9 @@ export function emitCodexNativePreToolUseFailureDiagnostic(params: {
   sessionId: string;
   sessionKey: string | undefined;
   runId: string;
-  signal: AbortSignal;
+  signal?: AbortSignal;
   failure: CodexNativePreToolUseFailure;
+  terminalReason?: CodexNativePreToolUseFailure["disposition"];
 }): void {
   emitTrustedDiagnosticEvent({
     type: "tool.execution.error",
@@ -132,9 +133,11 @@ export function emitCodexNativePreToolUseFailureDiagnostic(params: {
     toolCallId: params.failure.toolCallId,
     durationMs: params.failure.durationMs,
     errorCategory: "before_tool_call",
-    terminalReason: params.signal.aborted
-      ? resolveCodexToolAbortTerminalReason(params.signal)
-      : params.failure.disposition,
+    terminalReason:
+      params.terminalReason ??
+      (params.signal?.aborted
+        ? resolveCodexToolAbortTerminalReason(params.signal)
+        : params.failure.disposition),
   });
 }
 
@@ -160,6 +163,7 @@ export function createCodexNativeHookRelay(params: {
   startupTimeoutMs: number;
   turnStartTimeoutMs: number;
   signal: AbortSignal;
+  onPreToolUseFailure: (failure: CodexNativePreToolUseFailure) => void | Promise<void>;
 }): NativeHookRelayRegistrationHandle | undefined {
   if (params.options?.enabled === false) {
     return undefined;
@@ -189,15 +193,7 @@ export function createCodexNativeHookRelay(params: {
       turnStartTimeoutMs: params.turnStartTimeoutMs,
     }),
     signal: params.signal,
-    onPreToolUseFailure: (failure) =>
-      emitCodexNativePreToolUseFailureDiagnostic({
-        agentId: params.agentId,
-        sessionId: params.sessionId,
-        sessionKey: params.sessionKey,
-        runId: params.runId,
-        signal: params.signal,
-        failure,
-      }),
+    onPreToolUseFailure: params.onPreToolUseFailure,
     command: {
       // Hook relay subprocesses are observational for most tool events; keep
       // them lower priority so they do not compete with the active reply turn.

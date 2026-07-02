@@ -54,6 +54,7 @@ import {
   buildCodexNativeHookRelayDisabledConfig,
   CODEX_NATIVE_HOOK_RELAY_EVENTS,
   emitCodexNativePreToolUseFailureDiagnostic,
+  type CodexNativePreToolUseFailure,
 } from "./native-hook-relay.js";
 import {
   readCodexNotificationThreadId,
@@ -243,6 +244,40 @@ export async function runCodexAppServerSideQuestion(
   const runAbortController = new AbortController();
   let nativeToolLifecycleProjector: CodexNativeToolLifecycleProjector | undefined;
   const pendingNativeToolNotifications: CodexServerNotification[] = [];
+  const pendingNativePreToolUseFailures: CodexNativePreToolUseFailure[] = [];
+  let nativePreToolUseFailureFallbackActive = false;
+  let nativePreToolUseFailureFallbackTerminalReason:
+    | CodexNativePreToolUseFailure["disposition"]
+    | undefined;
+  const emitNativePreToolUseFailure = (failure: CodexNativePreToolUseFailure) => {
+    emitCodexNativePreToolUseFailureDiagnostic({
+      agentId: sessionAgentId,
+      sessionId: params.sessionId,
+      sessionKey: params.sessionKey,
+      runId: sideRunParams.runId,
+      signal: runAbortController.signal,
+      failure,
+      ...(nativePreToolUseFailureFallbackActive
+        ? {
+            terminalReason: nativePreToolUseFailureFallbackTerminalReason ?? failure.disposition,
+          }
+        : {}),
+    });
+  };
+  const flushPendingNativePreToolUseFailures = () => {
+    for (const failure of pendingNativePreToolUseFailures.splice(0)) {
+      emitNativePreToolUseFailure(failure);
+    }
+  };
+  const activateNativePreToolUseFailureFallback = () => {
+    if (!nativePreToolUseFailureFallbackActive) {
+      nativePreToolUseFailureFallbackTerminalReason = runAbortController.signal.aborted
+        ? resolveCodexToolAbortTerminalReason(runAbortController.signal)
+        : undefined;
+      nativePreToolUseFailureFallbackActive = true;
+    }
+    flushPendingNativePreToolUseFailures();
+  };
   const removeNotificationHandler = client.addNotificationHandler((notification) => {
     collector.handleNotification(notification);
     if (
@@ -435,6 +470,15 @@ export async function runCodexAppServerSideQuestion(
             SIDE_QUESTION_COMPLETION_TIMEOUT_MS,
           ),
           signal: runAbortController.signal,
+          onPreToolUseFailure: (failure) => {
+            if (nativePreToolUseFailureFallbackActive) {
+              emitNativePreToolUseFailure(failure);
+            } else if (nativeToolLifecycleProjector) {
+              nativeToolLifecycleProjector.recordPreToolUseFailure(failure);
+            } else {
+              pendingNativePreToolUseFailures.push(failure);
+            }
+          },
         })
       : undefined;
     const nativeHookRelayConfig = nativeHookRelay
@@ -535,6 +579,10 @@ export async function runCodexAppServerSideQuestion(
         runAbortSignal: runAbortController.signal,
       },
     );
+    for (const failure of pendingNativePreToolUseFailures) {
+      nativeToolLifecycleProjector.recordPreToolUseFailure(failure);
+    }
+    pendingNativePreToolUseFailures.length = 0;
     for (const notification of pendingNativeToolNotifications) {
       nativeToolLifecycleProjector.handleNotification(notification);
     }
@@ -564,6 +612,7 @@ export async function runCodexAppServerSideQuestion(
     try {
       params.opts?.abortSignal?.removeEventListener("abort", abortFromUpstream);
       removeRequestHandler?.();
+      activateNativePreToolUseFailureFallback();
       // Stop dispatched side tools before cleanup waits on the app server;
       // otherwise a stuck tool can outlive the side turn that owns it.
       if (!runAbortController.signal.aborted) {
@@ -581,6 +630,7 @@ export async function runCodexAppServerSideQuestion(
         nativeToolLifecycleProjector?.finalizeActive();
       }
     } finally {
+      flushPendingNativePreToolUseFailures();
       releaseLeasedSharedCodexAppServerClient(client);
       nativeHookRelay?.unregister();
     }
@@ -615,6 +665,7 @@ function registerCodexSideNativeHookRelay(params: {
   requestTimeoutMs: number;
   completionTimeoutMs: number;
   signal: AbortSignal;
+  onPreToolUseFailure: (failure: CodexNativePreToolUseFailure) => void;
 }): NativeHookRelayRegistrationHandle | undefined {
   if (params.options.enabled === false) {
     return undefined;
@@ -634,15 +685,7 @@ function registerCodexSideNativeHookRelay(params: {
       completionTimeoutMs: params.completionTimeoutMs,
     }),
     signal: params.signal,
-    onPreToolUseFailure: (failure) =>
-      emitCodexNativePreToolUseFailureDiagnostic({
-        agentId: params.agentId,
-        sessionId: params.sessionId,
-        sessionKey: params.sessionKey,
-        runId: params.runId,
-        signal: params.signal,
-        failure,
-      }),
+    onPreToolUseFailure: params.onPreToolUseFailure,
     command: {
       timeoutMs: params.options.gatewayTimeoutMs,
     },
