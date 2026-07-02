@@ -19,6 +19,7 @@ import {
   type DiagnosticEventPrivateData,
   type DiagnosticToolParamsSummary,
   type DiagnosticToolSource,
+  type DiagnosticToolTerminalReason,
 } from "../infra/diagnostic-events.js";
 import {
   cloneDiagnosticContentValue,
@@ -101,6 +102,11 @@ import {
 import { isTimeoutError } from "./failover-error.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
 import { normalizeToolName } from "./tool-policy.js";
+import {
+  isToolResultError,
+  readToolResultDetails,
+  readToolResultStatus,
+} from "./tool-result-error.js";
 import { copyToolTerminalPresentation } from "./tool-terminal-presentation.js";
 import { getToolTerminalPresentation } from "./tool-terminal-presentation.js";
 import type { AnyAgentTool } from "./tools/common.js";
@@ -450,6 +456,64 @@ function isToolTimeoutError(err: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+type ResolvedToolTerminalDiagnostic =
+  | {
+      type: "tool.execution.blocked";
+      deniedReason: "tool_result_blocked";
+      reason: "tool_result_blocked";
+    }
+  | {
+      type: "tool.execution.completed";
+      durationMs: number;
+    }
+  | {
+      type: "tool.execution.error";
+      durationMs: number;
+      errorCategory: "tool_result_error";
+      terminalReason: DiagnosticToolTerminalReason;
+    };
+
+function resolveToolResultTerminalDiagnostic(
+  result: unknown,
+  durationMs: number,
+): ResolvedToolTerminalDiagnostic {
+  // Tool execution may resolve with a structured failure. Classify that here
+  // so every diagnostic consumer sees one canonical terminal outcome.
+  if (!isToolResultError(result)) {
+    return { type: "tool.execution.completed", durationMs };
+  }
+  const status = readToolResultStatus(result);
+  if (
+    status === "blocked" ||
+    status === "denied" ||
+    status === "forbidden" ||
+    status === "disabled" ||
+    status === "approval-unavailable"
+  ) {
+    return {
+      type: "tool.execution.blocked",
+      deniedReason: "tool_result_blocked",
+      reason: "tool_result_blocked",
+    };
+  }
+  const details = readToolResultDetails(result);
+  const terminalReason =
+    details?.timedOut === true || status === "timeout" || status === "timed_out"
+      ? "timed_out"
+      : status === "aborted" ||
+          status === "cancelled" ||
+          status === "canceled" ||
+          status === "killed"
+        ? "cancelled"
+        : "failed";
+  return {
+    type: "tool.execution.error",
+    durationMs,
+    errorCategory: "tool_result_error",
+    terminalReason,
+  };
 }
 
 type ToolDiagnosticIdentity = {
@@ -1585,11 +1649,11 @@ export function wrapToolWithBeforeToolCallHook(
               toolCallId,
             });
           }
+          const terminalEvent = resolveToolResultTerminalDiagnostic(result, durationMs);
           emitTrustedDiagnosticEventWithPrivateData(
             {
-              type: "tool.execution.completed",
               ...eventBase,
-              durationMs,
+              ...terminalEvent,
             },
             buildToolContentPrivateData(toolContentPolicy, {
               input: executeParams,

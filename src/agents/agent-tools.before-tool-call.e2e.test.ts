@@ -572,6 +572,64 @@ describe("before_tool_call loop detection behavior", () => {
     });
   });
 
+  it.each([
+    {
+      label: "failure",
+      details: { status: "failed", exitCode: 1 },
+      terminal: {
+        type: "tool.execution.error",
+        errorCategory: "tool_result_error",
+        terminalReason: "failed",
+      },
+    },
+    {
+      label: "timeout",
+      details: { status: "timeout", timedOut: true },
+      terminal: {
+        type: "tool.execution.error",
+        errorCategory: "tool_result_error",
+        terminalReason: "timed_out",
+      },
+    },
+    {
+      label: "cancellation",
+      details: { status: "cancelled" },
+      terminal: {
+        type: "tool.execution.error",
+        errorCategory: "tool_result_error",
+        terminalReason: "cancelled",
+      },
+    },
+    {
+      label: "blocked action",
+      details: { status: "blocked" },
+      terminal: {
+        type: "tool.execution.blocked",
+        deniedReason: "tool_result_blocked",
+        reason: "tool_result_blocked",
+      },
+    },
+  ])("classifies a resolved $label result as terminal failure", async ({ details, terminal }) => {
+    const execute = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "tool failed" }],
+      details,
+    });
+    const tool = wrapToolWithBeforeToolCallHook({ name: "exec", execute } as any, {
+      agentId: "main",
+      sessionKey: "session-key",
+      runId: "run-1",
+      loopDetection: { enabled: false },
+    });
+
+    await withToolExecutionEvents(async (emitted, flush) => {
+      await tool.execute("tool-call-1", { command: "false" }, undefined, undefined);
+      await flush();
+
+      expect(emitted.map((event) => event.type)).toEqual(["tool.execution.started", terminal.type]);
+      expectEventFields(emitted[1], terminal);
+    });
+  });
+
   it("classifies plugin and MCP tool execution diagnostics with bounded owner labels", async () => {
     const execute = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
     const rawTool = { name: "mcp_search", execute } as unknown as AnyAgentTool;
