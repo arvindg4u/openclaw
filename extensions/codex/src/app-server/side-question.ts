@@ -526,7 +526,11 @@ export async function runCodexAppServerSideQuestion(
       { ...sideRunParams, agentId: sessionAgentId },
       childThreadId,
       turnId,
-      runAbortController.signal,
+      {
+        // Codex fork listeners suppress raw response items, so normalized completion is terminal.
+        rawWebSearchResultsEnabled: false,
+        runAbortSignal: runAbortController.signal,
+      },
     );
     for (const notification of pendingNativeToolNotifications) {
       nativeToolLifecycleProjector.handleNotification(notification);

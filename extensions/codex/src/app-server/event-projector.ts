@@ -77,6 +77,11 @@ type CodexNativeToolLifecycleContext = Pick<
   "agentId" | "runId" | "sessionId" | "sessionKey"
 >;
 
+type CodexNativeToolLifecycleProjectorOptions = {
+  rawWebSearchResultsEnabled?: boolean;
+  runAbortSignal?: AbortSignal;
+};
+
 /** Projects metadata-only lifecycle diagnostics for native tool items. */
 export class CodexNativeToolLifecycleProjector {
   private readonly startedAtByItem = new Map<string, number>();
@@ -87,7 +92,7 @@ export class CodexNativeToolLifecycleProjector {
     private readonly context: CodexNativeToolLifecycleContext,
     private readonly threadId: string,
     private readonly turnId: string,
-    private readonly runAbortSignal?: AbortSignal,
+    private readonly options: CodexNativeToolLifecycleProjectorOptions = {},
   ) {}
 
   handleNotification(notification: CodexServerNotification): void {
@@ -138,8 +143,8 @@ export class CodexNativeToolLifecycleProjector {
       this.recordStarted(params.item.id, toolName);
       return;
     }
-    if (params.item.type === "webSearch") {
-      // The normalized item omits status; rawResponseItem/completed retains it.
+    if (params.item.type === "webSearch" && this.options.rawWebSearchResultsEnabled !== false) {
+      // Prefer the raw status when this listener receives raw response items.
       return;
     }
 
@@ -196,8 +201,8 @@ export class CodexNativeToolLifecycleProjector {
               type: "tool.execution.error" as const,
               durationMs,
               errorCategory: "codex_native_tool_error",
-              terminalReason: this.runAbortSignal?.aborted
-                ? resolveCodexToolAbortTerminalReason(this.runAbortSignal)
+              terminalReason: this.options.runAbortSignal?.aborted
+                ? resolveCodexToolAbortTerminalReason(this.options.runAbortSignal)
                 : ("failed" as const),
             }
           : {
@@ -211,8 +216,8 @@ export class CodexNativeToolLifecycleProjector {
   }
 
   finalizeActive(): void {
-    const terminalReason = this.runAbortSignal?.aborted
-      ? resolveCodexToolAbortTerminalReason(this.runAbortSignal)
+    const terminalReason = this.options.runAbortSignal?.aborted
+      ? resolveCodexToolAbortTerminalReason(this.options.runAbortSignal)
       : "failed";
     for (const [toolCallId, { toolName }] of this.activeItems) {
       const startedAt = this.startedAtByItem.get(toolCallId);
@@ -424,7 +429,7 @@ export class CodexAppServerEventProjector {
       params,
       threadId,
       turnId,
-      options.runAbortSignal,
+      { runAbortSignal: options.runAbortSignal },
     );
   }
 

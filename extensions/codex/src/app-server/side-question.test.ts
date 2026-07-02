@@ -1784,19 +1784,6 @@ describe("runCodexAppServerSideQuestion", () => {
             method: "item/completed",
             params: { threadId: "side-thread", turnId: "turn-1", item: webSearchItem },
           });
-          client.emit({
-            method: "rawResponseItem/completed",
-            params: {
-              threadId: "side-thread",
-              turnId: "turn-1",
-              item: {
-                type: "web_search_call",
-                id: webSearchItem.id,
-                status: "completed",
-                action: webSearchItem.action,
-              },
-            },
-          });
           client.emit(turnCompleted("side-thread", "turn-1", "Native tool answer."));
         }, 0);
         return turnStartResult("turn-1");
