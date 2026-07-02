@@ -98,6 +98,7 @@ type CodexNativePreToolUseFailureRecord = {
 export class CodexNativeToolLifecycleProjector {
   private readonly startedAtByItem = new Map<string, number>();
   private readonly activeItems = new Map<string, { toolName: string }>();
+  private readonly webSearchesAwaitingRawResult = new Set<string>();
   private readonly completedItemIds = new Set<string>();
   private readonly approvalFailureDispositionByItem = new Map<
     string,
@@ -167,6 +168,7 @@ export class CodexNativeToolLifecycleProjector {
         return;
       }
       // Prefer the raw status when this listener receives raw response items.
+      this.webSearchesAwaitingRawResult.add(params.item.id);
       return;
     }
 
@@ -241,6 +243,7 @@ export class CodexNativeToolLifecycleProjector {
     this.approvalFailureDispositionByItem.delete(toolCallId);
     this.completedItemIds.add(toolCallId);
     this.activeItems.delete(toolCallId);
+    this.webSearchesAwaitingRawResult.delete(toolCallId);
     const startedAt = this.startedAtByItem.get(toolCallId);
     this.startedAtByItem.delete(toolCallId);
     const durationMs =
@@ -292,7 +295,8 @@ export class CodexNativeToolLifecycleProjector {
   finalizeActive(): void {
     this.finalized = true;
     for (const [toolCallId, { toolName }] of this.activeItems) {
-      this.recordTerminal(toolCallId, toolName, "failed");
+      const status = this.webSearchesAwaitingRawResult.has(toolCallId) ? "unknown" : "failed";
+      this.recordTerminal(toolCallId, toolName, status);
     }
     for (const [toolCallId, record] of this.preToolUseFailureByItem) {
       if (!this.completedItemIds.has(toolCallId)) {
@@ -305,6 +309,7 @@ export class CodexNativeToolLifecycleProjector {
       }
     }
     this.activeItems.clear();
+    this.webSearchesAwaitingRawResult.clear();
     this.approvalFailureDispositionByItem.clear();
     this.preToolUseFailureByItem.clear();
   }

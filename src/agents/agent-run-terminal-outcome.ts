@@ -129,21 +129,23 @@ export function buildAgentRunTerminalOutcome(
     ? rawError
     : blocked
       ? formatBlockedLivenessError(rawError)
-      : abandoned
-        ? formatAbandonedLivenessError(rawError)
-        : aborted && !rawError
-          ? AGENT_RUN_ABORTED_ERROR
-          : rawError;
+      : aborted && !rawError
+        ? AGENT_RUN_ABORTED_ERROR
+        : aborted || cancelled
+          ? rawError
+          : abandoned
+            ? formatAbandonedLivenessError(rawError)
+            : rawError;
   const reason: AgentRunTerminalReason = hardTimeout
     ? "hard_timeout"
     : blocked
       ? "blocked"
-      : abandoned
-        ? "abandoned"
-        : aborted
-          ? "aborted"
-          : cancelled
-            ? "cancelled"
+      : aborted
+        ? "aborted"
+        : cancelled
+          ? "cancelled"
+          : abandoned
+            ? "abandoned"
             : input.status === "timeout"
               ? "timed_out"
               : input.status === "error"

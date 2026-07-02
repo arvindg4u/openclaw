@@ -338,6 +338,7 @@ describe("agent activity audit projection", () => {
       "cancelled",
       "run_cancelled",
     ],
+    [{ phase: "end", aborted: true, livenessState: "abandoned" }, "cancelled", "run_cancelled"],
     [{ phase: "error", timeoutPhase: "provider" }, "timed_out", "run_timed_out"],
     [{ phase: "error", livenessState: "blocked" }, "blocked", "run_blocked"],
     [{ phase: "end", livenessState: "abandoned", replayInvalid: true }, "failed", "run_failed"],

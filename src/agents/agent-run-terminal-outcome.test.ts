@@ -220,6 +220,21 @@ describe("agent run terminal outcome", () => {
     });
   });
 
+  it("keeps explicit cancellation ahead of abandoned liveness", () => {
+    expect(
+      buildAgentRunTerminalOutcome({
+        status: "error",
+        stopReason: "stop",
+        livenessState: "abandoned",
+      }),
+    ).toEqual({
+      reason: "cancelled",
+      status: "error",
+      stopReason: "stop",
+      livenessState: "abandoned",
+    });
+  });
+
   it("keeps a hard timeout over later aborts or failures for the same run", () => {
     const timeout = buildAgentRunTerminalOutcome({
       status: "timeout",
