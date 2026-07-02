@@ -727,13 +727,17 @@ function assertRoutineBackingCronJobCanRemainLinked(
 
 function assertRoutineCanBeEnabled(cronJob: CronJob): void {
   assertRoutineBackingCronJobCanRemainLinked(cronJob);
-  if (cronJob.schedule.kind !== "at") {
+  assertOneShotScheduleCanBeEnabled(cronJob.schedule, cronJob.id);
+}
+
+function assertOneShotScheduleCanBeEnabled(schedule: RoutineSchedule, cronJobId: string): void {
+  if (schedule.kind !== "at") {
     return;
   }
-  const atMs = parseAbsoluteTimeMs(cronJob.schedule.at);
+  const atMs = parseAbsoluteTimeMs(schedule.at);
   if (atMs === null || atMs <= Date.now()) {
     throw routineInvalidRequest(
-      `cannot enable expired one-shot routine ${cronJob.id}; create a new routine or reschedule it`,
+      `cannot enable expired one-shot routine ${cronJobId}; create a new routine or reschedule it`,
     );
   }
 }
@@ -1123,6 +1127,7 @@ async function maybeEnableRoutineBackingCronJob(params: {
   if (isTerminalOneShotCronJob(params.cronJob)) {
     return params.cronJob;
   }
+  assertRoutineCanBeEnabled(params.cronJob);
   return await params.context.cron.update(params.cronJob.id, { enabled: true });
 }
 
@@ -1200,6 +1205,23 @@ async function persistRoutineRecordThenMaybeArm(params: {
   cronStorePath?: string;
   rollbackNewCronJobOnPersistFailure?: boolean;
 }): Promise<{ record: RoutineRecord; cronJob: CronJob }> {
+  try {
+    if (
+      params.record.enabled &&
+      !params.cronJob.enabled &&
+      !isTerminalOneShotCronJob(params.cronJob)
+    ) {
+      assertRoutineCanBeEnabled(params.cronJob);
+    }
+  } catch (err) {
+    await rollbackNewRoutineCronJobOnInvalidCreate({
+      rollbackNewCronJobOnPersistFailure: params.rollbackNewCronJobOnPersistFailure,
+      context: params.context,
+      cronJobId: params.cronJob.id,
+      cause: err,
+    });
+    throw err;
+  }
   const stagedRecord = stageRoutineRecordForCreate(params.record);
   try {
     upsertRoutineRecordToSqlite(stagedRecord);
@@ -1213,11 +1235,25 @@ async function persistRoutineRecordThenMaybeArm(params: {
     }
     throw new Error(`failed to persist routine: ${formatErrorMessage(err)}`, { cause: err });
   }
-  const cronJob = await maybeEnableRoutineBackingCronJob({
-    record: stagedRecord,
-    cronJob: params.cronJob,
-    context: params.context,
-  });
+  let cronJob: CronJob;
+  try {
+    cronJob = await maybeEnableRoutineBackingCronJob({
+      record: stagedRecord,
+      cronJob: params.cronJob,
+      context: params.context,
+    });
+  } catch (err) {
+    if (params.rollbackNewCronJobOnPersistFailure && isRoutineInvalidRequestError(err)) {
+      deleteRoutineRecordFromSqlite(stagedRecord.id, routineCronStoreKey(params.cronStorePath));
+    }
+    await rollbackNewRoutineCronJobOnInvalidCreate({
+      rollbackNewCronJobOnPersistFailure: params.rollbackNewCronJobOnPersistFailure,
+      context: params.context,
+      cronJobId: params.cronJob.id,
+      cause: err,
+    });
+    throw err;
+  }
   const record = createRoutineRecordForCronJob({
     base: stagedRecord,
     normalized: params.normalized,
@@ -1271,6 +1307,26 @@ async function routinePersistFailureError(params: {
   return (
     rollbackError ?? new Error(`failed to persist routine: ${formatErrorMessage(params.cause)}`)
   );
+}
+
+async function rollbackNewRoutineCronJobOnInvalidCreate(params: {
+  rollbackNewCronJobOnPersistFailure?: boolean;
+  context: RoutineCronContext;
+  cronJobId: string;
+  cause: unknown;
+}): Promise<void> {
+  if (!params.rollbackNewCronJobOnPersistFailure || !isRoutineInvalidRequestError(params.cause)) {
+    return;
+  }
+  const rollbackError = await removeCreatedRoutineBackingCronJob({
+    context: params.context,
+    cronJobId: params.cronJobId,
+    reason: "invalid routine backing cron job",
+    cause: params.cause,
+  });
+  if (rollbackError) {
+    throw rollbackError;
+  }
 }
 
 export async function createRoutine(
@@ -1348,6 +1404,10 @@ export async function createRoutine(
           created: false,
           idempotent: true,
         };
+      }
+      assertNewRoutineScheduleIsValid(draft.trigger.schedule);
+      if (normalized.enabled) {
+        assertOneShotScheduleCanBeEnabled(draft.trigger.schedule, draft.trigger.cronJobId);
       }
       const cronJob = await createRoutineBackingCronJob({ record: draft, normalized, context });
       const created = await persistRoutineRecordThenMaybeArm({

@@ -44,11 +44,20 @@ function createRoutineInput(overrides: Partial<RoutineCreateInput> = {}): Routin
   };
 }
 
+function fakeNextRunAtMs(schedule: CronJob["schedule"], now: number): number | undefined {
+  if (schedule.kind === "at") {
+    const atMs = Date.parse(schedule.at);
+    return Number.isFinite(atMs) && atMs > Date.now() ? atMs : undefined;
+  }
+  return 1_700_000_000_000 + now;
+}
+
 function createCronJob(input: CronJobCreate, id: string, now: number): CronJob {
   const schedule =
     input.schedule.kind === "every" && input.schedule.anchorMs === undefined
       ? { ...input.schedule, anchorMs: now }
       : input.schedule;
+  const nextRunAtMs = fakeNextRunAtMs(schedule, now);
   return {
     ...input,
     id,
@@ -57,7 +66,7 @@ function createCronJob(input: CronJobCreate, id: string, now: number): CronJob {
     updatedAtMs: now,
     state: {
       ...input.state,
-      nextRunAtMs: 1_700_000_000_000 + now,
+      ...(nextRunAtMs === undefined ? {} : { nextRunAtMs }),
     },
     schedule,
   };
@@ -111,7 +120,12 @@ function createFakeCronService(): FakeCronService {
       };
       if (typeof patch.enabled === "boolean" && patch.enabled !== current.enabled) {
         if (patch.enabled) {
-          nextState.nextRunAtMs ??= 1_700_000_000_000 + nextUpdatedAtMs;
+          const nextRunAtMs = fakeNextRunAtMs(current.schedule, nextUpdatedAtMs);
+          if (nextRunAtMs === undefined) {
+            nextState.nextRunAtMs = undefined;
+          } else {
+            nextState.nextRunAtMs = nextRunAtMs;
+          }
         } else {
           nextState.nextRunAtMs = undefined;
           nextState.runningAtMs = undefined;
@@ -188,7 +202,7 @@ describe("routine service", () => {
           status: "enabled",
           backing: "linked",
           cronJobId,
-          nextRunAtMs: 1_700_000_000_001,
+          nextRunAtMs: 1_700_000_000_002,
         },
       });
       expect(await listRoutines({ agentId: "Ops" }, context)).toMatchObject({
@@ -601,26 +615,61 @@ describe("routine service", () => {
     });
   });
 
-  it("arms near-now one-shot routines through cron's missed-run grace", async () => {
+  it("rejects default-enabled one-shot routines once cron cannot schedule them", async () => {
     await withOpenClawTestState({ prefix: "routine-near-now-at-" }, async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2026-01-01T00:00:30Z"));
       const cron = createFakeCronService();
       const at = new Date("2026-01-01T00:00:00Z").toISOString();
 
-      const created = await createRoutine(
-        createRoutineInput({
-          id: "near-now-routine",
-          trigger: { kind: "schedule", schedule: { kind: "at", at } },
-        }),
-        { cron },
-      );
+      await expect(
+        createRoutine(
+          createRoutineInput({
+            id: "near-now-routine",
+            trigger: { kind: "schedule", schedule: { kind: "at", at } },
+          }),
+          { cron },
+        ),
+      ).rejects.toThrow("cannot enable expired one-shot routine");
 
-      expect(created.created).toBe(true);
-      expect(created.routine.status.status).toBe("enabled");
-      expect(cron.add.mock.calls[0]?.[0]).toMatchObject({ enabled: false });
-      expect(cron.update).toHaveBeenCalledWith(created.routine.trigger.cronJobId, {
-        enabled: true,
+      expect(cron.add).not.toHaveBeenCalled();
+      expect(cron.update).not.toHaveBeenCalled();
+      await expect(listRoutines({ includeDisabled: true }, { cron })).resolves.toEqual({
+        routines: [],
+      });
+    });
+  });
+
+  it("rolls back a new one-shot cron job if its deadline expires before arming", async () => {
+    await withOpenClawTestState({ prefix: "routine-expired-before-arm-" }, async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+      const cron = createFakeCronService();
+      const at = "2026-01-01T00:00:01.000Z";
+      let cronJobId = "";
+      cron.add.mockImplementationOnce(async (input: CronJobCreate) => {
+        const job = createCronJob(input, input.id ?? "created-job", 1);
+        cronJobId = job.id;
+        cron.jobs.set(job.id, job);
+        vi.setSystemTime(new Date("2026-01-01T00:00:02Z"));
+        return job;
+      });
+
+      await expect(
+        createRoutine(
+          createRoutineInput({
+            id: "expires-before-arm",
+            trigger: { kind: "schedule", schedule: { kind: "at", at } },
+          }),
+          { cron },
+        ),
+      ).rejects.toThrow("cannot enable expired one-shot routine");
+
+      expect(cron.remove).toHaveBeenCalledWith(cronJobId);
+      expect(cron.update).not.toHaveBeenCalled();
+      expect(cron.jobs.size).toBe(0);
+      await expect(listRoutines({ includeDisabled: true }, { cron })).resolves.toEqual({
+        routines: [],
       });
     });
   });
@@ -843,6 +892,34 @@ describe("routine service", () => {
       expect(replay.idempotent).toBe(true);
       expect(replay.routine.status.status).toBe("enabled");
       expect(cron.update).toHaveBeenCalledWith(cronJobId, { enabled: true });
+    });
+  });
+
+  it("rejects staged create recovery after a one-shot deadline expires", async () => {
+    await withOpenClawTestState({ prefix: "routine-expired-staged-create-" }, async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+      const cron = createFakeCronService();
+      const input = createRoutineInput({
+        id: "expired-staged-create",
+        trigger: {
+          kind: "schedule",
+          schedule: { kind: "at", at: "2026-01-01T00:00:01.000Z" },
+        },
+      });
+      cron.update.mockRejectedValueOnce(new Error("interrupted before arm"));
+
+      await expect(
+        createRoutine(input, { cron, cronStorePath: "/tmp/cron.sqlite" }),
+      ).rejects.toThrow("interrupted before arm");
+      cron.update.mockClear();
+      vi.setSystemTime(new Date("2026-01-01T00:00:02Z"));
+
+      await expect(
+        createRoutine(input, { cron, cronStorePath: "/tmp/cron.sqlite" }),
+      ).rejects.toThrow("cannot enable expired one-shot routine");
+
+      expect(cron.update).not.toHaveBeenCalled();
     });
   });
 
