@@ -194,6 +194,35 @@ describe("ACP diagnostic events", () => {
     });
   });
 
+  it("does not duplicate starts for tool updates without a call id", () => {
+    const params = { runId: "run-tool-without-id" };
+    emitAcpRuntimeEvent({
+      ...params,
+      event: {
+        type: "tool_call",
+        tag: "tool_call",
+        text: "running",
+        kind: "execute",
+        status: "in_progress",
+      },
+    });
+    emitAcpRuntimeEvent({
+      ...params,
+      event: {
+        type: "tool_call",
+        tag: "tool_call_update",
+        text: "done",
+        kind: "execute",
+        status: "completed",
+      },
+    });
+
+    expect(capturedTools.map((event) => event.type)).toEqual([
+      "tool.execution.started",
+      "tool.execution.completed",
+    ]);
+  });
+
   it("finishes outstanding tools when the ACP runtime ends", () => {
     const params = {
       runId: "run-incomplete-tool",

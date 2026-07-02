@@ -1,0 +1,38 @@
+// ACPX tests cover legacy runTurn adaptation into the terminal result contract.
+import { describe, expect, it, vi } from "vitest";
+import type { AcpRuntime, AcpRuntimeEvent, AcpRuntimeTurnInput } from "../runtime-api.js";
+import { startRuntimeTurn } from "./runtime-turn.js";
+
+function createLegacyRuntime(events: AcpRuntimeEvent[]): AcpRuntime {
+  return {
+    ensureSession: vi.fn(),
+    async *runTurn() {
+      yield* events;
+    },
+    cancel: vi.fn(async () => undefined),
+    close: vi.fn(async () => undefined),
+  };
+}
+
+const turnInput: AcpRuntimeTurnInput = {
+  handle: {
+    sessionKey: "agent:main:acp:test",
+    backend: "test",
+    runtimeSessionName: "test",
+  },
+  text: "hello",
+  mode: "prompt",
+  requestId: "request-1",
+};
+
+describe("startRuntimeTurn", () => {
+  it("preserves cancellation from a legacy done event", async () => {
+    const turn = startRuntimeTurn(
+      createLegacyRuntime([{ type: "done", status: "cancelled", stopReason: "cancelled" }]),
+      turnInput,
+    );
+
+    expect(await turn.result).toEqual({ status: "cancelled", stopReason: "cancelled" });
+    expect(await Array.fromAsync(turn.events)).toEqual([]);
+  });
+});

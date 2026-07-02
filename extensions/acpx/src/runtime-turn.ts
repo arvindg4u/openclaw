@@ -110,7 +110,7 @@ function legacyRunTurnAsStartTurn(runtime: AcpRuntime, input: AcpRuntimeTurnInpu
       for await (const event of runtime.runTurn(input)) {
         if (event.type === "done") {
           settleResult({
-            status: "completed",
+            status: event.status ?? "completed",
             ...(event.stopReason ? { stopReason: event.stopReason } : {}),
           });
           continue;

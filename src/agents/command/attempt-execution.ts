@@ -1002,7 +1002,7 @@ function emitAcpToolExecutionEvent(params: {
   const activeTool = key ? ACTIVE_ACP_TOOLS.get(key) : undefined;
   const terminalOutcome = resolveAcpToolTerminalOutcome(event.status);
   const toolName = acpAuditToolName(event.kind);
-  if (!activeTool) {
+  if (!activeTool && (!terminalOutcome || key)) {
     emitTrustedDiagnosticEvent({
       type: "tool.execution.started",
       runId: params.runId,

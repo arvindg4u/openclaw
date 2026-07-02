@@ -875,6 +875,33 @@ describe("before_tool_call loop detection behavior", () => {
     });
   });
 
+  it("classifies a tool-local timeout without an aborted run signal", async () => {
+    const execute = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error("tool deadline elapsed"), { name: "TimeoutError" }),
+      );
+    const tool = wrapToolWithBeforeToolCallHook({ name: "read", execute } as any, {
+      agentId: "main",
+      sessionKey: "session-key",
+      loopDetection: { enabled: false },
+    });
+    const runSignal = new AbortController().signal;
+
+    await withToolExecutionEvents(async (emitted, flush) => {
+      await expect(
+        tool.execute("tool-call-local-timeout", { path: "/tmp/file" }, runSignal, undefined),
+      ).rejects.toThrow("tool deadline elapsed");
+      await flush();
+
+      expectEventFields(emitted[1], {
+        type: "tool.execution.error",
+        toolCallId: "tool-call-local-timeout",
+        terminalReason: "timed_out",
+      });
+    });
+  });
+
   it("emits blocked diagnostics without error severity for intentional hook vetoes", async () => {
     hookRunner.hasHooks.mockImplementation((hookName: string) => hookName === "before_tool_call");
     hookRunner.runBeforeToolCall.mockResolvedValue({

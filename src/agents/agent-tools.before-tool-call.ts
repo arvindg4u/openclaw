@@ -98,6 +98,7 @@ import {
   normalizeCodeModeExecBeforeHookParamsForToolKind,
   reconcileCodeModeExecBeforeHookParams,
 } from "./code-mode-control-tools.js";
+import { isTimeoutError } from "./failover-error.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
 import { normalizeToolName } from "./tool-policy.js";
 import { copyToolTerminalPresentation } from "./tool-terminal-presentation.js";
@@ -441,6 +442,14 @@ function unwrapErrorCause(err: unknown): unknown {
     return err;
   }
   return err;
+}
+
+function isToolTimeoutError(err: unknown): boolean {
+  try {
+    return isTimeoutError(err);
+  } catch {
+    return false;
+  }
 }
 
 type ToolDiagnosticIdentity = {
@@ -1595,7 +1604,9 @@ export function wrapToolWithBeforeToolCallHook(
         const errorCode = diagnosticHttpStatusCode(cause);
         const abortFields = resolveAgentRunAbortLifecycleFields(signal);
         const terminalReason = !abortFields.aborted
-          ? "failed"
+          ? isToolTimeoutError(cause)
+            ? "timed_out"
+            : "failed"
           : abortFields.stopReason === "timeout"
             ? "timed_out"
             : "cancelled";
