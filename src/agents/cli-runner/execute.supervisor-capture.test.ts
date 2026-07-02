@@ -633,6 +633,89 @@ describe("executePreparedCliRun supervisor output capture", () => {
     ]);
   });
 
+  it("binds a loopback call admitted before its parsed CLI identity", async () => {
+    const toolEvents: TrustedToolExecutionEvent[] = [];
+    const stop = onTrustedToolExecutionEvent((event) => toolEvents.push(event));
+    supervisorSpawnMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const input = args[0] as SupervisorSpawnInput;
+      const captureHandle = markMcpLoopbackToolCallStarted({
+        captureKey: input.env?.OPENCLAW_MCP_CLI_CAPTURE_KEY,
+        toolName: "message",
+        args: { action: "react", emoji: "early" },
+      });
+      if (!captureHandle) {
+        throw new Error("Expected early loopback capture handle");
+      }
+      input.onStdout?.(
+        `${JSON.stringify({
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "mcp_tool_use",
+                id: "call-early",
+                name: "mcp__openclaw__message",
+                input: { action: "react", emoji: "early" },
+              },
+            ],
+          },
+        })}\n`,
+      );
+      recordMcpLoopbackToolCallResultForHandle({
+        captureHandle,
+        toolName: "message",
+        args: { action: "react", emoji: "early" },
+        outcome: "blocked",
+        deniedReason: "plugin-approval",
+      });
+      markMcpLoopbackToolCallFinished(captureHandle);
+      input.onStdout?.(
+        `${JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "call-early",
+                content: "blocked",
+                is_error: true,
+              },
+            ],
+          },
+        })}\n${JSON.stringify({ type: "result", session_id: "session-jsonl", result: "done" })}\n`,
+      );
+      return createManagedRun({
+        reason: "exit",
+        exitCode: 0,
+        exitSignal: null,
+        durationMs: 50,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+        noOutputTimedOut: false,
+      });
+    });
+    const context = buildPreparedCliRunContext({ output: "jsonl", provider: "claude-cli" });
+    context.mcpDeliveryCapture = true;
+
+    try {
+      await executePreparedCliRun(context);
+    } finally {
+      stop();
+    }
+
+    expect(toolEvents).toMatchObject([
+      { type: "tool.execution.started", toolCallId: "call-early" },
+      {
+        type: "tool.execution.blocked",
+        toolCallId: "call-early",
+        deniedReason: "plugin-approval",
+      },
+    ]);
+  });
+
   it("correlates parallel same-name loopback calls by arguments instead of admission order", async () => {
     const toolEvents: TrustedToolExecutionEvent[] = [];
     const stop = onTrustedToolExecutionEvent((event) => toolEvents.push(event));
@@ -714,50 +797,84 @@ describe("executePreparedCliRun supervisor output capture", () => {
     ]);
   });
 
-  it("keeps identical parallel loopback outcomes explicitly unknown", async () => {
+  it.each([
+    "request before both CLI identities",
+    "request between CLI identities",
+    "first tool finishes before second CLI identity",
+  ])("keeps identical parallel outcomes unknown with %s", async (ordering) => {
     const toolEvents: TrustedToolExecutionEvent[] = [];
     const stop = onTrustedToolExecutionEvent((event) => toolEvents.push(event));
     supervisorSpawnMock.mockImplementationOnce(async (...args: unknown[]) => {
       const input = args[0] as SupervisorSpawnInput;
       const toolArgs = { action: "react", emoji: "same" };
-      input.onStdout?.(
-        `${JSON.stringify({
-          type: "assistant",
-          message: {
-            role: "assistant",
-            content: [
-              {
+      const emitToolStarts = (toolCallIds: string[]) => {
+        input.onStdout?.(
+          `${JSON.stringify({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: toolCallIds.map((id) => ({
                 type: "mcp_tool_use",
-                id: "call-identical-a",
+                id,
                 name: "mcp__openclaw__message",
                 input: toolArgs,
-              },
-              {
-                type: "mcp_tool_use",
-                id: "call-identical-b",
-                name: "mcp__openclaw__message",
-                input: toolArgs,
-              },
-            ],
-          },
-        })}\n`,
+              })),
+            },
+          })}\n`,
+        );
+      };
+      const recordOutcome = (outcome: "completed" | "failed") =>
+        recordMcpLoopbackToolCallResult({
+          captureKey: input.env?.OPENCLAW_MCP_CLI_CAPTURE_KEY ?? "",
+          toolName: "message",
+          args: toolArgs,
+          isError: outcome === "failed",
+          outcome,
+        });
+      const emitToolResults = (toolCallIds: string[]) => {
+        input.onStdout?.(
+          `${JSON.stringify({
+            type: "user",
+            message: {
+              role: "user",
+              content: toolCallIds.map((toolCallId) => ({
+                type: "tool_result",
+                tool_use_id: toolCallId,
+                content: "ok",
+              })),
+            },
+          })}\n`,
+        );
+      };
+      if (ordering === "request before both CLI identities") {
+        recordOutcome("failed");
+        emitToolStarts(["call-identical-a", "call-identical-b"]);
+        recordOutcome("completed");
+      } else if (ordering === "request between CLI identities") {
+        emitToolStarts(["call-identical-a"]);
+        recordOutcome("failed");
+        recordOutcome("completed");
+        emitToolStarts(["call-identical-b"]);
+      } else {
+        emitToolStarts(["call-identical-a"]);
+        recordOutcome("failed");
+        recordOutcome("completed");
+        emitToolResults(["call-identical-a"]);
+        emitToolStarts(["call-identical-b"]);
+      }
+      emitToolResults(
+        ordering === "first tool finishes before second CLI identity"
+          ? ["call-identical-b"]
+          : ["call-identical-a", "call-identical-b"],
       );
-      recordMcpLoopbackToolCallResult({
-        captureKey: input.env?.OPENCLAW_MCP_CLI_CAPTURE_KEY ?? "",
-        toolName: "message",
-        args: toolArgs,
-        isError: true,
-        outcome: "failed",
-      });
+      emitToolStarts(["call-identical-later"]);
+      recordOutcome("completed");
       input.onStdout?.(
         `${JSON.stringify({
           type: "user",
           message: {
             role: "user",
-            content: [
-              { type: "tool_result", tool_use_id: "call-identical-a", content: "ok" },
-              { type: "tool_result", tool_use_id: "call-identical-b", content: "ok" },
-            ],
+            content: [{ type: "tool_result", tool_use_id: "call-identical-later", content: "ok" }],
           },
         })}\n${JSON.stringify({ type: "result", session_id: "session-jsonl", result: "done" })}\n`,
       );
@@ -781,20 +898,37 @@ describe("executePreparedCliRun supervisor output capture", () => {
       stop();
     }
 
-    expect(toolEvents).toMatchObject([
-      { type: "tool.execution.started", toolCallId: "call-identical-a" },
-      { type: "tool.execution.started", toolCallId: "call-identical-b" },
-      {
-        type: "tool.execution.error",
-        toolCallId: "call-identical-a",
-        errorCode: "tool_outcome_unknown",
-      },
-      {
-        type: "tool.execution.error",
-        toolCallId: "call-identical-b",
-        errorCode: "tool_outcome_unknown",
-      },
-    ]);
+    expect(toolEvents).toHaveLength(6);
+    expect(toolEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "tool.execution.started",
+          toolCallId: "call-identical-a",
+        }),
+        expect.objectContaining({
+          type: "tool.execution.started",
+          toolCallId: "call-identical-b",
+        }),
+        expect.objectContaining({
+          type: "tool.execution.error",
+          toolCallId: "call-identical-a",
+          errorCode: "tool_outcome_unknown",
+        }),
+        expect.objectContaining({
+          type: "tool.execution.error",
+          toolCallId: "call-identical-b",
+          errorCode: "tool_outcome_unknown",
+        }),
+        expect.objectContaining({
+          type: "tool.execution.started",
+          toolCallId: "call-identical-later",
+        }),
+        expect.objectContaining({
+          type: "tool.execution.completed",
+          toolCallId: "call-identical-later",
+        }),
+      ]),
+    );
   });
 
   it("uses a loopback outcome that settles during the post-process drain", async () => {

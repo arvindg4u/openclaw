@@ -2177,26 +2177,6 @@ ${JSON.stringify({
     let captureKey = "";
     const stdin = {
       write: vi.fn((_data: string, cb?: (err?: Error | null) => void) => {
-        stdoutListener?.(
-          [
-            JSON.stringify({ type: "system", subtype: "init", session_id: "live-blocked" }),
-            JSON.stringify({
-              type: "assistant",
-              session_id: "live-blocked",
-              message: {
-                role: "assistant",
-                content: [
-                  {
-                    type: "mcp_tool_use",
-                    id: "tool-live-blocked",
-                    name: "mcp__openclaw__message",
-                    input: { action: "react" },
-                  },
-                ],
-              },
-            }),
-          ].join("\n") + "\n",
-        );
         const captureHandle = markMcpLoopbackToolCallStarted({
           captureKey,
           toolName: "message",
@@ -2215,6 +2195,22 @@ ${JSON.stringify({
         markMcpLoopbackToolCallFinished(captureHandle);
         stdoutListener?.(
           [
+            JSON.stringify({ type: "system", subtype: "init", session_id: "live-blocked" }),
+            JSON.stringify({
+              type: "assistant",
+              session_id: "live-blocked",
+              message: {
+                role: "assistant",
+                content: [
+                  {
+                    type: "mcp_tool_use",
+                    id: "tool-live-blocked",
+                    name: "mcp__openclaw__message",
+                    input: { action: "react" },
+                  },
+                ],
+              },
+            }),
             JSON.stringify({
               type: "user",
               session_id: "live-blocked",
