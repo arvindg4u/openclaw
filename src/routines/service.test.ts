@@ -164,11 +164,24 @@ function createFakeCronService(): FakeCronService {
   return service;
 }
 
-function readStoredRoutineJson(id = "daily-ops"): Record<string, unknown> | undefined {
+function readStoredRoutineRow(id = "daily-ops"):
+  | { backingCronStoreKey: string; routineJson: Record<string, unknown> }
+  | undefined {
   const row = openOpenClawStateDatabase()
-    .db.prepare("SELECT routine_json AS routineJson FROM routine_records WHERE routine_id = ?")
-    .get(id) as { routineJson?: string } | undefined;
-  return row?.routineJson ? (JSON.parse(row.routineJson) as Record<string, unknown>) : undefined;
+    .db.prepare(
+      "SELECT backing_cron_store_key AS backingCronStoreKey, routine_json AS routineJson FROM routine_records WHERE routine_id = ?",
+    )
+    .get(id) as { backingCronStoreKey?: string; routineJson?: string } | undefined;
+  return row?.backingCronStoreKey && row.routineJson
+    ? {
+        backingCronStoreKey: row.backingCronStoreKey,
+        routineJson: JSON.parse(row.routineJson) as Record<string, unknown>,
+      }
+    : undefined;
+}
+
+function readStoredRoutineJson(id = "daily-ops"): Record<string, unknown> | undefined {
+  return readStoredRoutineRow(id)?.routineJson;
 }
 
 afterEach(() => {
@@ -191,7 +204,9 @@ describe("routine service", () => {
       const cronJobId = created.routine.trigger.cronJobId;
       expect(cronJobId).toMatch(/^routine-cron-/);
       expect(created.routine.trigger).not.toHaveProperty("cronStoreKey");
-      expect(readStoredRoutineJson()?.trigger).toHaveProperty("cronStoreKey");
+      const stored = readStoredRoutineRow();
+      expect(stored?.backingCronStoreKey).toBe("/tmp/cron.sqlite");
+      expect(stored?.routineJson).not.toHaveProperty("trigger.cronStoreKey");
       expect(cron.add).toHaveBeenCalledTimes(1);
       expect(cron.add.mock.calls[0]?.[0]).toMatchObject({
         id: cronJobId,
@@ -282,9 +297,9 @@ describe("routine service", () => {
 
       expect(toggled.routine.enabled).toBe(false);
       expect(toggled.routine.trigger).not.toHaveProperty("cronStoreKey");
-      expect(readStoredRoutineJson(created.routine.id)?.trigger).toMatchObject({
-        cronStoreKey: cronStorePath,
-      });
+      const stored = readStoredRoutineRow(created.routine.id);
+      expect(stored?.backingCronStoreKey).toBe(cronStorePath);
+      expect(stored?.routineJson).not.toHaveProperty("trigger.cronStoreKey");
       await expect(
         inspectRoutine(created.routine.id, { cron, cronStorePath }),
       ).resolves.toMatchObject({
@@ -807,7 +822,7 @@ describe("routine service", () => {
       ).resolves.toMatchObject({
         id: "daily-ops",
         enabled: true,
-        status: { backing: "linked", enabled: true },
+        status: { backing: "linked" },
       });
     });
   });
@@ -837,7 +852,7 @@ describe("routine service", () => {
       ).resolves.toMatchObject({
         id: "daily-ops",
         enabled: false,
-        status: { backing: "linked", enabled: false },
+        status: { backing: "linked" },
       });
     });
   });
@@ -875,7 +890,6 @@ describe("routine service", () => {
           status: {
             status: "missing",
             backing: "missing",
-            enabled: true,
           },
         });
       },
@@ -961,7 +975,7 @@ describe("routine service", () => {
         inspectRoutine("daily-ops", { cron, cronStorePath: "/tmp/cron.sqlite" }),
       ).resolves.toMatchObject({
         enabled: false,
-        status: { enabled: false },
+        status: { backing: "linked" },
       });
     });
   });
@@ -1764,7 +1778,7 @@ describe("routine service", () => {
           const replay = await setRoutineEnabled(created.routine.id, nextEnabled, { cron });
 
           expect(replay.changed).toBe(false);
-          expect(replay.routine.status.enabled).toBe(nextEnabled);
+          expect(replay.routine.enabled).toBe(nextEnabled);
           expect(cron.update).not.toHaveBeenCalled();
           expect(readStoredRoutineJson(created.routine.id)).not.toHaveProperty("enableStage");
           expect(readStoredRoutineJson(created.routine.id)).not.toHaveProperty("disableStage");

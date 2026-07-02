@@ -92,7 +92,6 @@ const RoutineRuntimeStatusSchema = Type.Object(
       Type.Literal("drifted"),
     ]),
     backing: Type.Union([Type.Literal("linked"), Type.Literal("missing"), Type.Literal("drifted")]),
-    enabled: Type.Boolean(),
     cronJobId: Type.Optional(NonEmptyString),
     driftReason: Type.Optional(Type.String()),
     nextRunAtMs: Type.Optional(Type.Integer({ minimum: 0 })),

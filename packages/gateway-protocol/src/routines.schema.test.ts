@@ -74,7 +74,6 @@ describe("routines protocol schemas", () => {
       status: {
         status: "enabled",
         backing: "linked",
-        enabled: true,
         cronJobId: "cron-1",
         nextRunAtMs: 3,
         lastDelivered: false,

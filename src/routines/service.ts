@@ -98,7 +98,6 @@ export type RoutineListOptions = {
 type RoutineRuntimeStatus = {
   status: "enabled" | "disabled" | "running" | "missing" | "drifted";
   backing: "linked" | "missing" | "drifted";
-  enabled: boolean;
   cronJobId?: string;
   driftReason?: string;
   nextRunAtMs?: number;
@@ -141,11 +140,6 @@ type RoutineRecordsTable = OpenClawStateKyselyDatabase["routine_records"];
 type RoutineStoreDatabase = Pick<OpenClawStateKyselyDatabase, "routine_records">;
 type RoutineRecordRow = Selectable<RoutineRecordsTable>;
 
-type RoutineRegistryDatabase = {
-  db: DatabaseSync;
-  path: string;
-};
-
 type NormalizedRoutineCreate = {
   id: string;
   name: string;
@@ -167,7 +161,6 @@ export class RoutineInvalidRequestError extends Error {
 
 const ROUTINE_SELECT_COLUMNS = ["routine_id", "backing_cron_store_key", "routine_json"] as const;
 
-let cachedDatabase: RoutineRegistryDatabase | null = null;
 const routineMutationLocks = new Map<string, Promise<unknown>>();
 const DEFAULT_ROUTINE_CRON_STORE_KEY = "__default__";
 
@@ -210,39 +203,24 @@ function getRoutineStoreKysely(db: DatabaseSync) {
   return getNodeSqliteKysely<RoutineStoreDatabase>(db);
 }
 
-function openRoutineRegistryDatabase(): RoutineRegistryDatabase {
-  const database = openOpenClawStateDatabase();
-  if (cachedDatabase && cachedDatabase.path === database.path && cachedDatabase.db.isOpen) {
-    return cachedDatabase;
-  }
-  if (cachedDatabase && !cachedDatabase.db.isOpen) {
-    cachedDatabase = null;
-  }
-  cachedDatabase = {
-    db: database.db,
-    path: database.path,
-  };
-  return cachedDatabase;
-}
-
 function parseRoutineRecord(row: RoutineRecordRow): RoutineStoredRecord {
   const parsed = JSON.parse(row.routine_json) as RoutineStoredRecord;
-  const cronStoreKeyValue = row.backing_cron_store_key ?? parsed.trigger.cronStoreKey;
   return {
     ...parsed,
     id: row.routine_id,
     trigger: {
       ...parsed.trigger,
-      ...(cronStoreKeyValue ? { cronStoreKey: cronStoreKeyValue } : {}),
+      cronStoreKey: row.backing_cron_store_key,
     },
   };
 }
 
 function bindRoutineRecord(record: RoutineStoredRecord): Insertable<RoutineRecordsTable> {
+  const { cronStoreKey, ...trigger } = record.trigger;
   return {
     routine_id: record.id,
-    backing_cron_store_key: record.trigger.cronStoreKey ?? DEFAULT_ROUTINE_CRON_STORE_KEY,
-    routine_json: JSON.stringify(record),
+    backing_cron_store_key: cronStoreKey ?? DEFAULT_ROUTINE_CRON_STORE_KEY,
+    routine_json: JSON.stringify({ ...record, trigger }),
   };
 }
 
@@ -265,7 +243,7 @@ function getRoutineRecordFromSqlite(id: string, storeKey: string): RoutineStored
   if (!routineId) {
     return undefined;
   }
-  const { db } = openRoutineRegistryDatabase();
+  const { db } = openOpenClawStateDatabase();
   const row = executeSqliteQuerySync(
     db,
     getRoutineStoreKysely(db)
@@ -279,7 +257,7 @@ function getRoutineRecordFromSqlite(id: string, storeKey: string): RoutineStored
 }
 
 function listRoutineRecordsFromSqlite(storeKey: string): RoutineStoredRecord[] {
-  const { db } = openRoutineRegistryDatabase();
+  const { db } = openOpenClawStateDatabase();
   const query = getRoutineStoreKysely(db)
     .selectFrom("routine_records")
     .select(ROUTINE_SELECT_COLUMNS)
@@ -887,7 +865,6 @@ function routineStatus(record: RoutineRecord, cronJob: CronJob | undefined): Rou
     return {
       status: "missing",
       backing: "missing",
-      enabled: record.enabled,
       cronJobId: record.trigger.cronJobId,
     };
   }
@@ -908,7 +885,6 @@ function routineStatus(record: RoutineRecord, cronJob: CronJob | undefined): Rou
     return {
       status: "drifted",
       backing: "drifted",
-      enabled,
       cronJobId: cronJob.id,
       driftReason,
       ...liveFields,
@@ -918,7 +894,6 @@ function routineStatus(record: RoutineRecord, cronJob: CronJob | undefined): Rou
   return {
     status,
     backing: "linked",
-    enabled,
     cronJobId: cronJob.id,
     ...liveFields,
   };
@@ -934,7 +909,7 @@ function toRoutineView(record: RoutineStoredRecord, cronJob: CronJob | undefined
       : toPublicRoutineRecord(record);
   return {
     ...source,
-    enabled: status.enabled,
+    enabled: cronJob ? cronJob.enabled : record.enabled,
     status,
   };
 }
@@ -948,7 +923,7 @@ function routineMatchesListOptions(
   options: RoutineListOptions,
   defaultAgentId: string | undefined,
 ): boolean {
-  if (!options.includeDisabled && !routine.status.enabled) {
+  if (!options.includeDisabled && !routine.enabled) {
     return false;
   }
   const rawAgentId = normalizeOptionalString(options.agentId);
