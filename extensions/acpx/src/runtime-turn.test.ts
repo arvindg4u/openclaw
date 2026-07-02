@@ -28,7 +28,7 @@ const turnInput: AcpRuntimeTurnInput = {
 describe("startRuntimeTurn", () => {
   it("preserves cancellation from a legacy done event", async () => {
     const turn = startRuntimeTurn(
-      createLegacyRuntime([{ type: "done", status: "cancelled", stopReason: "cancelled" }]),
+      createLegacyRuntime([{ type: "done", stopReason: "cancelled" }]),
       turnInput,
     );
 
