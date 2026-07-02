@@ -102,7 +102,7 @@ type ClaudeLiveActiveTool = {
 };
 type ClaudeLiveToolTerminalOutcome =
   | { outcome: "blocked"; deniedReason: string }
-  | { outcome: "cancelled" | "failed" | "timed_out" };
+  | { outcome: "cancelled" | "failed" | "timed_out" | "unknown" };
 const CLAUDE_LIVE_IDLE_TIMEOUT_MS = 10 * 60 * 1_000;
 const CLAUDE_LIVE_ACTIVE_TOOL_PROGRESS_MS = 10_000;
 const CLAUDE_LIVE_MAX_SESSIONS = 16;
@@ -610,6 +610,13 @@ function markClaudeLiveToolCompleted(
       ...event,
       deniedReason: terminalOutcome.deniedReason,
       reason: "blocked by before-tool policy",
+    });
+  } else if (terminalOutcome?.outcome === "unknown") {
+    emitTrustedDiagnosticEvent({
+      type: "tool.execution.error",
+      ...event,
+      errorCategory: "cli_tool_ambiguous",
+      errorCode: "tool_outcome_unknown",
     });
   } else if (terminalOutcome || result.isError) {
     const terminalReason = terminalOutcome?.outcome ?? "failed";

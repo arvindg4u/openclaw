@@ -106,6 +106,7 @@ vi.mock("./tool-resolution.js", () => ({
 }));
 
 import { resetAttachGrantsForTest, mintAttachGrant } from "./mcp-grant-store.js";
+import { handleMcpJsonRpc } from "./mcp-http.handlers.js";
 import {
   createMcpAttachGrantServerConfig,
   createMcpLoopbackServerConfig,
@@ -1562,6 +1563,41 @@ describe("mcp loopback server", () => {
     expect(callId).toMatch(/^mcp-/);
     expect(params).toEqual({ body: "hello" });
     expect(signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("preserves request-disconnect evidence without classifying a tool failure", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const onToolCallResult = vi.fn();
+    const partialDelivery = Object.assign(new Error("request disconnected"), {
+      name: "AbortError",
+      sentBeforeError: true,
+    });
+    const tool = makeMessageTool({
+      execute: async () => {
+        throw partialDelivery;
+      },
+    });
+
+    await handleMcpJsonRpc({
+      message: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "message", arguments: { body: "hello" } },
+      },
+      tools: [tool],
+      toolSchema: buildMockMcpToolSchema([tool]),
+      signal: controller.signal,
+      onToolCallResult,
+    });
+
+    expect(onToolCallResult).toHaveBeenCalledWith({
+      toolName: "message",
+      args: { body: "hello" },
+      outcome: "unknown",
+      result: partialDelivery,
+    });
   });
 
   it("tracks the active runtime only while the server is running", async () => {

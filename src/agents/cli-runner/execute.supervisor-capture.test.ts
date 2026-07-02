@@ -44,7 +44,7 @@ function recordMcpLoopbackToolCallResult(params: {
   args: Record<string, unknown>;
   result?: unknown;
   isError: boolean;
-  outcome?: "blocked" | "cancelled" | "completed" | "failed" | "timed_out";
+  outcome?: "blocked" | "cancelled" | "completed" | "failed" | "timed_out" | "unknown";
   deniedReason?: string;
 }): void {
   const captureHandle = markMcpLoopbackToolCallStarted(params);
@@ -714,7 +714,7 @@ describe("executePreparedCliRun supervisor output capture", () => {
     ]);
   });
 
-  it("leaves identical parallel loopback calls uncorrelated", async () => {
+  it("keeps identical parallel loopback outcomes explicitly unknown", async () => {
     const toolEvents: TrustedToolExecutionEvent[] = [];
     const stop = onTrustedToolExecutionEvent((event) => toolEvents.push(event));
     supervisorSpawnMock.mockImplementationOnce(async (...args: unknown[]) => {
@@ -784,8 +784,16 @@ describe("executePreparedCliRun supervisor output capture", () => {
     expect(toolEvents).toMatchObject([
       { type: "tool.execution.started", toolCallId: "call-identical-a" },
       { type: "tool.execution.started", toolCallId: "call-identical-b" },
-      { type: "tool.execution.completed", toolCallId: "call-identical-a" },
-      { type: "tool.execution.completed", toolCallId: "call-identical-b" },
+      {
+        type: "tool.execution.error",
+        toolCallId: "call-identical-a",
+        errorCode: "tool_outcome_unknown",
+      },
+      {
+        type: "tool.execution.error",
+        toolCallId: "call-identical-b",
+        errorCode: "tool_outcome_unknown",
+      },
     ]);
   });
 
@@ -1490,7 +1498,7 @@ describe("executePreparedCliRun supervisor output capture", () => {
     ]);
   });
 
-  it("preserves partial delivery evidence from failed MCP message calls", async () => {
+  it("preserves partial delivery evidence from unknown MCP message outcomes", async () => {
     const context = buildPreparedCliRunContext({ output: "text", provider: "google-gemini-cli" });
     context.mcpDeliveryCapture = true;
     supervisorSpawnMock.mockImplementationOnce(async (...args: unknown[]) => {
@@ -1507,6 +1515,7 @@ describe("executePreparedCliRun supervisor output capture", () => {
         },
         result: Object.assign(new Error("second chunk failed"), { sentBeforeError: true }),
         isError: true,
+        outcome: "unknown",
       });
       input.onStdout?.("done");
       return createManagedRun({

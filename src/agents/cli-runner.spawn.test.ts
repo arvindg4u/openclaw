@@ -2281,6 +2281,134 @@ ${JSON.stringify({
     ]);
   });
 
+  it("keeps identical parallel Claude live tool outcomes explicitly unknown", async () => {
+    const diagnosticEvents: Array<Record<string, unknown>> = [];
+    const stopDiagnostics = onInternalDiagnosticEvent((event) => {
+      if (
+        event.type.startsWith("tool.execution.") &&
+        "toolCallId" in event &&
+        typeof event.toolCallId === "string" &&
+        event.toolCallId.startsWith("tool-live-identical-")
+      ) {
+        diagnosticEvents.push(event as unknown as Record<string, unknown>);
+      }
+    });
+    let stdoutListener: ((chunk: string) => void) | undefined;
+    let captureKey = "";
+    const toolArgs = { action: "react", emoji: "same" };
+    const stdin = {
+      write: vi.fn((_data: string, cb?: (err?: Error | null) => void) => {
+        stdoutListener?.(
+          [
+            JSON.stringify({ type: "system", subtype: "init", session_id: "live-identical" }),
+            JSON.stringify({
+              type: "assistant",
+              session_id: "live-identical",
+              message: {
+                role: "assistant",
+                content: [
+                  {
+                    type: "mcp_tool_use",
+                    id: "tool-live-identical-a",
+                    name: "mcp__openclaw__message",
+                    input: toolArgs,
+                  },
+                  {
+                    type: "mcp_tool_use",
+                    id: "tool-live-identical-b",
+                    name: "mcp__openclaw__message",
+                    input: toolArgs,
+                  },
+                ],
+              },
+            }),
+          ].join("\n") + "\n",
+        );
+        const captureHandle = markMcpLoopbackToolCallStarted({
+          captureKey,
+          toolName: "message",
+          args: toolArgs,
+        });
+        if (!captureHandle) {
+          throw new Error("Expected live tool capture");
+        }
+        recordMcpLoopbackToolCallResult({
+          captureHandle,
+          toolName: "message",
+          args: toolArgs,
+          outcome: "failed",
+        });
+        markMcpLoopbackToolCallFinished(captureHandle);
+        stdoutListener?.(
+          [
+            JSON.stringify({
+              type: "user",
+              session_id: "live-identical",
+              message: {
+                role: "user",
+                content: [
+                  { type: "tool_result", tool_use_id: "tool-live-identical-a", content: "ok" },
+                  { type: "tool_result", tool_use_id: "tool-live-identical-b", content: "ok" },
+                ],
+              },
+            }),
+            JSON.stringify({ type: "result", session_id: "live-identical", result: "ok" }),
+          ].join("\n") + "\n",
+        );
+        cb?.();
+      }),
+      end: vi.fn(),
+    };
+    supervisorSpawnMock.mockImplementation(async (...args: unknown[]) => {
+      const input = (args[0] ?? {}) as {
+        env?: Record<string, string>;
+        onStdout?: (chunk: string) => void;
+      };
+      stdoutListener = input.onStdout;
+      captureKey = input.env?.OPENCLAW_MCP_CLI_CAPTURE_KEY ?? "";
+      return {
+        runId: "live-run-identical",
+        pid: 3062,
+        startedAtMs: Date.now(),
+        stdin,
+        wait: vi.fn(() => new Promise(() => {})),
+        cancel: vi.fn(),
+      };
+    });
+    const context = buildPreparedCliRunContext({
+      provider: "claude-cli",
+      model: "sonnet",
+      runId: "run-live-identical",
+      sessionId: "session-live-identical",
+      sessionKey: "agent:main:live-identical",
+      prompt: "hello",
+      backend: { liveSession: "claude-stdio" },
+    });
+    context.mcpDeliveryCapture = true;
+
+    try {
+      await expect(executePreparedCliRun(context)).resolves.toMatchObject({ text: "ok" });
+      await waitForDiagnosticEventsDrained();
+    } finally {
+      stopDiagnostics();
+    }
+
+    expect(diagnosticEvents).toMatchObject([
+      { type: "tool.execution.started", toolCallId: "tool-live-identical-a" },
+      { type: "tool.execution.started", toolCallId: "tool-live-identical-b" },
+      {
+        type: "tool.execution.error",
+        toolCallId: "tool-live-identical-a",
+        errorCode: "tool_outcome_unknown",
+      },
+      {
+        type: "tool.execution.error",
+        toolCallId: "tool-live-identical-b",
+        errorCode: "tool_outcome_unknown",
+      },
+    ]);
+  });
+
   it.each([
     [
       "timeout",

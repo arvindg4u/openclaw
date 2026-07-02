@@ -64,6 +64,24 @@ function resolveProvenance(
   return { actorType, agentId, sessionKey, sessionId };
 }
 
+function resolveToolProvenance(
+  runId: string,
+  event: { agentId?: unknown; sessionKey?: unknown; sessionId?: unknown },
+) {
+  const observed = resolveProvenance(runId, event);
+  const remembered = runProvenance.get(runId);
+  if (!remembered) {
+    return observed;
+  }
+  // Tool diagnostics may use an execution sandbox key. Lifecycle start owns
+  // the canonical run identity; tool metadata only fills missing session fields.
+  return {
+    ...remembered,
+    sessionKey: remembered.sessionKey ?? observed.sessionKey,
+    sessionId: remembered.sessionId ?? observed.sessionId,
+  };
+}
+
 function classifyRunTerminal(
   data: Record<string, unknown>,
   phase: "end" | "error",
@@ -195,7 +213,7 @@ export function projectToolExecutionEventToAudit(
   if (!runId || !toolName) {
     return undefined;
   }
-  const provenance = resolveProvenance(runId, event);
+  const provenance = resolveToolProvenance(runId, event);
   const errorCategory =
     event.type === "tool.execution.error"
       ? normalizeOptionalLowercaseString(event.errorCategory)

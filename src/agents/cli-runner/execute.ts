@@ -885,6 +885,11 @@ export async function executePreparedCliRun(
               // order. Bind only a unique name+arguments match; ambiguity is
               // safer than assigning a trusted terminal outcome to the wrong call.
               const matched = candidates.length === 1 ? candidates[0] : undefined;
+              if (candidates.length > 1) {
+                for (const [toolCallId] of candidates) {
+                  cliToolTerminalOutcomes.set(toolCallId, { outcome: "unknown" });
+                }
+              }
               if (matched) {
                 matched[1].loopbackBound = true;
               }
@@ -1054,12 +1059,16 @@ export async function executePreparedCliRun(
           cliToolTerminalOutcomes.delete(event.toolCallId);
           const toolName = activeTool?.toolName ?? event.name;
           const now = Date.now();
-          const terminalReason =
+          const trustedTerminalReason =
             trustedOutcome &&
             trustedOutcome.outcome !== "blocked" &&
-            trustedOutcome.outcome !== "completed"
+            trustedOutcome.outcome !== "completed" &&
+            trustedOutcome.outcome !== "unknown"
               ? trustedOutcome.outcome
-              : resolveToolTerminalReason(event.incomplete ? runError : undefined);
+              : undefined;
+          const terminalReason =
+            trustedTerminalReason ??
+            resolveToolTerminalReason(event.incomplete ? runError : undefined);
           const diagnosticBase = {
             runId: params.runId,
             sessionId: params.sessionId,
@@ -1071,6 +1080,15 @@ export async function executePreparedCliRun(
             toolCallId: event.toolCallId,
             durationMs: Math.max(0, now - (activeTool?.startedAt ?? now)),
           };
+          if (trustedOutcome?.outcome === "unknown") {
+            emitTrustedDiagnosticEvent({
+              type: "tool.execution.error",
+              ...diagnosticBase,
+              errorCategory: "cli_tool_ambiguous",
+              errorCode: "tool_outcome_unknown",
+            });
+            return;
+          }
           const trustedFailure =
             trustedOutcome !== undefined && trustedOutcome.outcome !== "completed";
           emitTrustedDiagnosticEvent(

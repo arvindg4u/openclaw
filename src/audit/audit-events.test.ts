@@ -252,6 +252,34 @@ describe("agent activity audit projection", () => {
     });
   });
 
+  it("keeps tool actions on the canonical lifecycle session", () => {
+    const runId = "run-channel-routed";
+    projectAgentEventToAudit(
+      agentEvent({
+        runId,
+        sessionKey: "agent:support:channel:customer",
+        sessionId: "session-canonical",
+        agentId: "support",
+      }),
+    );
+
+    const projected = projectToolExecutionEventToAudit(
+      toolEvent({
+        runId,
+        sessionKey: "agent:main:sandbox:temporary",
+        sessionId: "session-sandbox",
+        agentId: "main",
+      }),
+    );
+
+    expect(projected).toMatchObject({
+      actorId: "support",
+      agentId: "support",
+      sessionKey: "agent:support:channel:customer",
+      sessionId: "session-canonical",
+    });
+  });
+
   it("omits prompt, arguments, results, and raw errors from run and tool records", () => {
     const secret = "super-secret-payload";
     projectAgentEventToAudit(agentEvent({ data: { phase: "start", prompt: secret }, seq: 1 }));

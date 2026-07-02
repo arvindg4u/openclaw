@@ -162,7 +162,12 @@ export async function handleMcpJsonRpc(params: {
           isError: false,
         });
       } catch (error) {
-        reportToolCallResult({ outcome: "failed", result: error });
+        // A disconnected request does not identify the enclosing run outcome,
+        // but its payload may prove partial delivery and prevent a duplicate send.
+        reportToolCallResult({
+          outcome: params.signal?.aborted ? "unknown" : "failed",
+          result: error,
+        });
         const message = formatErrorMessage(error);
         return jsonRpcResult(id, {
           content: [{ type: "text", text: message || "tool execution failed" }],

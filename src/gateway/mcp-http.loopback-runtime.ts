@@ -7,7 +7,7 @@ type McpLoopbackRuntime = {
 
 export type McpLoopbackToolCallTerminalOutcome =
   | { outcome: "blocked"; deniedReason: string }
-  | { outcome: "cancelled" | "failed" | "timed_out"; result?: unknown };
+  | { outcome: "cancelled" | "failed" | "timed_out" | "unknown"; result?: unknown };
 
 export type McpLoopbackToolCallOutcome =
   | { outcome: "completed"; result?: unknown }
