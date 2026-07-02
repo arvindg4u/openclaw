@@ -76,6 +76,38 @@ function createCronJob(input: CronJobCreate, id: string, now: number): CronJob {
 function createFakeCronService(): FakeCronService {
   let seq = 0;
   const jobs = new Map<string, CronJob>();
+  const updateJob = async (id: string, patch: CronJobPatch): Promise<CronJob> => {
+    const current = jobs.get(id);
+    if (!current) {
+      throw new Error(`missing cron job: ${id}`);
+    }
+    const nextUpdatedAtMs = current.updatedAtMs + 1;
+    const nextState = {
+      ...current.state,
+      ...patch.state,
+    };
+    if (typeof patch.enabled === "boolean" && patch.enabled !== current.enabled) {
+      if (patch.enabled) {
+        const nextRunAtMs = fakeNextRunAtMs(current.schedule, nextUpdatedAtMs);
+        if (nextRunAtMs === undefined) {
+          nextState.nextRunAtMs = undefined;
+        } else {
+          nextState.nextRunAtMs = nextRunAtMs;
+        }
+      } else {
+        nextState.nextRunAtMs = undefined;
+        nextState.runningAtMs = undefined;
+      }
+    }
+    current.enabled = typeof patch.enabled === "boolean" ? patch.enabled : current.enabled;
+    current.name = patch.name ?? current.name;
+    current.description = patch.description ?? current.description;
+    current.schedule = patch.schedule ?? current.schedule;
+    current.state = nextState;
+    current.updatedAtMs = nextUpdatedAtMs;
+    return current;
+  };
+  const update = vi.fn(updateJob);
   const service = {
     jobs,
     start: vi.fn(async () => undefined),
@@ -109,44 +141,14 @@ function createFakeCronService(): FakeCronService {
       jobs.set(job.id, job);
       return job;
     }),
-    update: vi.fn(async (id: string, patch: CronJobPatch) => {
-      const current = jobs.get(id);
-      if (!current) {
-        throw new Error(`missing cron job: ${id}`);
-      }
-      const nextUpdatedAtMs = current.updatedAtMs + 1;
-      const nextState = {
-        ...current.state,
-        ...patch.state,
-      };
-      if (typeof patch.enabled === "boolean" && patch.enabled !== current.enabled) {
-        if (patch.enabled) {
-          const nextRunAtMs = fakeNextRunAtMs(current.schedule, nextUpdatedAtMs);
-          if (nextRunAtMs === undefined) {
-            nextState.nextRunAtMs = undefined;
-          } else {
-            nextState.nextRunAtMs = nextRunAtMs;
-          }
-        } else {
-          nextState.nextRunAtMs = undefined;
-          nextState.runningAtMs = undefined;
-        }
-      }
-      current.enabled = typeof patch.enabled === "boolean" ? patch.enabled : current.enabled;
-      current.name = patch.name ?? current.name;
-      current.description = patch.description ?? current.description;
-      current.schedule = patch.schedule ?? current.schedule;
-      current.state = nextState;
-      current.updatedAtMs = nextUpdatedAtMs;
-      return current;
-    }),
-    updateWithPrecondition: vi.fn(async (id, patch, precondition) => {
+    update,
+    updateWithPrecondition: vi.fn(async (id: string, patch: CronJobPatch, precondition) => {
       const current = jobs.get(id);
       if (!current) {
         throw new Error(`missing cron job: ${id}`);
       }
       precondition(structuredClone(current), Date.now());
-      return await service.update(id, patch);
+      return await update(id, patch);
     }),
     remove: vi.fn(async (id: string) => {
       const removed = jobs.delete(id);

@@ -19,6 +19,21 @@ function createCronJob(input: CronJobCreate, nowMs: number): CronJob {
 
 function createRoutineContext() {
   const jobs = new Map<string, CronJob>();
+  const updateJob = async (id: string, patch: CronJobPatch): Promise<CronJob> => {
+    const current = jobs.get(id);
+    if (!current) {
+      throw new Error(`missing cron job: ${id}`);
+    }
+    const updated: CronJob = {
+      ...current,
+      enabled: typeof patch.enabled === "boolean" ? patch.enabled : current.enabled,
+      state: { ...current.state, ...patch.state },
+      updatedAtMs: Date.now(),
+    };
+    jobs.set(id, updated);
+    return updated;
+  };
+  const update = vi.fn(updateJob);
   const cron = {
     list: vi.fn(async () => [...jobs.values()]),
     add: vi.fn(async (input: CronJobCreate) => {
@@ -26,20 +41,7 @@ function createRoutineContext() {
       jobs.set(job.id, job);
       return job;
     }),
-    update: vi.fn(async (id: string, patch: CronJobPatch) => {
-      const current = jobs.get(id);
-      if (!current) {
-        throw new Error(`missing cron job: ${id}`);
-      }
-      const updated: CronJob = {
-        ...current,
-        enabled: typeof patch.enabled === "boolean" ? patch.enabled : current.enabled,
-        state: { ...current.state, ...patch.state },
-        updatedAtMs: Date.now(),
-      };
-      jobs.set(id, updated);
-      return updated;
-    }),
+    update,
     updateWithPrecondition: vi.fn(
       async (
         id: string,
@@ -51,7 +53,7 @@ function createRoutineContext() {
           throw new Error(`missing cron job: ${id}`);
         }
         precondition(structuredClone(current), Date.now());
-        return await cron.update(id, patch);
+        return await update(id, patch);
       },
     ),
     readJob: vi.fn(async (id: string) => jobs.get(id)),
