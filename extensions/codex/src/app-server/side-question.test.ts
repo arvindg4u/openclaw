@@ -2078,6 +2078,75 @@ describe("runCodexAppServerSideQuestion", () => {
     expect(JSON.stringify(toolEvents)).not.toContain("sensitive side-thread query");
   });
 
+  it("keeps cleanup-only aborts out of unfinished native tool outcomes", async () => {
+    const client = createFakeClient();
+    const diagnosticEvents: DiagnosticEventPayload[] = [];
+    const unsubscribeDiagnostics = onInternalDiagnosticEvent((event) =>
+      diagnosticEvents.push(event),
+    );
+    client.request.mockImplementation(async (method: string) => {
+      if (method === "thread/fork") {
+        return threadResult("side-thread");
+      }
+      if (method === "thread/inject_items") {
+        return {};
+      }
+      if (method === "turn/start") {
+        setTimeout(() => {
+          client.emit({
+            method: "item/started",
+            params: {
+              threadId: "side-thread",
+              turnId: "turn-1",
+              item: nativeCommandItem("native-tool-unfinished", "inProgress", null),
+            },
+          });
+          client.emit(turnCompleted("side-thread", "turn-1", "Native tool answer."));
+        }, 0);
+        return turnStartResult("turn-1");
+      }
+      if (method === "thread/unsubscribe" || method === "turn/interrupt") {
+        return {};
+      }
+      throw new Error(`unexpected request: ${method}`);
+    });
+    getSharedCodexAppServerClientMock.mockResolvedValue(client);
+
+    try {
+      await runCodexAppServerSideQuestion(
+        sideParams({
+          agentId: "side-agent",
+          sessionKey: "agent:side-agent:main",
+          opts: { runId: "run-side-native-unfinished" },
+        }),
+      );
+      await flushDiagnosticEvents();
+    } finally {
+      unsubscribeDiagnostics();
+    }
+
+    expect(
+      diagnosticEvents.filter(
+        (event) =>
+          event.type.startsWith("tool.execution.") &&
+          "toolCallId" in event &&
+          event.toolCallId === "native-tool-unfinished",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        type: "tool.execution.started",
+        toolCallId: "native-tool-unfinished",
+      }),
+      expect.objectContaining({
+        type: "tool.execution.error",
+        toolCallId: "native-tool-unfinished",
+        errorCategory: "codex_native_tool_error",
+        terminalReason: "failed",
+      }),
+    ]);
+    expect(activeDiagnosticToolKeys(diagnosticEvents)).toEqual(new Set());
+  });
+
   it("projects snapshot-only native side-thread tools exactly once", async () => {
     const client = createFakeClient();
     const diagnosticEvents: DiagnosticEventPayload[] = [];

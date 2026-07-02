@@ -611,6 +611,9 @@ export async function runCodexAppServerSideQuestion(
     return { text: trimmed };
   } finally {
     try {
+      // Cleanup aborts are ownership teardown, not a terminal run outcome.
+      // Snapshot the real state while late app-server notifications can still drain.
+      const runWasAbortedBeforeCleanup = runAbortController.signal.aborted;
       params.opts?.abortSignal?.removeEventListener("abort", abortFromUpstream);
       removeRequestHandler?.();
       activateNativePreToolUseFailureFallback();
@@ -628,7 +631,7 @@ export async function runCodexAppServerSideQuestion(
         });
       } finally {
         removeNotificationHandler();
-        nativeToolLifecycleProjector?.finalizeActive();
+        nativeToolLifecycleProjector?.finalizeActive(runWasAbortedBeforeCleanup);
       }
     } finally {
       flushPendingNativePreToolUseFailures();

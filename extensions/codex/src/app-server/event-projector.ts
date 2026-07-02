@@ -292,15 +292,15 @@ export class CodexNativeToolLifecycleProjector {
     });
   }
 
-  finalizeActive(): void {
+  finalizeActive(runWasAborted = this.options.runAbortSignal?.aborted === true): void {
     this.finalized = true;
     for (const [toolCallId, { toolName }] of this.activeItems) {
       const isWebSearchAwaitingRawResult = this.webSearchAbortStateAtCompletion.has(toolCallId);
       const status = isWebSearchAwaitingRawResult ? "unknown" : "failed";
-      const runWasAborted = isWebSearchAwaitingRawResult
+      const itemRunWasAborted = isWebSearchAwaitingRawResult
         ? this.webSearchAbortStateAtCompletion.get(toolCallId) === true
-        : undefined;
-      this.recordTerminal(toolCallId, toolName, status, undefined, runWasAborted);
+        : runWasAborted;
+      this.recordTerminal(toolCallId, toolName, status, undefined, itemRunWasAborted);
     }
     for (const [toolCallId, record] of this.preToolUseFailureByItem) {
       if (!this.completedItemIds.has(toolCallId)) {
