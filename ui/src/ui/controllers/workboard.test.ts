@@ -461,6 +461,68 @@ describe("workboard controller", () => {
     expect(state.lastRefreshError).toBeNull();
   });
 
+  it("arms reconciliation when a linked refresh discovers the first active task", async () => {
+    vi.useFakeTimers();
+    const host = {};
+    const state = getWorkboardState(host);
+    const requestUpdate = vi.fn();
+    const linkedCard = {
+      ...sampleCard,
+      status: "running",
+      taskId: sampleTask.taskId,
+      sessionKey: sampleTask.childSessionKey,
+      runId: sampleTask.runId,
+    } satisfies WorkboardCard;
+    let task: WorkboardTaskSummary = sampleTask;
+    const client = createClient((method) => {
+      if (method === "workboard.cards.list") {
+        return { cards: [linkedCard], statuses: ["todo", "running", "review", "done"] };
+      }
+      if (method === "tasks.list") {
+        return { tasks: [] };
+      }
+      if (method === "tasks.get") {
+        return { task };
+      }
+      if (method === "workboard.cards.update") {
+        return { card: { ...linkedCard, status: "review" } };
+      }
+      return {};
+    });
+    state.lifecycleTaskRefreshFailed = true;
+    state.lifecycleTaskRefreshError = "task ledger unavailable";
+
+    await loadWorkboard({
+      host,
+      client: client as never,
+      force: true,
+      taskRefresh: "linked",
+      requestUpdate,
+    });
+
+    expect(state.tasksByCardId.get(linkedCard.id)).toEqual(sampleTask);
+    expect(state.lifecycleTaskRefreshFailed).toBe(true);
+    expect(state.lifecycleTaskRefreshRetryAt).not.toBeNull();
+
+    vi.clearAllMocks();
+    task = { ...sampleTask, status: "completed" };
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(requestUpdate).toHaveBeenCalledOnce();
+    await syncWorkboardLifecycle({
+      host,
+      client: client as never,
+      sessions: [],
+      requestUpdate,
+    });
+
+    expect(client.request).toHaveBeenCalledWith("tasks.get", { taskId: sampleTask.taskId });
+    expect(client.request).toHaveBeenCalledWith("workboard.cards.update", {
+      id: linkedCard.id,
+      patch: expect.objectContaining({ status: "review" }),
+    });
+  });
+
   it("clears lifecycle task errors when a linked poll finds no cards", async () => {
     const host = {};
     const state = getWorkboardState(host);

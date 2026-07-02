@@ -2510,6 +2510,18 @@ async function loadWorkboardInternal(
         for (const taskId of confirmedLifecycleTaskIds) {
           state.lifecycleUnconfirmedTaskIds.delete(taskId);
         }
+        // The prior failure may predate any active task, so it had no wake.
+        // Arm one when this poll discovers the first active linked task.
+        if (
+          state.lifecycleTaskRefreshRetryAt === null &&
+          workboardHasKnownActiveLifecycleTask(state)
+        ) {
+          setWorkboardLifecycleTaskRefreshFailed(state, true, {
+            host: params.host,
+            requestUpdate: params.requestUpdate,
+            confirmedTaskIds: confirmedLifecycleTaskIds,
+          });
+        }
       } else {
         const confirmedTaskIds = lifecycleTaskRefreshFailed ? confirmedLifecycleTaskIds : undefined;
         setWorkboardLifecycleTaskRefreshFailed(state, lifecycleTaskRefreshFailed, {
