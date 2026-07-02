@@ -523,6 +523,7 @@ export function createCodexDynamicToolBridge(params: {
         );
         const telemetryRawResult = sanitizeToolResult(rawResult);
         const rawIsError = isCodexToolResultError(rawResult);
+        const rawResultFailureKind = resolveToolResultFailureKind(rawResult);
         const middlewareResult = await middlewareRunner.applyToolResultMiddleware({
           threadId: call.threadId,
           turnId: call.turnId,
@@ -542,10 +543,9 @@ export function createCodexDynamicToolBridge(params: {
         });
         const resultIsError = rawIsError || isCodexToolResultError(result);
         const finalResultFailureKind = resolveToolResultFailureKind(result);
-        const rawResultFailureKind = resolveToolResultFailureKind(rawResult);
-        const resultFailureKind = finalResultFailureKind ?? rawResultFailureKind;
+        const resultFailureKind = rawResultFailureKind ?? finalResultFailureKind;
         const observerResult =
-          !finalResultFailureKind && rawResultFailureKind
+          rawResultFailureKind && finalResultFailureKind !== rawResultFailureKind
             ? {
                 ...result,
                 details: {

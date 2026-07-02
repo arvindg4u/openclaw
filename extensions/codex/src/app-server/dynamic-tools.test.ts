@@ -3021,55 +3021,54 @@ describe("createCodexDynamicToolBridge", () => {
     });
   });
 
-  it("preserves raw terminal disposition for private observation after middleware", async () => {
-    const registry = createEmptyPluginRegistry();
-    const handler = vi.fn(async (event: { result: AgentToolResult<unknown> }) => ({
-      result: {
-        ...event.result,
-        content: [{ type: "text" as const, text: "compacted timeout" }],
-        details: { stage: "middleware" },
-      },
-    }));
-    registry.agentToolResultMiddlewares.push({
-      pluginId: "timeout-redactor",
-      pluginName: "Timeout Redactor",
-      rawHandler: handler,
-      handler,
-      runtimes: ["codex"],
-      source: "test",
-    });
-    setActivePluginRegistry(registry);
-    const onAgentToolResult = vi.fn();
-    const bridge = createBridgeWithToolResult(
-      "exec",
-      textToolResult("raw timeout", { status: "timed_out" }),
-    );
+  it.each(["timed_out", "cancelled", "blocked"] as const)(
+    "preserves raw %s disposition for private observation after middleware rewrites it",
+    async (status) => {
+      const registry = createEmptyPluginRegistry();
+      const handler = vi.fn(async (event: { result: AgentToolResult<unknown> }) => {
+        event.result.content = [{ type: "text", text: "compacted failure" }];
+        const details = requireRecord(event.result.details, "middleware details");
+        details.stage = "middleware";
+        details.status = "failed";
+        return { result: event.result };
+      });
+      registry.agentToolResultMiddlewares.push({
+        pluginId: "result-redactor",
+        pluginName: "Result Redactor",
+        rawHandler: handler,
+        handler,
+        runtimes: ["codex"],
+        source: "test",
+      });
+      setActivePluginRegistry(registry);
+      const onAgentToolResult = vi.fn();
+      const bridge = createBridgeWithToolResult("exec", textToolResult("raw failure", { status }));
 
-    const result = await bridge.handleToolCall(
-      {
-        threadId: "thread-1",
-        turnId: "turn-1",
-        callId: "call-raw-timeout",
-        namespace: null,
-        tool: "exec",
-        arguments: { command: "status" },
-      },
-      { onAgentToolResult },
-    );
+      const result = await bridge.handleToolCall(
+        {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          callId: `call-raw-${status}`,
+          namespace: null,
+          tool: "exec",
+          arguments: { command: "status" },
+        },
+        { onAgentToolResult },
+      );
 
-    expect(result).toMatchObject({
-      success: false,
-      diagnosticTerminalReason: "timed_out",
-    });
-    expect(onAgentToolResult).toHaveBeenCalledWith({
-      toolName: "exec",
-      result: {
-        content: [{ type: "text", text: "compacted timeout" }],
-        details: { stage: "middleware", status: "timed_out" },
-      },
-      isError: true,
-    });
-  });
+      expect(result.success).toBe(false);
+      expect(result.diagnosticTerminalType).toBe(status === "blocked" ? "blocked" : "error");
+      expect(result.diagnosticTerminalReason).toBe(status === "blocked" ? undefined : status);
+      expect(onAgentToolResult).toHaveBeenCalledWith({
+        toolName: "exec",
+        result: {
+          content: [{ type: "text", text: "compacted failure" }],
+          details: { stage: "middleware", status },
+        },
+        isError: true,
+      });
+    },
+  );
 
   it("reports confirmed sends as successful when result middleware fails", async () => {
     const registry = createEmptyPluginRegistry();
