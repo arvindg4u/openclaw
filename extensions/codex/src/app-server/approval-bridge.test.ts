@@ -1775,7 +1775,7 @@ describe("Codex app-server approval bridge", () => {
         blocked: true,
         kind: "failure",
         disposition,
-        deniedReason: "plugin-before-tool-call-failed",
+        deniedReason: "plugin-before-tool-call",
         reason: "Tool call blocked because before_tool_call hook failed",
       });
 
@@ -1817,7 +1817,7 @@ describe("Codex app-server approval bridge", () => {
         blocked: true,
         kind: "failure",
         disposition: "cancelled",
-        deniedReason: "plugin-before-tool-call-failed",
+        deniedReason: "plugin-before-tool-call",
         reason: "Approval cancelled because the run stopped",
       });
 

@@ -2245,7 +2245,7 @@ describe("native hook relay registry", () => {
       blocked: true,
       kind: "failure",
       disposition: "cancelled",
-      deniedReason: "plugin-approval-cancelled",
+      deniedReason: "plugin-approval",
       reason: "Approval cancelled because the run stopped",
     }));
 
