@@ -22,7 +22,7 @@ type PluginGatewayEventBroadcast = (
   scope: PluginGatewayEventScope,
 ) => void;
 
-const PLUGIN_GATEWAY_EVENT_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/;
+const PLUGIN_GATEWAY_EVENT_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$/;
 const PLUGIN_GATEWAY_EVENT_SCOPES = new Set<PluginGatewayEventScope>([
   "operator.read",
   "operator.write",
@@ -84,10 +84,7 @@ function createServiceContext(params: {
                 throw new Error("plugin gateway event emitter is inactive");
               }
               const normalizedEvent = event.trim();
-              if (
-                !PLUGIN_GATEWAY_EVENT_NAME_PATTERN.test(normalizedEvent) ||
-                normalizedEvent.includes("..")
-              ) {
+              if (!PLUGIN_GATEWAY_EVENT_NAME_PATTERN.test(normalizedEvent)) {
                 throw new Error(`invalid plugin gateway event name: ${event}`);
               }
               const scope: unknown = opts?.scope;

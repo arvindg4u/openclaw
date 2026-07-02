@@ -354,8 +354,10 @@ api.registerService({
 ```
 
 OpenClaw prefixes the event with the owning plugin ID, producing an event such
-as `plugin.catalog.changed`. Event names cannot escape that namespace. Every
-emission must declare `operator.read`, `operator.write`, or `operator.admin`;
+as `plugin.catalog.changed`. Local event names are single segments containing
+lowercase letters, numbers, hyphens, or underscores, so they cannot collide
+with another plugin's namespace. Every emission must declare `operator.read`,
+`operator.write`, or `operator.admin`;
 clients without the required operator access do not receive it. Built-in event
 guards remain authoritative when a plugin namespace overlaps a reserved event;
 clients must satisfy both the declared scope and the built-in guard.

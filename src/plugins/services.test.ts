@@ -190,20 +190,38 @@ describe("startPluginServices", () => {
     );
   });
 
-  it("rejects gateway event names that escape the plugin namespace", async () => {
-    const service: OpenClawPluginService = {
+  it("keeps dotted plugin ids disjoint from local event names", async () => {
+    const gatewayEventBroadcast = vi.fn();
+    const dottedOwner: OpenClawPluginService = {
       id: "events",
       start: (ctx) => {
-        ctx.gatewayEvents?.emit("other..changed", {}, { scope: "operator.read" });
+        ctx.gatewayEvents?.emit("changed", {}, { scope: "operator.read" });
+      },
+    };
+    const collidingName: OpenClawPluginService = {
+      id: "events",
+      start: (ctx) => {
+        ctx.gatewayEvents?.emit("bar.changed", {}, { scope: "operator.read" });
       },
     };
 
     await startPluginServices({
-      registry: createRegistry([service], "workboard"),
+      registry: createRegistry([dottedOwner], "foo.bar"),
       config: createServiceConfig(),
-      gatewayEventBroadcast: vi.fn(),
+      gatewayEventBroadcast,
+    });
+    await startPluginServices({
+      registry: createRegistry([collidingName], "foo"),
+      config: createServiceConfig(),
+      gatewayEventBroadcast,
     });
 
+    expect(gatewayEventBroadcast).toHaveBeenCalledOnce();
+    expect(gatewayEventBroadcast).toHaveBeenCalledWith(
+      "plugin.foo.bar.changed",
+      {},
+      "operator.read",
+    );
     expect(requireLoggerErrorMessage()).toContain("invalid plugin gateway event name");
   });
 

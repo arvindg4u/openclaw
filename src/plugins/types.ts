@@ -2355,7 +2355,7 @@ export type OpenClawPluginServiceContext = {
       ) => void,
     ) => () => void;
   };
-  /** Gateway-owned broadcaster for events in this plugin's namespace. */
+  /** Gateway-owned broadcaster for single-segment events in this plugin's namespace. */
   gatewayEvents?: {
     emit: (
       event: string,
