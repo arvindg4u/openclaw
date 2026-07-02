@@ -18,6 +18,7 @@ import {
   moveWorkboardCard,
   refreshWorkboard,
   resetWorkboardLiveUpdates,
+  resetWorkboardDraft,
   resumeWorkboardLiveUpdates,
   saveWorkboardCardDraft,
   startWorkboardCard,
@@ -690,6 +691,51 @@ describe("workboard controller", () => {
     await saveWorkboardCardDraft({ host, client: client as never });
 
     expect(client.request).not.toHaveBeenCalledWith("workboard.cards.update", expect.anything());
+  });
+
+  it("keeps writes blocked when a stale edit closes during a preserved load", async () => {
+    const host = {};
+    const state = getWorkboardState(host);
+    const listedCards = createDeferred<unknown>();
+    const client = createClient((method) => {
+      if (method === "workboard.cards.list") {
+        return listedCards.promise;
+      }
+      if (method === "tasks.list") {
+        return { tasks: [] };
+      }
+      return {};
+    });
+    state.loaded = true;
+    state.cards = [sampleCard];
+    state.draftOpen = true;
+    state.editingCardId = sampleCard.id;
+
+    const loading = loadWorkboard({ host, client: client as never, force: true });
+    await vi.waitFor(() => {
+      expect(client.request).toHaveBeenCalledWith("workboard.cards.list", {});
+    });
+    handleWorkboardChanged({
+      host,
+      client: client as never,
+      payload: { epoch: "epoch-a", revision: 1 },
+    });
+
+    resetWorkboardDraft(host);
+    expect(state.mutationReadiness).toBe("canonical_reload_required");
+
+    vi.clearAllMocks();
+    await moveWorkboardCard({
+      host,
+      client: client as never,
+      cardId: sampleCard.id,
+      status: "review",
+      position: 2000,
+    });
+    expect(client.request).not.toHaveBeenCalledWith("workboard.cards.move", expect.anything());
+
+    listedCards.resolve({ cards: [sampleCard], statuses: ["todo", "review"] });
+    await loading;
   });
 
   it("coalesces inactive-tab changes until Workboard becomes active", async () => {
@@ -5728,6 +5774,211 @@ describe("workboard controller", () => {
     expect(state.cards.find((card) => card.id === unresolved.id)?.status).toBe("running");
   });
 
+  it("applies confirmed task transitions when another exact task read fails", async () => {
+    const host = {};
+    const state = getWorkboardState(host);
+    const completedCard = {
+      ...sampleCard,
+      status: "running",
+      sessionKey: sampleTaskSessionKey,
+      runId: sampleTask.runId,
+      taskId: sampleTask.taskId,
+    } satisfies WorkboardCard;
+    const unresolvedTask = {
+      ...sampleTask,
+      id: "task-2",
+      taskId: "task-2",
+      childSessionKey: "subagent:workboard-default-card-2",
+      runId: "run-2",
+    } satisfies WorkboardTaskSummary;
+    const unresolvedCard = {
+      ...sampleCard,
+      id: "card-2",
+      status: "running",
+      sessionKey: unresolvedTask.childSessionKey,
+      runId: unresolvedTask.runId,
+      taskId: unresolvedTask.taskId,
+    } satisfies WorkboardCard;
+    state.loaded = true;
+    state.cards = [completedCard, unresolvedCard];
+    state.tasksByCardId.set(completedCard.id, sampleTask);
+    state.tasksByCardId.set(unresolvedCard.id, unresolvedTask);
+    state.lifecycleTaskRefreshFailed = true;
+    state.lifecycleTaskRefreshRetryAt = Date.now();
+    const client = createClient((method, params) => {
+      if (method === "tasks.get") {
+        const taskId = (params as { taskId: string }).taskId;
+        if (taskId === unresolvedTask.taskId) {
+          throw new Error("task unavailable");
+        }
+        return { task: { ...sampleTask, status: "completed" } };
+      }
+      if (method === "workboard.cards.update") {
+        return { card: { ...completedCard, status: "review" } };
+      }
+      return {};
+    });
+
+    await syncWorkboardLifecycle({ host, client: client as never, sessions: [] });
+
+    expect(client.request).toHaveBeenCalledWith("tasks.get", { taskId: sampleTask.taskId });
+    expect(client.request).toHaveBeenCalledWith("tasks.get", { taskId: unresolvedTask.taskId });
+    expect(client.request).toHaveBeenCalledWith("workboard.cards.update", {
+      id: completedCard.id,
+      patch: expect.objectContaining({ status: "review" }),
+    });
+    expect(state.cards.find((card) => card.id === completedCard.id)?.status).toBe("review");
+    expect(state.cards.find((card) => card.id === unresolvedCard.id)?.status).toBe("running");
+    expect(state.lifecycleTaskRefreshFailed).toBe(true);
+  });
+
+  it("blocks preserved tasks outside a failed exact-refresh batch", async () => {
+    const host = {};
+    const state = getWorkboardState(host);
+    const tasks = Array.from(
+      { length: 33 },
+      (_, index) =>
+        ({
+          ...sampleTask,
+          id: `batch-task-${index}`,
+          taskId: `batch-task-${index}`,
+          childSessionKey: `subagent:workboard-default-batch-card-${index}`,
+          runId: `batch-run-${index}`,
+        }) satisfies WorkboardTaskSummary,
+    );
+    const cards = tasks.map(
+      (task, index) =>
+        ({
+          ...sampleCard,
+          id: `batch-card-${index}`,
+          status: "running",
+          sessionKey: task.childSessionKey,
+          runId: task.runId,
+          taskId: task.taskId,
+        }) satisfies WorkboardCard,
+    );
+    state.loaded = true;
+    state.cards = cards;
+    tasks.forEach((task, index) => state.tasksByCardId.set(cards[index]!.id, task));
+    state.lifecycleTaskRefreshFailed = true;
+    state.lifecycleTaskRefreshRetryAt = Date.now();
+    const client = createClient((method, params) => {
+      if (method === "tasks.get") {
+        const taskId = (params as { taskId: string }).taskId;
+        const index = tasks.findIndex((task) => task.taskId === taskId);
+        if (index === 1) {
+          throw new Error("task unavailable");
+        }
+        return { task: index === 0 ? { ...tasks[index]!, status: "completed" } : tasks[index] };
+      }
+      if (method === "workboard.cards.update") {
+        const id = (params as { id: string }).id;
+        const card = cards.find((candidate) => candidate.id === id)!;
+        return { card: { ...card, status: "review" } };
+      }
+      return {};
+    });
+    const unselectedTask = tasks[32]!;
+
+    await syncWorkboardLifecycle({
+      host,
+      client: client as never,
+      sessions: [
+        {
+          ...sampleSession,
+          key: unselectedTask.childSessionKey,
+          status: "done",
+          hasActiveRun: false,
+        },
+      ],
+    });
+
+    expect(client.request.mock.calls.filter(([method]) => method === "tasks.get")).toHaveLength(32);
+    expect(
+      client.request.mock.calls.filter(([method]) => method === "workboard.cards.update"),
+    ).toEqual([
+      [
+        "workboard.cards.update",
+        expect.objectContaining({
+          id: cards[0]!.id,
+          patch: expect.objectContaining({ status: "review" }),
+        }),
+      ],
+    ]);
+    expect(state.cards.find((card) => card.id === cards[32]!.id)?.status).toBe("running");
+  });
+
+  it("keeps an unconfirmed terminal task blocked after a successful bounded retry", async () => {
+    const host = {};
+    const state = getWorkboardState(host);
+    const activeTasks = Array.from(
+      { length: 32 },
+      (_, index) =>
+        ({
+          ...sampleTask,
+          id: `active-task-${index}`,
+          taskId: `active-task-${index}`,
+          childSessionKey: `subagent:workboard-default-active-card-${index}`,
+          runId: `active-run-${index}`,
+        }) satisfies WorkboardTaskSummary,
+    );
+    const terminalTask = {
+      ...sampleTask,
+      id: "terminal-task",
+      taskId: "terminal-task",
+      childSessionKey: "subagent:workboard-default-terminal-card",
+      runId: "terminal-run",
+      status: "completed" as const,
+    } satisfies WorkboardTaskSummary;
+    const tasks = [...activeTasks, terminalTask];
+    const cards = tasks.map(
+      (task, index) =>
+        ({
+          ...sampleCard,
+          id: `bounded-card-${index}`,
+          status: "running",
+          sessionKey: task.childSessionKey,
+          runId: task.runId,
+          taskId: task.taskId,
+        }) satisfies WorkboardCard,
+    );
+    state.loaded = true;
+    state.cards = cards;
+    tasks.forEach((task, index) => state.tasksByCardId.set(cards[index]!.id, task));
+    state.lifecycleTaskRefreshFailed = true;
+    state.lifecycleTaskRefreshRetryAt = Date.now();
+    state.lifecycleUnconfirmedTaskIds = new Set([terminalTask.taskId]);
+    const client = createClient((method, params) => {
+      if (method === "tasks.get") {
+        const taskId = (params as { taskId: string }).taskId;
+        return { task: activeTasks.find((task) => task.taskId === taskId)! };
+      }
+      return {};
+    });
+
+    await syncWorkboardLifecycle({
+      host,
+      client: client as never,
+      sessions: [
+        {
+          ...sampleSession,
+          key: terminalTask.childSessionKey,
+          status: "done",
+          hasActiveRun: false,
+        },
+      ],
+    });
+
+    expect(client.request.mock.calls.filter(([method]) => method === "tasks.get")).toHaveLength(32);
+    expect(client.request).not.toHaveBeenCalledWith("tasks.get", {
+      taskId: terminalTask.taskId,
+    });
+    expect(client.request).not.toHaveBeenCalledWith("workboard.cards.update", expect.anything());
+    expect(state.lifecycleUnconfirmedTaskIds).toEqual(new Set([terminalTask.taskId]));
+    expect(state.lifecycleTaskRefreshFailed).toBe(true);
+    expect(state.cards.at(-1)?.status).toBe("running");
+  });
+
   it("honors task refresh backoff while reconciling session-only cards", async () => {
     const host = {};
     const state = getWorkboardState(host);
@@ -5951,7 +6202,7 @@ describe("workboard controller", () => {
     expect(client.request.mock.calls.filter(([method]) => method === "tasks.get")).toHaveLength(32);
     expect(client.request).not.toHaveBeenCalledWith("workboard.cards.update", expect.anything());
     expect(state.lifecycleTaskRefreshFailed).toBe(true);
-    expect(state.lifecycleTasksPrepared).toBe(false);
+    expect(state.lifecycleTasksPrepared).toBe(true);
   });
 
   it("exact-confirms a tracked replacement omitted from lifecycle task listing", async () => {
@@ -6023,7 +6274,7 @@ describe("workboard controller", () => {
     expect(state.lifecycleTaskRefreshError).toBe("tasks unavailable");
   });
 
-  it("preserves a tracked replacement when exact confirmation fails", async () => {
+  it("keeps an unconfirmed terminal replacement blocked across renders", async () => {
     const host = {};
     const state = getWorkboardState(host);
     const missingTaskId = "task-pruned-from-ledger";
@@ -6031,10 +6282,11 @@ describe("workboard controller", () => {
       ...sampleTask,
       id: "task-replacement",
       taskId: "task-replacement",
+      status: "completed" as const,
     };
     const linked = {
       ...sampleCard,
-      status: "ready",
+      status: "running",
       sessionKey: sampleTaskSessionKey,
       runId: "run-1",
       taskId: missingTaskId,
@@ -6059,6 +6311,16 @@ describe("workboard controller", () => {
     expect(state.tasksByCardId.get(linked.id)).toEqual(replacementTask);
     expect(state.missingTaskIds).toEqual(new Set([missingTaskId]));
     expect(state.lifecycleTaskRefreshError).toBe("task confirmation unavailable");
+    expect(state.lifecycleUnconfirmedTaskIds).toEqual(new Set([replacementTask.taskId]));
+    expect(state.lifecycleTaskRefreshRetryAt).toBeNull();
+    expect(client.request).not.toHaveBeenCalledWith("workboard.cards.update", expect.anything());
+
+    vi.clearAllMocks();
+    await syncWorkboardLifecycle({ host, client: client as never, sessions: [] });
+
+    expect(client.request).not.toHaveBeenCalled();
+    expect(state.cards[0]?.status).toBe("running");
+    expect(state.lifecycleUnconfirmedTaskIds).toEqual(new Set([replacementTask.taskId]));
   });
 
   it("defers lifecycle writes when exact confirmation after task listing fails", async () => {

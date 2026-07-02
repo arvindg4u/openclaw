@@ -16,6 +16,7 @@ import {
   loadWorkboard,
   moveWorkboardCard,
   refreshWorkboard,
+  resetWorkboardDraft,
   resumeWorkboardLiveUpdates,
   saveWorkboardCardDraft,
   startWorkboardCard,
@@ -1222,27 +1223,9 @@ function getVisibleDetailCard(state: WorkboardUiState): WorkboardCard | null {
   return card;
 }
 
-function resetDraft(state: WorkboardUiState) {
-  const resolveStaleEdit = state.loaded && state.mutationReadiness === "stale_edit_draft";
-  state.draftOpen = false;
-  state.editingCardId = null;
-  state.draftTitle = "";
-  state.draftNotes = "";
-  state.draftStatus = "todo";
-  state.draftPriority = "normal";
-  state.draftLabels = "";
-  state.draftAgentId = "";
-  state.draftSessionKey = "";
-  state.draftTemplateId = "";
-  state.draftCommentBody = "";
-  if (resolveStaleEdit) {
-    state.mutationReadiness = "ready";
-  }
-}
-
-function openCreateModal(state: WorkboardUiState) {
+function openCreateModal(host: object, state: WorkboardUiState) {
   clearActiveFloatingTooltips();
-  resetDraft(state);
+  resetWorkboardDraft(host);
   state.draftOpen = true;
 }
 
@@ -1312,7 +1295,7 @@ function renderCardModal(props: WorkboardProps) {
       role="presentation"
       @click=${(event: MouseEvent) => {
         if (event.target === event.currentTarget) {
-          resetDraft(state);
+          resetWorkboardDraft(props.host);
           props.onRequestUpdate?.();
         }
       }}
@@ -1327,7 +1310,7 @@ function renderCardModal(props: WorkboardProps) {
         tabindex="-1"
         ${ref((element) => syncWorkboardDialog(element, "[data-workboard-autofocus='true']"))}
         @keydown=${(event: KeyboardEvent) =>
-          handleWorkboardDialogKeydown(event, props, () => resetDraft(state))}
+          handleWorkboardDialogKeydown(event, props, () => resetWorkboardDraft(props.host))}
         @submit=${(event: SubmitEvent) => {
           event.preventDefault();
           if (draftActionsBusy) {
@@ -1355,7 +1338,7 @@ function renderCardModal(props: WorkboardProps) {
             title=${t("common.cancel")}
             aria-label=${t("common.cancel")}
             @click=${() => {
-              resetDraft(state);
+              resetWorkboardDraft(props.host);
               props.onRequestUpdate?.();
             }}
           >
@@ -1516,7 +1499,7 @@ function renderCardModal(props: WorkboardProps) {
             class="btn"
             type="button"
             @click=${() => {
-              resetDraft(state);
+              resetWorkboardDraft(props.host);
               props.onRequestUpdate?.();
             }}
           >
@@ -2778,7 +2761,7 @@ export function renderWorkboard(props: WorkboardProps) {
                     ?disabled=${state.dispatching}
                     @click=${(event: MouseEvent) => {
                       rememberWorkboardReturnFocus(event.currentTarget);
-                      openCreateModal(state);
+                      openCreateModal(props.host, state);
                       props.onRequestUpdate?.();
                     }}
                   >
