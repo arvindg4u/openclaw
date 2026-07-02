@@ -1173,13 +1173,17 @@ describe("mcp loopback server", () => {
       expect(response.status).toBe(200);
     }
 
-    expect(captured).toEqual(
-      cases.map(({ status, expected }) => ({
-        outcome: expected,
-        correlationId: status === "completed-timeout" ? "completed" : status,
-        ...(expected === "blocked" ? { deniedReason: "tool_result_blocked" } : {}),
-      })),
-    );
+    expect(captured).toEqual([
+      { outcome: "completed", correlationId: "completed" },
+      { outcome: "failed", correlationId: "failed" },
+      {
+        outcome: "blocked",
+        correlationId: "blocked",
+        deniedReason: "tool_result_blocked",
+      },
+      { outcome: "cancelled", correlationId: "cancelled" },
+      { outcome: "timed_out", correlationId: "completed" },
+    ]);
   });
 
   it("updates capture accounting with hook-rewritten tool arguments", async () => {
