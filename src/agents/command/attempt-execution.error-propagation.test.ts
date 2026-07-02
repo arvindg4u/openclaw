@@ -211,6 +211,16 @@ describe("ACP diagnostic events", () => {
       event: {
         type: "tool_call",
         tag: "tool_call_update",
+        text: "still running",
+        kind: "execute",
+        status: "in_progress",
+      },
+    });
+    emitAcpRuntimeEvent({
+      ...params,
+      event: {
+        type: "tool_call",
+        tag: "tool_call_update",
         text: "done",
         kind: "execute",
         status: "completed",
