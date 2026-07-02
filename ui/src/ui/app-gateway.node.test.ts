@@ -15,6 +15,8 @@ const restoreChatComposerStateMock = vi.hoisted(() =>
   vi.fn<(...args: unknown[]) => boolean>(() => false),
 );
 const loadControlUiBootstrapConfigMock = vi.hoisted(() => vi.fn(async () => undefined));
+const handleWorkboardChangedMock = vi.hoisted(() => vi.fn());
+const resetWorkboardLiveUpdatesMock = vi.hoisted(() => vi.fn());
 
 type GatewayRequest = (method: string, payload?: unknown) => Promise<unknown>;
 
@@ -124,6 +126,15 @@ vi.mock("./controllers/chat.ts", async (importOriginal) => {
 vi.mock("./controllers/control-ui-bootstrap.ts", () => ({
   loadControlUiBootstrapConfig: loadControlUiBootstrapConfigMock,
 }));
+
+vi.mock("./controllers/workboard.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./controllers/workboard.ts")>();
+  return {
+    ...actual,
+    handleWorkboardChanged: handleWorkboardChangedMock,
+    resetWorkboardLiveUpdates: resetWorkboardLiveUpdatesMock,
+  };
+});
 
 vi.mock("./chat/composer-persistence.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./chat/composer-persistence.ts")>();
@@ -269,6 +280,8 @@ describe("connectGateway", () => {
     restoreChatComposerStateMock.mockReset();
     restoreChatComposerStateMock.mockReturnValue(false);
     loadControlUiBootstrapConfigMock.mockClear();
+    handleWorkboardChangedMock.mockClear();
+    resetWorkboardLiveUpdatesMock.mockClear();
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
       setTimeout(() => callback(Date.now()), 0),
     );
@@ -386,6 +399,41 @@ describe("connectGateway", () => {
     secondClient.emitEvent({ event: "presence", payload: { presence: [{ host: "active" }] } });
     expect(host.eventLogBuffer).toHaveLength(1);
     expect(host.eventLogBuffer[0]?.event).toBe("presence");
+  });
+
+  it("routes Workboard change events and resets revision state on hello", () => {
+    const { host, client } = connectHostGateway();
+    const requestUpdate = vi.fn();
+    (host as typeof host & { requestUpdate: () => void }).requestUpdate = requestUpdate;
+    host.tab = "workboard";
+
+    client.emitHello();
+    client.emitEvent({
+      event: "plugin.workboard.changed",
+      payload: { epoch: "epoch-a", revision: 7 },
+    });
+
+    expect(resetWorkboardLiveUpdatesMock).toHaveBeenCalledWith(host);
+    expect(handleWorkboardChangedMock).toHaveBeenCalledWith({
+      host,
+      client: host.client,
+      payload: { epoch: "epoch-a", revision: 7 },
+      requestUpdate: expect.any(Function),
+      isActive: expect.any(Function),
+    });
+    const isActive = handleWorkboardChangedMock.mock.calls[0]?.[0]?.isActive;
+    expect(isActive?.()).toBe(true);
+    vi.stubGlobal("document", { visibilityState: "hidden" });
+    expect(isActive?.()).toBe(false);
+    vi.stubGlobal("document", { visibilityState: "visible" });
+    expect(isActive?.()).toBe(true);
+    host.tab = "overview";
+    expect(isActive?.()).toBe(false);
+    const callback = handleWorkboardChangedMock.mock.calls[0]?.[0]?.requestUpdate;
+    requestUpdate.mockClear();
+    callback?.();
+    expect(requestUpdate).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
   });
 
   it("marks orphaned run state interrupted after reconnect hello", () => {

@@ -3,8 +3,8 @@ import { nothing, render } from "lit";
 import { describe, expect, it, vi } from "vitest";
 import {
   getWorkboardState,
+  handleWorkboardChanged,
   stopWorkboardLifecycleRefresh,
-  stopWorkboardPolling,
 } from "../controllers/workboard.ts";
 import type { GatewayBrowserClient } from "../gateway.ts";
 import { renderWorkboard } from "./workboard.ts";
@@ -33,12 +33,10 @@ function dispatchKey(target: EventTarget, key: string, options: KeyboardEventIni
 }
 
 describe("renderWorkboard", () => {
-  it("hides the manual refresh button while auto-refresh is enabled", () => {
+  it("keeps manual refresh and removes routine timer controls", () => {
     const host = {};
     const state = getWorkboardState(host);
     state.loaded = true;
-    state.loading = true;
-    state.autoRefreshIntervalMs = 5000;
     const container = document.createElement("div");
 
     render(
@@ -54,10 +52,75 @@ describe("renderWorkboard", () => {
       container,
     );
 
-    expect(container.querySelector<HTMLButtonElement>('button[title="Refresh"]')).toBeNull();
-    expect(container.querySelector(".workboard-toolbar__actions")?.textContent).not.toContain(
-      "Refreshing",
-    );
+    expect(container.querySelector<HTMLButtonElement>('button[title="Refresh"]')).not.toBeNull();
+    expect(container.querySelector(".workboard-auto-refresh")).toBeNull();
+  });
+
+  it("does not let render-time loading bypass a protected live change", async () => {
+    const host = {};
+    const state = getWorkboardState(host);
+    state.loaded = true;
+    state.draftOpen = true;
+    const request = vi.fn(async () => ({ cards: [], statuses: ["todo"] }));
+    const client = { request } as unknown as GatewayBrowserClient;
+    const props = {
+      host,
+      client,
+      connected: true,
+      pluginEnabled: true,
+      agentsList: null,
+      sessions: [],
+      onOpenSession: () => undefined,
+    } satisfies WorkboardRenderProps;
+
+    handleWorkboardChanged({
+      host,
+      client,
+      payload: { epoch: "epoch-a", revision: 1 },
+    });
+    renderWorkboard(props);
+    await Promise.resolve();
+    expect(request).not.toHaveBeenCalled();
+
+    state.draftOpen = false;
+    renderWorkboard(props);
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("workboard.cards.list", {}));
+  });
+
+  it("defers live loading while the browser document is hidden", async () => {
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    const host = {};
+    const state = getWorkboardState(host);
+    state.loaded = true;
+    const request = vi.fn(async () => ({ cards: [], statuses: ["todo"] }));
+    const client = { request } as unknown as GatewayBrowserClient;
+    const props = {
+      host,
+      client,
+      connected: true,
+      pluginEnabled: true,
+      agentsList: null,
+      sessions: [],
+      onOpenSession: () => undefined,
+    } satisfies WorkboardRenderProps;
+
+    try {
+      handleWorkboardChanged({
+        host,
+        client,
+        payload: { epoch: "epoch-a", revision: 1 },
+        isActive: () => document.visibilityState !== "hidden",
+      });
+      renderWorkboard(props);
+      await Promise.resolve();
+      expect(request).not.toHaveBeenCalled();
+
+      visibility.mockReturnValue("visible");
+      renderWorkboard(props);
+      await vi.waitFor(() => expect(request).toHaveBeenCalledWith("workboard.cards.list", {}));
+    } finally {
+      visibility.mockRestore();
+    }
   });
 
   it("renders lifecycle refresh errors without replacing generic errors", () => {
@@ -84,45 +147,6 @@ describe("renderWorkboard", () => {
     state.error = "Write denied";
     renderInto(container, props);
     expect(container.querySelector(".callout.danger")?.textContent).toBe("Write denied");
-  });
-
-  it("stops and does not rearm auto-refresh while disconnected", async () => {
-    vi.useFakeTimers();
-    const host = {};
-    const state = getWorkboardState(host);
-    state.loaded = true;
-    state.lifecycleTasksPrepared = true;
-    state.autoRefreshIntervalMs = 5000;
-    const request = vi.fn(async () => ({ cards: [], statuses: [] }));
-    const client = { request } as unknown as GatewayBrowserClient;
-    const container = document.createElement("div");
-    const props = {
-      host,
-      client,
-      connected: true,
-      pluginEnabled: true,
-      agentsList: null,
-      sessions: [],
-      onOpenSession: () => undefined,
-    } satisfies WorkboardRenderProps;
-
-    try {
-      renderInto(container, props);
-      renderInto(container, { ...props, connected: false });
-      await vi.advanceTimersByTimeAsync(5000);
-
-      expect(request).not.toHaveBeenCalled();
-
-      const interval = container.querySelector<HTMLSelectElement>(".workboard-auto-refresh select");
-      interval!.value = "15000";
-      interval!.dispatchEvent(new Event("change", { bubbles: true }));
-      await vi.advanceTimersByTimeAsync(15_000);
-
-      expect(request).not.toHaveBeenCalled();
-    } finally {
-      stopWorkboardPolling(host);
-      vi.useRealTimers();
-    }
   });
 
   it("stops lifecycle refresh and reconciliation while disconnected", async () => {
@@ -182,12 +206,11 @@ describe("renderWorkboard", () => {
     }
   });
 
-  it("stops polling and lifecycle refresh while the plugin is disabled", () => {
+  it("stops lifecycle refresh while the plugin is disabled", () => {
     const host = {};
     const state = getWorkboardState(host);
     state.loaded = true;
     state.loading = true;
-    state.pollRefreshInProgress = true;
     state.lifecycleTasksPrepared = true;
     state.lifecycleTasksPreparedAt = Date.now();
     state.lifecycleTaskRefreshFailed = true;
@@ -204,7 +227,6 @@ describe("renderWorkboard", () => {
       onOpenSession: () => undefined,
     });
 
-    expect(state.pollRefreshInProgress).toBe(false);
     expect(state.loading).toBe(false);
     expect(state.lifecycleTasksPrepared).toBe(false);
     expect(state.lifecycleTaskRefreshFailed).toBe(false);
@@ -216,7 +238,6 @@ describe("renderWorkboard", () => {
     const state = getWorkboardState(host);
     state.loaded = true;
     state.loading = true;
-    state.autoRefreshIntervalMs = 5000;
     const container = document.createElement("div");
     const props: WorkboardRenderProps = {
       host,
@@ -243,7 +264,6 @@ describe("renderWorkboard", () => {
     ).toBe(true);
 
     state.loading = false;
-    state.autoRefreshIntervalMs = 0;
     render(renderWorkboard(props), container);
 
     expect(container.querySelector<HTMLButtonElement>('button[title="Refresh"]')?.disabled).toBe(
@@ -461,7 +481,6 @@ describe("renderWorkboard", () => {
     state.loaded = true;
     state.loading = true;
     state.lastRefreshAt = new Date("2026-06-03T18:47:00Z").getTime();
-    state.lastRefreshStartedAt = Date.now();
     const container = document.createElement("div");
 
     render(
@@ -1180,112 +1199,6 @@ describe("renderWorkboard", () => {
     } finally {
       container.remove();
     }
-  });
-
-  it("skips lifecycle sync during a poll and reconciles after it completes", async () => {
-    const host = {};
-    const state = getWorkboardState(host);
-    state.loaded = true;
-    state.pollRefreshInProgress = true;
-    state.cards = [
-      {
-        id: "card-1",
-        title: "Completed session",
-        status: "running",
-        priority: "normal",
-        labels: [],
-        position: 1000,
-        createdAt: 1,
-        updatedAt: 1,
-        sessionKey: "agent:main:dashboard:1",
-      },
-    ];
-    const request = vi.fn(async (method: string) =>
-      method === "workboard.cards.update"
-        ? { card: { ...state.cards[0], status: "review" } }
-        : { cards: state.cards, statuses: ["running", "review"] },
-    );
-    const container = document.createElement("div");
-
-    render(
-      renderWorkboard({
-        host,
-        client: { request } as unknown as GatewayBrowserClient,
-        connected: true,
-        pluginEnabled: true,
-        agentsList: null,
-        sessions: [
-          {
-            key: "agent:main:dashboard:1",
-            kind: "direct",
-            updatedAt: 2,
-            status: "done",
-          },
-        ],
-        onOpenSession: () => undefined,
-      }),
-      container,
-    );
-    await Promise.resolve();
-
-    expect(request).not.toHaveBeenCalledWith("workboard.cards.update", expect.anything());
-
-    render(
-      renderWorkboard({
-        host,
-        client: { request } as unknown as GatewayBrowserClient,
-        connected: true,
-        pluginEnabled: true,
-        agentsList: null,
-        sessions: [
-          {
-            key: "agent:main:dashboard:1",
-            kind: "direct",
-            updatedAt: 2,
-            status: "done",
-          },
-        ],
-        onOpenSession: () => undefined,
-      }),
-      container,
-    );
-    await Promise.resolve();
-
-    expect(request).not.toHaveBeenCalledWith("workboard.cards.update", expect.anything());
-
-    state.pollRefreshInProgress = false;
-    state.lifecycleTasksPrepared = true;
-    state.lifecycleTasksPreparedAt = Date.now();
-    render(
-      renderWorkboard({
-        host,
-        client: { request } as unknown as GatewayBrowserClient,
-        connected: true,
-        pluginEnabled: true,
-        agentsList: null,
-        sessions: [
-          {
-            key: "agent:main:dashboard:1",
-            kind: "direct",
-            updatedAt: 2,
-            status: "done",
-          },
-        ],
-        onOpenSession: () => undefined,
-      }),
-      container,
-    );
-    await Promise.resolve();
-
-    expect(request).toHaveBeenCalledWith(
-      "workboard.cards.update",
-      expect.objectContaining({
-        id: "card-1",
-        patch: expect.objectContaining({ status: "review" }),
-      }),
-    );
-    expect(request).not.toHaveBeenCalledWith("tasks.list", expect.anything());
-    expect(state.lifecycleTasksPrepared).toBe(true);
   });
 
   it("can hide empty columns while keeping populated columns visible", () => {

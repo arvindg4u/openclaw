@@ -21,7 +21,11 @@ import type { ControlUiRootState } from "./control-ui.js";
 import type { HooksConfigResolved } from "./hooks.js";
 import type { AuthorizedGatewayHttpRequest } from "./http-auth-utils.js";
 import { isLoopbackHost, resolveGatewayListenHosts } from "./net.js";
-import type { GatewayBroadcastFn, GatewayBroadcastToConnIdsFn } from "./server-broadcast-types.js";
+import type {
+  GatewayBroadcastFn,
+  GatewayBroadcastToConnIdsFn,
+  GatewayPluginEventBroadcastFn,
+} from "./server-broadcast-types.js";
 import { createGatewayBroadcaster } from "./server-broadcast.js";
 import {
   type ChatRunEntry,
@@ -111,6 +115,7 @@ export async function createGatewayRuntimeState(params: {
   clients: Set<GatewayWsClient>;
   broadcast: GatewayBroadcastFn;
   broadcastToConnIds: GatewayBroadcastToConnIdsFn;
+  broadcastPluginEvent: GatewayPluginEventBroadcastFn;
   agentRunSeq: Map<string, number>;
   dedupe: Map<string, DedupeEntry>;
   chatRunState: ReturnType<typeof createChatRunState>;
@@ -137,7 +142,9 @@ export async function createGatewayRuntimeState(params: {
     const resolvePluginRouteRegistry = () =>
       params.getPluginRouteRegistry?.() ?? params.pluginRegistry;
     const clients = new Set<GatewayWsClient>();
-    const { broadcast, broadcastToConnIds } = createGatewayBroadcaster({ clients });
+    const { broadcast, broadcastToConnIds, broadcastPluginEvent } = createGatewayBroadcaster({
+      clients,
+    });
 
     let loadedHooksRequestHandler: HooksRequestHandler | null = null;
     const handleHooksRequest: HooksRequestHandler = async (req, res) => {
@@ -363,6 +370,7 @@ export async function createGatewayRuntimeState(params: {
       clients,
       broadcast,
       broadcastToConnIds,
+      broadcastPluginEvent,
       agentRunSeq,
       dedupe,
       chatRunState,

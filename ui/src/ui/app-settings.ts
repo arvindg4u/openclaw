@@ -59,11 +59,7 @@ import {
 } from "./controllers/skill-workshop.ts";
 import { loadSkills, reconcileSkillsAgentId, type SkillsState } from "./controllers/skills.ts";
 import { loadUsage, type UsageState } from "./controllers/usage.ts";
-import {
-  loadWorkboard,
-  stopWorkboardLifecycleRefresh,
-  stopWorkboardPolling,
-} from "./controllers/workboard.ts";
+import { loadWorkboard, stopWorkboardLifecycleRefresh } from "./controllers/workboard.ts";
 import { isCronJobActiveFailure } from "./cron-status.ts";
 import { syncCustomThemeStyleTag } from "./custom-theme.ts";
 import { isMonitoredAuthProvider } from "./model-auth-helpers.ts";
@@ -717,7 +713,6 @@ function applyTabSelection(
     host as unknown as Parameters<typeof startDebugPolling>[0],
   );
   if (next !== "workboard") {
-    stopWorkboardPolling(host as unknown as Parameters<typeof stopWorkboardPolling>[0]);
     stopWorkboardLifecycleRefresh(
       host as unknown as Parameters<typeof stopWorkboardLifecycleRefresh>[0],
     );

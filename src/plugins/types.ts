@@ -2355,6 +2355,16 @@ export type OpenClawPluginServiceContext = {
       ) => void,
     ) => () => void;
   };
+  /** Gateway-owned broadcaster for events in this plugin's namespace. */
+  gatewayEvents?: {
+    emit: (
+      event: string,
+      payload: unknown,
+      opts: {
+        scope: Extract<OperatorScope, "operator.read" | "operator.write" | "operator.admin">;
+      },
+    ) => void;
+  };
 };
 
 /** Background service registered by a plugin during `register(api)`. */

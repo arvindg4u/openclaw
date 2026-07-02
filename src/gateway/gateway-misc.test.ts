@@ -330,6 +330,7 @@ function makeScopedBroadcastClients() {
   const nodeSocket = makeRecordingSocket();
   const readSocket = makeRecordingSocket();
   const writeSocket = makeRecordingSocket();
+  const approvalsSocket = makeRecordingSocket();
   const adminSocket = makeRecordingSocket();
   const clients = new Set<GatewayWsClient>([
     makeOperatorWsClient("c-pairing", pairingSocket, ["operator.pairing"]),
@@ -339,10 +340,19 @@ function makeScopedBroadcastClients() {
     } as GatewayWsClient["connect"]),
     makeOperatorWsClient("c-read", readSocket, ["operator.read"]),
     makeOperatorWsClient("c-write", writeSocket, ["operator.write"]),
+    makeOperatorWsClient("c-approvals", approvalsSocket, ["operator.approvals"]),
     makeOperatorWsClient("c-admin", adminSocket, ["operator.admin"]),
   ]);
 
-  return { pairingSocket, nodeSocket, readSocket, writeSocket, adminSocket, clients };
+  return {
+    pairingSocket,
+    nodeSocket,
+    readSocket,
+    writeSocket,
+    approvalsSocket,
+    adminSocket,
+    clients,
+  };
 }
 
 function makeScopedBroadcastContext() {
@@ -454,6 +464,73 @@ describe("gateway broadcaster", () => {
     const expectedEvents = ["plugin.myplugin.custom", "plugin.otherplugin.state"];
     expectSentEvents(writeSocket, expectedEvents);
     expectSentEvents(adminSocket, expectedEvents);
+  });
+
+  it("honors explicit read scope for lifecycle-owned plugin events", () => {
+    const {
+      pairingSocket,
+      nodeSocket,
+      readSocket,
+      writeSocket,
+      adminSocket,
+      broadcastPluginEvent,
+    } = makeScopedBroadcastContext();
+
+    broadcastPluginEvent("plugin.workboard.changed", { revision: 1 }, "operator.read");
+
+    expect(pairingSocket.send).not.toHaveBeenCalled();
+    expect(nodeSocket.send).not.toHaveBeenCalled();
+    expectSentEvents(readSocket, ["plugin.workboard.changed"]);
+    expectSentEvents(writeSocket, ["plugin.workboard.changed"]);
+    expectSentEvents(adminSocket, ["plugin.workboard.changed"]);
+    expect(() =>
+      broadcastPluginEvent("workboard.changed", { revision: 2 }, "operator.read"),
+    ).toThrow("plugin.* namespace");
+  });
+
+  it("rejects plugin event scopes outside the operator read-write-admin contract", () => {
+    const {
+      pairingSocket,
+      nodeSocket,
+      readSocket,
+      writeSocket,
+      approvalsSocket,
+      adminSocket,
+      broadcastPluginEvent,
+    } = makeScopedBroadcastContext();
+    const broadcastUnsafe = broadcastPluginEvent as unknown as (
+      event: string,
+      payload: unknown,
+      scope: string,
+    ) => void;
+
+    for (const scope of ["operator.pairing", "operator.approvals", "operator.unknown"]) {
+      expect(() => broadcastUnsafe("plugin.workboard.changed", {}, scope)).toThrow(
+        "invalid plugin gateway event scope",
+      );
+    }
+    for (const socket of [
+      pairingSocket,
+      nodeSocket,
+      readSocket,
+      writeSocket,
+      approvalsSocket,
+      adminSocket,
+    ]) {
+      expect(socket.send).not.toHaveBeenCalled();
+    }
+  });
+
+  it("does not let plugin scope downgrade a reserved event guard", () => {
+    const { readSocket, writeSocket, approvalsSocket, adminSocket, broadcastPluginEvent } =
+      makeScopedBroadcastContext();
+
+    broadcastPluginEvent("plugin.approval.requested", { id: "approval-1" }, "operator.read");
+
+    expect(readSocket.send).not.toHaveBeenCalled();
+    expect(writeSocket.send).not.toHaveBeenCalled();
+    expect(approvalsSocket.send).not.toHaveBeenCalled();
+    expectSentEvents(adminSocket, ["plugin.approval.requested"]);
   });
 
   it("defaults unknown events to deny and classifies remaining gateway broadcast events", () => {

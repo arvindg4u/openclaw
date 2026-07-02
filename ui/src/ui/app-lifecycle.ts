@@ -24,7 +24,7 @@ import {
 import { persistChatComposerState, restoreChatComposerState } from "./chat/composer-persistence.ts";
 import { startControlUiResponsivenessObserver } from "./control-ui-performance.ts";
 import { loadControlUiBootstrapConfig } from "./controllers/control-ui-bootstrap.ts";
-import { stopWorkboardLifecycleRefresh, stopWorkboardPolling } from "./controllers/workboard.ts";
+import { stopWorkboardLifecycleRefresh } from "./controllers/workboard.ts";
 import type { Tab } from "./navigation.ts";
 import type { ChatQueueItem } from "./ui-types.ts";
 
@@ -91,9 +91,23 @@ type LifecycleHost = {
   controlUiTabPaintSeq?: number;
   controlUiResponsivenessObserver?: { disconnect: () => void } | null;
   controlUiBootstrapReady?: Promise<void> | null;
+  requestUpdate?: () => void;
+  workboardVisibilityHandler?: () => void;
+  workboardFocusHandler?: () => void;
   popStateHandler: () => void;
   topbarObserver: ResizeObserver | null;
 };
+
+export function handleWorkboardVisibilityResume(
+  host: Pick<LifecycleHost, "tab" | "requestUpdate">,
+) {
+  if (
+    host.tab === "workboard" &&
+    (typeof document === "undefined" || document.visibilityState !== "hidden")
+  ) {
+    host.requestUpdate?.();
+  }
+}
 
 export function handleConnected(host: LifecycleHost) {
   const connectGeneration = ++host.connectGeneration;
@@ -116,6 +130,12 @@ export function handleConnected(host: LifecycleHost) {
     host.chatComposerProvisionalRestore = null;
   }
   syncThemeWithSettings(host as unknown as Parameters<typeof syncThemeWithSettings>[0]);
+  host.workboardVisibilityHandler ??= () => handleWorkboardVisibilityResume(host);
+  host.workboardFocusHandler ??= () => handleWorkboardVisibilityResume(host);
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", host.workboardVisibilityHandler);
+  }
+  window.addEventListener("focus", host.workboardFocusHandler);
   window.addEventListener("popstate", host.popStateHandler);
   if (host.connectGeneration === connectGeneration) {
     connectGateway(host as unknown as Parameters<typeof connectGateway>[0]);
@@ -198,11 +218,16 @@ export function handleDisconnected(host: LifecycleHost) {
   host.connectGeneration += 1;
   host.controlUiTabPaintSeq = (host.controlUiTabPaintSeq ?? 0) + 1;
   flushPendingChatComposerPersistence(host);
+  if (typeof document !== "undefined" && host.workboardVisibilityHandler) {
+    document.removeEventListener("visibilitychange", host.workboardVisibilityHandler);
+  }
+  if (host.workboardFocusHandler) {
+    window.removeEventListener("focus", host.workboardFocusHandler);
+  }
   window.removeEventListener("popstate", host.popStateHandler);
   stopNodesPolling(host as unknown as Parameters<typeof stopNodesPolling>[0]);
   stopLogsPolling(host as unknown as Parameters<typeof stopLogsPolling>[0]);
   stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
-  stopWorkboardPolling(host);
   stopWorkboardLifecycleRefresh(host);
   cancelHostAnimationFrame(host.chatScrollFrame);
   host.chatScrollFrame = null;

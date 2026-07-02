@@ -1,9 +1,13 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createStorageMock } from "../test-helpers/storage.ts";
-import { handleDisconnected, handleUpdated } from "./app-lifecycle.ts";
+import {
+  handleDisconnected,
+  handleUpdated,
+  handleWorkboardVisibilityResume,
+} from "./app-lifecycle.ts";
 import { loadChatComposerSnapshot } from "./chat/composer-persistence.ts";
-import { configureWorkboardPolling, getWorkboardState } from "./controllers/workboard.ts";
+import { getWorkboardState } from "./controllers/workboard.ts";
 import type { ChatQueueItem } from "./ui-types.ts";
 
 function createHost() {
@@ -88,29 +92,6 @@ describe("handleDisconnected", () => {
     vi.unstubAllGlobals();
   });
 
-  it("stops Workboard polling timers on teardown", async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal("window", {
-      removeEventListener: vi.fn(),
-    });
-    const host = createHost();
-    const client = {
-      request: vi.fn(async () => ({ cards: [], statuses: ["todo"] })),
-    };
-    getWorkboardState(host).autoRefreshIntervalMs = 5000;
-    configureWorkboardPolling({
-      host,
-      client: client as never,
-      enabled: true,
-    });
-
-    handleDisconnected(host as unknown as Parameters<typeof handleDisconnected>[0]);
-    await vi.advanceTimersByTimeAsync(5000);
-
-    expect(client.request).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
-  });
-
   it("stops Workboard lifecycle refresh state on teardown", () => {
     vi.stubGlobal("window", {
       removeEventListener: vi.fn(),
@@ -133,6 +114,23 @@ describe("handleDisconnected", () => {
     expect(state.lifecycleConfirmedTaskIds.size).toBe(0);
     expect(state.lifecycleTaskConfirmationStartedAt).toBeNull();
     vi.unstubAllGlobals();
+  });
+});
+
+describe("handleWorkboardVisibilityResume", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("requests a Workboard render only after the document becomes visible", () => {
+    const requestUpdate = vi.fn();
+    const host = { tab: "workboard" as const, requestUpdate };
+    vi.stubGlobal("document", { visibilityState: "hidden" });
+
+    handleWorkboardVisibilityResume(host);
+    expect(requestUpdate).not.toHaveBeenCalled();
+
+    vi.stubGlobal("document", { visibilityState: "visible" });
+    handleWorkboardVisibilityResume(host);
+    expect(requestUpdate).toHaveBeenCalledOnce();
   });
 });
 

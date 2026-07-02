@@ -12,6 +12,23 @@ import type { PluginRegistry } from "./registry.js";
 import { encodeStartupTraceSegment } from "./startup-trace-segment.js";
 import type { OpenClawPluginServiceContext, PluginLogger } from "./types.js";
 
+type PluginGatewayEventScope = Parameters<
+  NonNullable<OpenClawPluginServiceContext["gatewayEvents"]>["emit"]
+>[2]["scope"];
+
+type PluginGatewayEventBroadcast = (
+  event: string,
+  payload: unknown,
+  scope: PluginGatewayEventScope,
+) => void;
+
+const PLUGIN_GATEWAY_EVENT_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/;
+const PLUGIN_GATEWAY_EVENT_SCOPES = new Set<PluginGatewayEventScope>([
+  "operator.read",
+  "operator.write",
+  "operator.admin",
+]);
+
 const log = createSubsystemLogger("plugins");
 function createPluginLogger(): PluginLogger {
   return {
@@ -27,7 +44,9 @@ function createServiceContext(params: {
   startupTrace?: PluginServiceStartupTrace;
   workspaceDir?: string;
   service: PluginServiceRegistration;
-}): OpenClawPluginServiceContext {
+  gatewayEventBroadcast?: PluginGatewayEventBroadcast;
+}): { context: OpenClawPluginServiceContext; revoke: () => void } {
+  let active = true;
   const isDiagnosticsExporter =
     params.service?.pluginId === params.service?.service.id &&
     (params.service?.service.id === "diagnostics-otel" ||
@@ -36,7 +55,7 @@ function createServiceContext(params: {
     isDiagnosticsExporter &&
     (params.service?.origin === "bundled" || params.service?.trustedOfficialInstall === true);
 
-  return {
+  const context: OpenClawPluginServiceContext = {
     config: params.config,
     workspaceDir: params.workspaceDir,
     stateDir: STATE_DIR,
@@ -57,6 +76,39 @@ function createServiceContext(params: {
           },
         }
       : {}),
+    ...(params.gatewayEventBroadcast
+      ? {
+          gatewayEvents: {
+            emit: (event, payload, opts) => {
+              if (!active) {
+                throw new Error("plugin gateway event emitter is inactive");
+              }
+              const normalizedEvent = event.trim();
+              if (
+                !PLUGIN_GATEWAY_EVENT_NAME_PATTERN.test(normalizedEvent) ||
+                normalizedEvent.includes("..")
+              ) {
+                throw new Error(`invalid plugin gateway event name: ${event}`);
+              }
+              const scope: unknown = opts?.scope;
+              if (!PLUGIN_GATEWAY_EVENT_SCOPES.has(scope as PluginGatewayEventScope)) {
+                throw new Error(`invalid plugin gateway event scope: ${String(scope)}`);
+              }
+              params.gatewayEventBroadcast?.(
+                `plugin.${params.service.pluginId}.${normalizedEvent}`,
+                payload,
+                scope as PluginGatewayEventScope,
+              );
+            },
+          },
+        }
+      : {}),
+  };
+  return {
+    context,
+    revoke: () => {
+      active = false;
+    },
   };
 }
 
@@ -97,21 +149,25 @@ export async function startPluginServices(params: {
   config: OpenClawConfig;
   workspaceDir?: string;
   startupTrace?: PluginServiceStartupTrace;
+  gatewayEventBroadcast?: PluginGatewayEventBroadcast;
 }): Promise<PluginServicesHandle> {
   const running: Array<{
     id: string;
+    revoke: () => void;
     stop?: () => void | Promise<void>;
   }> = [];
   let failedCount = 0;
   for (const entry of params.registry.services) {
     const service = entry.service;
     const traceName = createPluginServiceTraceName(entry);
-    const serviceContext = createServiceContext({
+    const serviceContextHandle = createServiceContext({
       config: params.config,
       startupTrace: params.startupTrace,
       workspaceDir: params.workspaceDir,
       service: entry,
+      gatewayEventBroadcast: params.gatewayEventBroadcast,
     });
+    const serviceContext = serviceContextHandle.context;
     try {
       const startService = () =>
         withPluginHttpRouteRegistry(params.registry, () => service.start(serviceContext));
@@ -122,9 +178,11 @@ export async function startPluginServices(params: {
       }
       running.push({
         id: service.id,
+        revoke: serviceContextHandle.revoke,
         stop: service.stop ? () => service.stop?.(serviceContext) : undefined,
       });
     } catch (err) {
+      serviceContextHandle.revoke();
       failedCount += 1;
       const error = err as Error;
       log.error(
@@ -142,12 +200,17 @@ export async function startPluginServices(params: {
     stop: async () => {
       for (const entry of running.toReversed()) {
         if (!entry.stop) {
+          entry.revoke();
           continue;
         }
         try {
           await withPluginHttpRouteRegistry(params.registry, () => entry.stop?.());
         } catch (err) {
           log.warn(`plugin service stop failed (${entry.id}): ${String(err)}`);
+        } finally {
+          // The service context remains valid during its own cleanup, then is
+          // revoked even when cleanup fails so old callbacks cannot outlive it.
+          entry.revoke();
         }
       }
     },

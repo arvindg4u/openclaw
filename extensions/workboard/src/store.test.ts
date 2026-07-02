@@ -49,6 +49,179 @@ function statfsFixture(type: number): ReturnType<typeof fs.statfsSync> {
 }
 
 describe("WorkboardStore", () => {
+  it("notifies successful mutations with monotonic revisions only", async () => {
+    const store = new WorkboardStore(createMemoryStore());
+    const changes = vi.fn();
+    const unsubscribe = store.subscribeChanges(changes);
+
+    const card = await store.create({ title: "Track changes" });
+    await store.update(card.id, { notes: "updated" });
+    await store.list();
+    await expect(store.update("missing", { notes: "failed" })).rejects.toThrow("card not found");
+
+    const observed = changes.mock.calls.map(([change]) => change);
+    expect(observed.map((change) => change.revision)).toEqual([1, 2]);
+    expect(observed[0]?.epoch).toEqual(expect.any(String));
+    expect(observed[1]?.epoch).toBe(observed[0]?.epoch);
+    unsubscribe();
+    await store.update(card.id, { notes: "after unsubscribe" });
+    expect(changes).toHaveBeenCalledTimes(2);
+  });
+
+  it("isolates change listener failures from committed mutations", async () => {
+    const store = new WorkboardStore(createMemoryStore());
+    store.subscribeChanges(() => {
+      throw new Error("listener failed");
+    });
+
+    await expect(store.create({ title: "Persist anyway" })).resolves.toMatchObject({
+      title: "Persist anyway",
+    });
+  });
+
+  it("does not notify successful commands that persist no visible change", async () => {
+    const store = new WorkboardStore(createMemoryStore());
+    const changes = vi.fn();
+    store.subscribeChanges(changes);
+    await store.create({
+      title: "Idempotent card",
+      idempotencyKey: "idempotent-card",
+    });
+
+    await store.create({
+      title: "Duplicate card",
+      idempotencyKey: "idempotent-card",
+    });
+    await store.delete("missing-card");
+    expect(changes).toHaveBeenCalledOnce();
+
+    const emptyStore = new WorkboardStore(createMemoryStore());
+    const emptyChanges = vi.fn();
+    emptyStore.subscribeChanges(emptyChanges);
+    await emptyStore.promoteReady();
+    await emptyStore.dispatch();
+    await emptyStore.refreshDiagnostics();
+    expect(emptyChanges).not.toHaveBeenCalled();
+  });
+
+  it("notifies when a failed command leaves a visible partial commit", async () => {
+    const cardStore = createMemoryStore();
+    const subscriptionStore = createMemoryStore<PersistedWorkboardNotificationSubscription>();
+    subscriptionStore.entries = async () => {
+      throw new Error("subscription cleanup failed");
+    };
+    const store = new WorkboardStore(cardStore, { subscriptions: subscriptionStore });
+    const card = await store.create({ title: "Partially deleted" });
+    const changes = vi.fn();
+    store.subscribeChanges(changes);
+
+    await expect(store.delete(card.id)).rejects.toThrow("subscription cleanup failed");
+
+    expect(changes).toHaveBeenCalledWith({ epoch: expect.any(String), revision: 2 });
+    await expect(store.get(card.id)).resolves.toBeUndefined();
+  });
+
+  it("announces a new store epoch for hot service reconciliation", () => {
+    const store = new WorkboardStore(createMemoryStore());
+    const changes = vi.fn();
+    store.subscribeChanges(changes);
+
+    store.announceChangeEpoch();
+
+    expect(changes).toHaveBeenCalledWith({ epoch: expect.any(String), revision: 1 });
+  });
+
+  it("uses a new change epoch for each store lifetime", async () => {
+    const firstStore = new WorkboardStore(createMemoryStore());
+    const secondStore = new WorkboardStore(createMemoryStore());
+    const firstChange = vi.fn();
+    const secondChange = vi.fn();
+    firstStore.subscribeChanges(firstChange);
+    secondStore.subscribeChanges(secondChange);
+
+    await firstStore.create({ title: "First lifetime" });
+    await secondStore.create({ title: "Second lifetime" });
+
+    expect(firstChange.mock.calls[0]?.[0]).toMatchObject({ revision: 1 });
+    expect(secondChange.mock.calls[0]?.[0]).toMatchObject({ revision: 1 });
+    expect(firstChange.mock.calls[0]?.[0].epoch).not.toBe(secondChange.mock.calls[0]?.[0].epoch);
+  });
+
+  it("notifies when another sqlite connection commits", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-workboard-external-"));
+    const dbPath = path.join(dir, "workboard.sqlite");
+    const readerStores = createWorkboardSqliteStores({ dbPath });
+    const writerStores = createWorkboardSqliteStores({ dbPath });
+    try {
+      const reader = new WorkboardStore(readerStores.cards, {
+        boards: readerStores.boards,
+        subscriptions: readerStores.subscriptions,
+        attachments: readerStores.attachments,
+        dataVersion: readerStores.dataVersion,
+      });
+      const writer = new WorkboardStore(writerStores.cards, {
+        boards: writerStores.boards,
+        subscriptions: writerStores.subscriptions,
+        attachments: writerStores.attachments,
+        dataVersion: writerStores.dataVersion,
+      });
+      const changes = vi.fn();
+      reader.subscribeChanges(changes);
+
+      expect(reader.reconcileExternalChanges()).toBe(false);
+      await writer.create({ title: "Created by another process" });
+      expect(reader.reconcileExternalChanges()).toBe(true);
+      expect(changes).toHaveBeenCalledWith({
+        epoch: expect.any(String),
+        revision: 1,
+      });
+      expect(await reader.list()).toEqual([
+        expect.objectContaining({ title: "Created by another process" }),
+      ]);
+      expect(reader.reconcileExternalChanges()).toBe(false);
+    } finally {
+      writerStores.close();
+      readerStores.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("announces an epoch when external state predates a hot-reloaded store", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-workboard-reload-"));
+    const dbPath = path.join(dir, "workboard.sqlite");
+    const writerStores = createWorkboardSqliteStores({ dbPath });
+    let readerStores: ReturnType<typeof createWorkboardSqliteStores> | undefined;
+    try {
+      const writer = new WorkboardStore(writerStores.cards, {
+        boards: writerStores.boards,
+        subscriptions: writerStores.subscriptions,
+        attachments: writerStores.attachments,
+        dataVersion: writerStores.dataVersion,
+      });
+      await writer.create({ title: "Committed before reload" });
+
+      readerStores = createWorkboardSqliteStores({ dbPath });
+      const reader = new WorkboardStore(readerStores.cards, {
+        boards: readerStores.boards,
+        subscriptions: readerStores.subscriptions,
+        attachments: readerStores.attachments,
+        dataVersion: readerStores.dataVersion,
+      });
+      const changes = vi.fn();
+      reader.subscribeChanges(changes);
+      reader.announceChangeEpoch();
+
+      expect(changes).toHaveBeenCalledWith({ epoch: expect.any(String), revision: 1 });
+      await expect(reader.list()).resolves.toEqual([
+        expect.objectContaining({ title: "Committed before reload" }),
+      ]);
+    } finally {
+      readerStores?.close();
+      writerStores.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("persists boards, cards, subscriptions, and attachment blobs in sqlite", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-workboard-sqlite-"));
     const dbPath = path.join(dir, "workboard.sqlite");

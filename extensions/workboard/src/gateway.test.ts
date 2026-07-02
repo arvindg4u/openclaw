@@ -42,7 +42,10 @@ describe("workboard gateway methods", () => {
       ),
     } as unknown as OpenClawPluginApi;
 
-    registerWorkboardGatewayMethods({ api, store: new WorkboardStore(createMemoryStore()) });
+    const store = new WorkboardStore(createMemoryStore());
+    const changes = vi.fn();
+    store.subscribeChanges(changes);
+    registerWorkboardGatewayMethods({ api, store });
 
     expect([...methods.keys()]).toEqual([
       "workboard.cards.list",
@@ -128,6 +131,11 @@ describe("workboard gateway methods", () => {
     await listHandler?.({ params: {}, respond: listRespond } as never);
     expect(listRespond.mock.calls[0]?.[1]).toMatchObject({
       cards: [expect.objectContaining({ title: "Investigate queue drift" })],
+    });
+    expect(changes).toHaveBeenCalledTimes(1);
+    expect(changes).toHaveBeenLastCalledWith({
+      epoch: expect.any(String),
+      revision: 1,
     });
 
     const eventsRespond = vi.fn();

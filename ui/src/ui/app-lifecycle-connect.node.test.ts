@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatQueueItem } from "./ui-types.ts";
 
 const { applySettingsFromUrlMock, connectGatewayMock, loadBootstrapMock, restoreComposerMock } =
@@ -113,6 +113,8 @@ describe("handleConnected", () => {
     });
   });
 
+  afterEach(() => vi.unstubAllGlobals());
+
   it("starts the first gateway connect without waiting for bootstrap", async () => {
     const bootstrap = createDeferred();
     loadBootstrapMock.mockReturnValueOnce(bootstrap.promise);
@@ -209,6 +211,18 @@ describe("handleConnected", () => {
     nodesHost.tab = "nodes";
     handleConnected(nodesHost as never);
     expect(startNodesPollingMock).toHaveBeenCalledWith(nodesHost);
+  });
+
+  it("registers Workboard visibility and focus resume handlers", () => {
+    loadBootstrapMock.mockResolvedValue(undefined);
+    const documentAddEventListener = vi.fn();
+    vi.stubGlobal("document", { addEventListener: documentAddEventListener });
+    const host = createHost();
+
+    handleConnected(host as never);
+
+    expect(documentAddEventListener).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
+    expect(window.addEventListener).toHaveBeenCalledWith("focus", expect.any(Function));
   });
 
   it("keeps realtime Talk turns pinned in the chat flow", () => {

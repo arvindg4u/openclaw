@@ -1,6 +1,7 @@
 // Workboard plugin entrypoint registers its OpenClaw integration.
 import { definePluginEntry } from "./api.js";
 import { registerWorkboardGatewayMethods } from "./runtime-api.js";
+import { createWorkboardChangeEventService } from "./src/change-events.js";
 import { registerWorkboardCommand } from "./src/command.js";
 import { WorkboardStore } from "./src/store.js";
 import { createWorkboardTools } from "./src/tools.js";
@@ -11,6 +12,7 @@ export default definePluginEntry({
   description: "Dashboard workboard for agent-owned issues and sessions.",
   register(api) {
     const store = WorkboardStore.openSqlite();
+    api.registerService(createWorkboardChangeEventService(store));
     registerWorkboardGatewayMethods({ api, store });
     registerWorkboardCommand({ api, store });
     api.registerCli(

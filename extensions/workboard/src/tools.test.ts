@@ -37,6 +37,8 @@ describe("workboard tools", () => {
       },
     } as unknown as OpenClawPluginApi;
     const workboardStore = new WorkboardStore(keyed);
+    const changes = vi.fn();
+    workboardStore.subscribeChanges(changes);
     const tools = createWorkboardTools({
       api,
       store: workboardStore,
@@ -105,9 +107,16 @@ describe("workboard tools", () => {
     );
     expect(released).toMatchObject({ status: "review" });
     expect((released.metadata as { claim?: unknown } | undefined)?.claim).toBeUndefined();
+    const observedChanges = changes.mock.calls.map(([change]) => change);
+    expect(observedChanges.map((change) => change.revision)).toEqual([1, 2, 3]);
+    expect(observedChanges[0]?.epoch).toEqual(expect.any(String));
+    expect(observedChanges.every((change) => change.epoch === observedChanges[0]?.epoch)).toBe(
+      true,
+    );
 
     const list = readPayload(await byName.get("workboard_list")?.execute("call-5", {}));
     expect(list.cards).toEqual([expect.objectContaining({ id: "card-1" })]);
+    expect(changes).toHaveBeenCalledTimes(3);
     const archivedList = readPayload(
       await byName.get("workboard_list")?.execute("call-6", { includeArchived: true }),
     );

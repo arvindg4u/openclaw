@@ -12,6 +12,8 @@ import type {
   GatewayBroadcastFn,
   GatewayBroadcastOpts,
   GatewayBroadcastToConnIdsFn,
+  GatewayPluginEventBroadcastFn,
+  GatewayPluginEventScope,
 } from "./server-broadcast-types.js";
 import { MAX_BUFFERED_BYTES } from "./server-constants.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
@@ -54,6 +56,11 @@ const EVENT_SCOPE_GUARDS: Record<string, string[]> = {
 // scope would otherwise reject non-operator roles. Nodes act on these updates
 // (e.g. reconfiguring wake-word triggers).
 const NODE_ALLOWED_EVENTS = new Set<string>(["voicewake.changed", "voicewake.routing.changed"]);
+const PLUGIN_EVENT_SCOPES = new Set<GatewayPluginEventScope>([
+  READ_SCOPE,
+  WRITE_SCOPE,
+  ADMIN_SCOPE,
+]);
 
 function serializeFrameField(name: "payload" | "stateVersion", value: unknown): string {
   // Serialize one field through JSON.stringify so embedded values keep JSON
@@ -64,12 +71,38 @@ function serializeFrameField(name: "payload" | "stateVersion", value: unknown): 
   return fieldJSON.startsWith(prefix) ? `,${keyJSON}:${fieldJSON.slice(prefix.length, -1)}` : "";
 }
 
-function hasEventScope(client: GatewayWsClient, event: string): boolean {
-  const required = EVENT_SCOPE_GUARDS[event];
+function hasEventScope(
+  client: GatewayWsClient,
+  event: string,
+  explicitPluginScope?: GatewayPluginEventScope,
+): boolean {
+  const hasRequiredScopes = (required: string[]): boolean => {
+    if (required.length === 0) {
+      return true;
+    }
+    const role = client.connect.role ?? "operator";
+    if (role !== "operator") {
+      return role === "node" && NODE_ALLOWED_EVENTS.has(event);
+    }
+    const scopes = Array.isArray(client.connect.scopes) ? client.connect.scopes : [];
+    if (scopes.includes(ADMIN_SCOPE)) {
+      return true;
+    }
+    if (required.includes(READ_SCOPE)) {
+      return scopes.includes(READ_SCOPE) || scopes.includes(WRITE_SCOPE);
+    }
+    return required.some((scope) => scopes.includes(scope));
+  };
+  const reservedScope = EVENT_SCOPE_GUARDS[event];
+  if (reservedScope && !hasRequiredScopes(reservedScope)) {
+    return false;
+  }
+  if (explicitPluginScope && !hasRequiredScopes([explicitPluginScope])) {
+    return false;
+  }
   // Plugin-defined gateway broadcast events (plugin.* namespace) are allowed
-  // for operator.write and operator.admin scopes. Explicit plugin.* entries
-  // in EVENT_SCOPE_GUARDS take precedence (e.g., plugin.approval.*).
-  if (!required && event.startsWith("plugin.")) {
+  // for operator.write and operator.admin scopes when no explicit scope exists.
+  if (!reservedScope && !explicitPluginScope && event.startsWith("plugin.")) {
     const role = client.connect.role ?? "operator";
     if (role !== "operator") {
       return false;
@@ -77,24 +110,10 @@ function hasEventScope(client: GatewayWsClient, event: string): boolean {
     const scopes = Array.isArray(client.connect.scopes) ? client.connect.scopes : [];
     return scopes.includes(WRITE_SCOPE) || scopes.includes(ADMIN_SCOPE);
   }
-  if (!required) {
+  if (!reservedScope && !explicitPluginScope) {
     return false;
   }
-  if (required.length === 0) {
-    return true;
-  }
-  const role = client.connect.role ?? "operator";
-  if (role !== "operator") {
-    return role === "node" && NODE_ALLOWED_EVENTS.has(event);
-  }
-  const scopes = Array.isArray(client.connect.scopes) ? client.connect.scopes : [];
-  if (scopes.includes(ADMIN_SCOPE)) {
-    return true;
-  }
-  if (required.includes(READ_SCOPE)) {
-    return scopes.includes(READ_SCOPE) || scopes.includes(WRITE_SCOPE);
-  }
-  return required.some((scope) => scopes.includes(scope));
+  return true;
 }
 
 export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient> }) {
@@ -106,6 +125,7 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
     payload: unknown,
     opts?: GatewayBroadcastOpts,
     targetConnIds?: ReadonlySet<string>,
+    explicitPluginScope?: GatewayPluginEventScope,
   ) => {
     if (params.clients.size === 0) {
       return;
@@ -150,7 +170,7 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
       if (targetConnIds && !targetConnIds.has(c.connId)) {
         continue;
       }
-      if (!hasEventScope(c, event)) {
+      if (!hasEventScope(c, event, explicitPluginScope)) {
         continue;
       }
       const nextSeq = (clientSeq.get(c) ?? 0) + 1;
@@ -205,5 +225,15 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
     broadcastInternal(event, payload, opts, connIds);
   };
 
-  return { broadcast, broadcastToConnIds };
+  const broadcastPluginEvent: GatewayPluginEventBroadcastFn = (event, payload, scope) => {
+    if (!event.startsWith("plugin.")) {
+      throw new Error(`plugin gateway event must use the plugin.* namespace: ${event}`);
+    }
+    if (!PLUGIN_EVENT_SCOPES.has(scope)) {
+      throw new Error(`invalid plugin gateway event scope: ${scope}`);
+    }
+    broadcastInternal(event, payload, undefined, undefined, scope);
+  };
+
+  return { broadcast, broadcastToConnIds, broadcastPluginEvent };
 }

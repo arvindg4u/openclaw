@@ -207,6 +207,10 @@ export type WorkboardDispatchResult = {
   orchestrated: WorkboardCard[];
   count: number;
 };
+export type WorkboardChange = {
+  epoch: string;
+  revision: number;
+};
 export type WorkboardListOptions = {
   boardId?: unknown;
 };
@@ -2263,9 +2267,15 @@ function compareNotifications(a: WorkboardNotification, b: WorkboardNotification
 export class WorkboardStore {
   private mutationQueue: Promise<unknown> = Promise.resolve();
   private lastNotificationSequence = 0;
+  private readonly changeEpoch = randomUUID();
+  private changeRevision = 0;
+  private visibleMutationRevision = 0;
+  private externalDataVersion: number | undefined;
+  private readonly changeListeners = new Set<(change: WorkboardChange) => void>();
   private readonly boardStore: WorkboardKeyedStore<PersistedWorkboardBoard>;
   private readonly subscriptionStore: WorkboardKeyedStore<PersistedWorkboardNotificationSubscription>;
   private readonly attachmentStore: WorkboardKeyedStore<PersistedWorkboardAttachment>;
+  private readonly readDataVersion?: () => number;
 
   constructor(
     private readonly store: WorkboardKeyedStore,
@@ -2273,6 +2283,7 @@ export class WorkboardStore {
       boards?: WorkboardKeyedStore<PersistedWorkboardBoard>;
       subscriptions?: WorkboardKeyedStore<PersistedWorkboardNotificationSubscription>;
       attachments?: WorkboardKeyedStore<PersistedWorkboardAttachment>;
+      dataVersion?: () => number;
     } = {},
   ) {
     this.boardStore =
@@ -2282,15 +2293,94 @@ export class WorkboardStore {
       (store as unknown as WorkboardKeyedStore<PersistedWorkboardNotificationSubscription>);
     this.attachmentStore =
       stores.attachments ?? (store as unknown as WorkboardKeyedStore<PersistedWorkboardAttachment>);
+    this.readDataVersion = stores.dataVersion;
+    this.externalDataVersion = stores.dataVersion?.();
   }
 
-  private async enqueueMutation<T>(run: () => Promise<T>): Promise<T> {
-    const result = this.mutationQueue.then(run, run);
+  subscribeChanges(listener: (change: WorkboardChange) => void): () => void {
+    this.changeListeners.add(listener);
+    return () => this.changeListeners.delete(listener);
+  }
+
+  announceChangeEpoch(): void {
+    this.emitChanged();
+  }
+
+  private emitChanged() {
+    const change = { epoch: this.changeEpoch, revision: ++this.changeRevision };
+    for (const listener of this.changeListeners) {
+      try {
+        listener(change);
+      } catch {
+        // A notification consumer must not turn an already-persisted mutation into a failure.
+      }
+    }
+  }
+
+  reconcileExternalChanges(): boolean {
+    const readDataVersion = this.readDataVersion;
+    if (!readDataVersion) {
+      return false;
+    }
+    const current = readDataVersion();
+    if (this.externalDataVersion === undefined) {
+      this.externalDataVersion = current;
+      return false;
+    }
+    if (current === this.externalDataVersion) {
+      return false;
+    }
+    this.externalDataVersion = current;
+    this.emitChanged();
+    return true;
+  }
+
+  private async enqueueMutation<T>(
+    run: () => Promise<T>,
+    options: { notify?: boolean } = {},
+  ): Promise<T> {
+    const runAndNotify = async () => {
+      const visibleMutationRevision = this.visibleMutationRevision;
+      try {
+        return await run();
+      } finally {
+        if (options.notify !== false && this.visibleMutationRevision !== visibleMutationRevision) {
+          this.emitChanged();
+        }
+      }
+    };
+    const result = this.mutationQueue.then(runAndNotify, runAndNotify);
     this.mutationQueue = result.then(
       () => undefined,
       () => undefined,
     );
     return await result;
+  }
+
+  private async registerCard(key: string, value: PersistedWorkboardCard): Promise<void> {
+    await this.store.register(key, value);
+    this.visibleMutationRevision += 1;
+  }
+
+  private async deleteCard(key: string): Promise<boolean> {
+    const deleted = await this.store.delete(key);
+    if (deleted) {
+      this.visibleMutationRevision += 1;
+    }
+    return deleted;
+  }
+
+  private async registerBoard(key: string, value: PersistedWorkboardBoard): Promise<void> {
+    await this.boardStore.register(key, value);
+    this.visibleMutationRevision += 1;
+  }
+
+  private async deleteBoardRecord(key: string): Promise<boolean> {
+    const deleted = await this.boardStore.delete(key);
+    if (deleted) {
+      this.visibleMutationRevision += 1;
+    }
+    return deleted;
   }
 
   private async updateMetadata(
@@ -2402,7 +2492,7 @@ export class WorkboardStore {
       const id = normalizeBoardIdRequired(input.id);
       const existing = await this.boardStore.lookup(id);
       const board = normalizeBoardMetadata({ ...input, id }, existing?.board);
-      await this.boardStore.register(id, { version: 1, board });
+      await this.registerBoard(id, { version: 1, board });
       return board;
     });
   }
@@ -2425,7 +2515,7 @@ export class WorkboardStore {
           await this.subscriptionStore.delete(entry.key);
         }
       }
-      return { deleted: await this.boardStore.delete(boardId) };
+      return { deleted: await this.deleteBoardRecord(boardId) };
     });
   }
 
@@ -2613,7 +2703,7 @@ export class WorkboardStore {
       ...(completedAt ? { completedAt } : {}),
       ...(!metadataIsEmpty(syncedMetadata) ? { metadata: syncedMetadata } : {}),
     };
-    await this.store.register(card.id, { version: 1, card });
+    await this.registerCard(card.id, { version: 1, card });
     try {
       for (const parent of parentCards) {
         card = await this.linkCardsDirect(parent.id, card.id, now, {
@@ -2622,7 +2712,7 @@ export class WorkboardStore {
         });
       }
     } catch (error) {
-      await this.store.delete(card.id);
+      await this.deleteCard(card.id);
       await this.removeReferencesToCard(card.id);
       throw error;
     }
@@ -2792,7 +2882,7 @@ export class WorkboardStore {
     if (metadataIsEmpty(next.metadata)) {
       delete next.metadata;
     }
-    await this.store.register(next.id, { version: 1, card: next });
+    await this.registerCard(next.id, { version: 1, card: next });
     await this.deleteDetachedAttachments(existing, next);
     return next;
   }
@@ -2841,7 +2931,7 @@ export class WorkboardStore {
 
   private async deleteDirect(id: string): Promise<{ deleted: boolean }> {
     const cardId = id.trim();
-    const deleted = await this.store.delete(cardId);
+    const deleted = await this.deleteCard(cardId);
     if (!deleted) {
       return { deleted: false };
     }
@@ -3055,7 +3145,7 @@ export class WorkboardStore {
       ...(!metadataIsEmpty(metadata) ? { metadata } : { metadata: undefined }),
       events: appendEvent(card, { kind: "dispatch" }, now),
     });
-    await this.store.register(card.id, { version: 1, card: next });
+    await this.registerCard(card.id, { version: 1, card: next });
     return next;
   }
 
@@ -3085,7 +3175,7 @@ export class WorkboardStore {
       ...(!metadataIsEmpty(metadata) ? { metadata } : { metadata: undefined }),
       events: appendEvent(card, { kind: "orchestration" }, now),
     });
-    await this.store.register(card.id, { version: 1, card: next });
+    await this.registerCard(card.id, { version: 1, card: next });
     return next;
   }
 
@@ -3824,7 +3914,7 @@ export class WorkboardStore {
         ...updated,
         events: appendEvent(updated, { kind: "specified" }, now),
       };
-      await this.store.register(specified.id, { version: 1, card: specified });
+      await this.registerCard(specified.id, { version: 1, card: specified });
       return specified;
     });
   }
@@ -3920,7 +4010,7 @@ export class WorkboardStore {
           ...updatedParent,
           events: appendEvent(updatedParent, { kind: "decomposed" }),
         };
-        await this.store.register(decomposedParent.id, { version: 1, card: decomposedParent });
+        await this.registerCard(decomposedParent.id, { version: 1, card: decomposedParent });
         return { parent: decomposedParent, children };
       } catch (error) {
         for (const child of children.toReversed()) {
@@ -3929,9 +4019,9 @@ export class WorkboardStore {
           }
         }
         for (const child of reusedChildSnapshots.values()) {
-          await this.store.register(child.id, { version: 1, card: child });
+          await this.registerCard(child.id, { version: 1, card: child });
         }
-        await this.store.register(parent.id, { version: 1, card: parent });
+        await this.registerCard(parent.id, { version: 1, card: parent });
         throw error;
       }
     });
@@ -3940,11 +4030,14 @@ export class WorkboardStore {
   async subscribeNotifications(
     input: WorkboardNotificationSubscribeInput,
   ): Promise<WorkboardNotificationSubscription> {
-    return await this.enqueueMutation(async () => {
-      const subscription = normalizeNotificationSubscription(input);
-      await this.subscriptionStore.register(subscription.id, { version: 1, subscription });
-      return subscription;
-    });
+    return await this.enqueueMutation(
+      async () => {
+        const subscription = normalizeNotificationSubscription(input);
+        await this.subscriptionStore.register(subscription.id, { version: 1, subscription });
+        return subscription;
+      },
+      { notify: false },
+    );
   }
 
   async listNotificationSubscriptions(
@@ -4074,30 +4167,33 @@ export class WorkboardStore {
     if (!subscriptionId) {
       throw new Error("subscriptionId is required to advance notification events.");
     }
-    return await this.enqueueMutation(async () => {
-      const result = await this.collectNotificationEvents({ ...input, subscriptionId });
-      if (!result.subscription || !result.events.length) {
-        return result;
-      }
-      const last = result.events.at(-1)!;
-      const lastSequence = notificationSequence(last);
-      const subscription: WorkboardNotificationSubscription = {
-        ...result.subscription,
-        lastEventAt: last.createdAt,
-        lastEventId: last.id,
-        ...(lastSequence !== undefined ? { lastEventSequence: lastSequence } : {}),
-        updatedAt: Date.now(),
-      };
-      delete subscription.deliveredEventIds;
-      if (lastSequence === undefined) {
-        delete subscription.lastEventSequence;
-      }
-      await this.subscriptionStore.register(subscription.id, {
-        version: 1,
-        subscription,
-      });
-      return { subscription, events: result.events };
-    });
+    return await this.enqueueMutation(
+      async () => {
+        const result = await this.collectNotificationEvents({ ...input, subscriptionId });
+        if (!result.subscription || !result.events.length) {
+          return result;
+        }
+        const last = result.events.at(-1)!;
+        const lastSequence = notificationSequence(last);
+        const subscription: WorkboardNotificationSubscription = {
+          ...result.subscription,
+          lastEventAt: last.createdAt,
+          lastEventId: last.id,
+          ...(lastSequence !== undefined ? { lastEventSequence: lastSequence } : {}),
+          updatedAt: Date.now(),
+        };
+        delete subscription.deliveredEventIds;
+        if (lastSequence === undefined) {
+          delete subscription.lastEventSequence;
+        }
+        await this.subscriptionStore.register(subscription.id, {
+          version: 1,
+          subscription,
+        });
+        return { subscription, events: result.events };
+      },
+      { notify: false },
+    );
   }
 
   async dispatch(
@@ -4282,7 +4378,7 @@ export class WorkboardStore {
           ...latest,
           metadata: metadataIsEmpty(metadata) ? undefined : metadata,
         });
-        await this.store.register(next.id, { version: 1, card: next });
+        await this.registerCard(next.id, { version: 1, card: next });
         if (diagnostics.length > 0) {
           rows.push({ card: next, diagnostics });
         }
@@ -4336,6 +4432,7 @@ export class WorkboardStore {
       boards: stores.boards,
       subscriptions: stores.subscriptions,
       attachments: stores.attachments,
+      dataVersion: stores.dataVersion,
     });
   }
 }

@@ -40,6 +40,7 @@ export type WorkboardSqliteStores = {
   boards: WorkboardKeyedStore<PersistedWorkboardBoard>;
   subscriptions: WorkboardKeyedStore<PersistedWorkboardNotificationSubscription>;
   attachments: WorkboardKeyedStore<PersistedWorkboardAttachment>;
+  dataVersion: () => number;
   close: () => void;
 };
 
@@ -1422,6 +1423,8 @@ export function createWorkboardSqliteStores(
     boards: new WorkboardSqliteBoardStore(db),
     subscriptions: new WorkboardSqliteSubscriptionStore(db),
     attachments: new WorkboardSqliteAttachmentStore(db),
+    dataVersion: () =>
+      requiredNumber(db.prepare("PRAGMA data_version").get() as Row, "data_version"),
     close: () => {
       maintenance.close();
       db.close();

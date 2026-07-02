@@ -322,6 +322,49 @@ For CLI registrars specifically:
   rendering help
 - use `commands` alone only for eager compatibility paths
 
+### Emit Gateway events from a service
+
+Long-lived plugin services can publish small invalidation or status events through
+`ctx.gatewayEvents` when they run inside the Gateway:
+
+```typescript
+let unsubscribe: (() => void) | undefined;
+
+api.registerService({
+  id: "catalog-events",
+  start(ctx) {
+    unsubscribe = source.onChanged((change) => {
+      ctx.gatewayEvents?.emit(
+        "changed",
+        {
+          epoch: change.epoch,
+          revision: change.revision,
+        },
+        {
+          scope: "operator.read",
+        },
+      );
+    });
+  },
+  stop() {
+    unsubscribe?.();
+    unsubscribe = undefined;
+  },
+});
+```
+
+OpenClaw prefixes the event with the owning plugin ID, producing an event such
+as `plugin.catalog.changed`. Event names cannot escape that namespace. Every
+emission must declare `operator.read`, `operator.write`, or `operator.admin`;
+clients without the required operator access do not receive it. Built-in event
+guards remain authoritative when a plugin namespace overlaps a reserved event;
+clients must satisfy both the declared scope and the built-in guard.
+
+Keep payloads small. Prefer revision or invalidation facts and let clients read
+canonical plugin state through a Gateway method. The capability is optional
+because services can also run outside a live Gateway; use optional chaining and
+own subscriptions in the service `start`/`stop` lifecycle.
+
 ## Plugin shapes
 
 OpenClaw classifies loaded plugins by their registration behavior:

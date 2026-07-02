@@ -5,6 +5,8 @@ type GatewayBroadcastStateVersion = {
   health?: number;
 };
 
+export type GatewayPluginEventScope = "operator.read" | "operator.write" | "operator.admin";
+
 /** Options for gateway websocket broadcasts. */
 export type GatewayBroadcastOpts = {
   dropIfSlow?: boolean;
@@ -24,4 +26,11 @@ export type GatewayBroadcastToConnIdsFn = (
   payload: unknown,
   connIds: ReadonlySet<string>,
   opts?: GatewayBroadcastOpts,
+) => void;
+
+/** Broadcasts a plugin-owned event with an explicit operator scope. */
+export type GatewayPluginEventBroadcastFn = (
+  event: string,
+  payload: unknown,
+  scope: GatewayPluginEventScope,
 ) => void;

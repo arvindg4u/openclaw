@@ -168,6 +168,122 @@ describe("startPluginServices", () => {
     expectServiceLifecycleState({ starts, stops, contexts, config });
   });
 
+  it("binds gateway events to the owning plugin namespace and explicit scope", async () => {
+    const gatewayEventBroadcast = vi.fn();
+    const service: OpenClawPluginService = {
+      id: "events",
+      start: (ctx) => {
+        ctx.gatewayEvents?.emit("changed", { revision: 1 }, { scope: "operator.read" });
+      },
+    };
+
+    await startPluginServices({
+      registry: createRegistry([service], "workboard"),
+      config: createServiceConfig(),
+      gatewayEventBroadcast,
+    });
+
+    expect(gatewayEventBroadcast).toHaveBeenCalledWith(
+      "plugin.workboard.changed",
+      { revision: 1 },
+      "operator.read",
+    );
+  });
+
+  it("rejects gateway event names that escape the plugin namespace", async () => {
+    const service: OpenClawPluginService = {
+      id: "events",
+      start: (ctx) => {
+        ctx.gatewayEvents?.emit("other..changed", {}, { scope: "operator.read" });
+      },
+    };
+
+    await startPluginServices({
+      registry: createRegistry([service], "workboard"),
+      config: createServiceConfig(),
+      gatewayEventBroadcast: vi.fn(),
+    });
+
+    expect(requireLoggerErrorMessage()).toContain("invalid plugin gateway event name");
+  });
+
+  it("rejects gateway event scopes outside the public plugin contract", async () => {
+    let context: OpenClawPluginServiceContext | undefined;
+    const gatewayEventBroadcast = vi.fn();
+    await startPluginServices({
+      registry: createRegistry(
+        [
+          {
+            id: "events",
+            start: (ctx) => {
+              context = ctx;
+            },
+          },
+        ],
+        "workboard",
+      ),
+      config: createServiceConfig(),
+      gatewayEventBroadcast,
+    });
+    const emit = context?.gatewayEvents?.emit as unknown as (
+      event: string,
+      payload: unknown,
+      opts: { scope: string },
+    ) => void;
+
+    for (const scope of ["operator.pairing", "operator.approvals", "operator.unknown"]) {
+      expect(() => emit("changed", {}, { scope })).toThrow("invalid plugin gateway event scope");
+    }
+    expect(gatewayEventBroadcast).not.toHaveBeenCalled();
+  });
+
+  it("revokes gateway event emitters after stop and failed start", async () => {
+    const contexts: OpenClawPluginServiceContext[] = [];
+    const gatewayEventBroadcast = vi.fn();
+    const handle = await startPluginServices({
+      registry: createRegistry(
+        [
+          {
+            id: "events",
+            start: (ctx) => {
+              contexts.push(ctx);
+            },
+            stop: (ctx) => {
+              ctx.gatewayEvents?.emit("stopping", {}, { scope: "operator.read" });
+            },
+          },
+          {
+            id: "failed-events",
+            start: (ctx) => {
+              contexts.push(ctx);
+              throw new Error("start failed");
+            },
+          },
+        ],
+        "workboard",
+      ),
+      config: createServiceConfig(),
+      gatewayEventBroadcast,
+    });
+    const activeEmitter = contexts[0]?.gatewayEvents;
+    const failedEmitter = contexts[1]?.gatewayEvents;
+
+    activeEmitter?.emit("changed", {}, { scope: "operator.read" });
+    expect(() => failedEmitter?.emit("changed", {}, { scope: "operator.read" })).toThrow(
+      "inactive",
+    );
+    await handle.stop();
+    expect(() => activeEmitter?.emit("changed", {}, { scope: "operator.read" })).toThrow(
+      "inactive",
+    );
+    expect(gatewayEventBroadcast).toHaveBeenCalledTimes(2);
+    expect(gatewayEventBroadcast).toHaveBeenLastCalledWith(
+      "plugin.workboard.stopping",
+      {},
+      "operator.read",
+    );
+  });
+
   it("registers dynamic HTTP routes into the service registry scope", async () => {
     const serviceRegistry = createRegistry([
       {

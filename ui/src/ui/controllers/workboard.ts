@@ -341,10 +341,6 @@ export type WorkboardDispatchSummary = {
   orchestrated: number;
 };
 
-export type WorkboardAutoRefreshIntervalMs = 0 | 5000 | 15000 | 30000 | 60000;
-
-export type WorkboardRefreshSource = "initial" | "manual" | "poll";
-
 export type WorkboardViewPresetId =
   | "all"
   | "default_agent"
@@ -355,6 +351,8 @@ export type WorkboardViewPresetId =
   | "stale"
   | "missing_proof"
   | "recently_done";
+
+export type WorkboardRefreshSource = "manual" | "live";
 
 export type WorkboardHealthSummary = {
   running: number;
@@ -387,12 +385,8 @@ export type WorkboardUiState = {
   showArchived: boolean;
   layout: "comfortable" | "compact";
   hideEmptyColumns: boolean;
-  autoRefreshIntervalMs: WorkboardAutoRefreshIntervalMs;
   lastRefreshAt: number | null;
-  lastRefreshStartedAt: number | null;
   lastRefreshError: string | null;
-  lastRefreshSource: WorkboardRefreshSource | null;
-  pollRefreshInProgress: boolean;
   lifecycleTasksPrepared: boolean;
   lifecycleTasksPreparedAt: number | null;
   lifecycleTaskRefreshFailed: boolean;
@@ -425,21 +419,31 @@ type WorkboardHost = object;
 
 type WorkboardLoadToken = {
   queuedAfterGeneration?: number;
+  preserveOnInvalidation: boolean;
 };
 
 const workboardStates = new WeakMap<WorkboardHost, WorkboardUiState>();
 const workboardLoadPromises = new WeakMap<WorkboardHost, Promise<boolean>>();
 const workboardLoadTokens = new WeakMap<WorkboardHost, WorkboardLoadToken>();
 const workboardLoadErrors = new WeakMap<WorkboardHost, string>();
+type WorkboardChangeProgress = {
+  epoch: string;
+  highestSeen: number;
+  applied: number;
+  failureCount: number;
+};
+type WorkboardChangeTarget = Pick<WorkboardChangeProgress, "epoch"> & { revision: number };
+const workboardChangeProgress = new WeakMap<WorkboardHost, WorkboardChangeProgress>();
+const workboardChangeRefreshPromises = new WeakMap<WorkboardHost, Promise<void>>();
+const workboardChangeRetryTimers = new WeakMap<WorkboardHost, ReturnType<typeof setTimeout>>();
+const workboardLiveUpdateGenerations = new WeakMap<WorkboardHost, number>();
 const workboardLifecycleTaskRefreshPromises = new WeakMap<WorkboardHost, Promise<number | null>>();
 const workboardLifecycleWritePromises = new WeakMap<WorkboardHost, Set<Promise<unknown>>>();
 const workboardLoadGenerations = new WeakMap<WorkboardHost, number>();
 const workboardLifecycleReconciliationEpochs = new WeakMap<WorkboardHost, number>();
-const workboardPollingGenerations = new WeakMap<WorkboardHost, number>();
 const workboardTaskPollOffsets = new WeakMap<WorkboardHost, number>();
 const workboardTaskDiscoveryOffsets = new WeakMap<WorkboardHost, number>();
 const workboardDefaultTaskDiscoveryCursors = new WeakMap<WorkboardHost, string>();
-const workboardPollingTimers = new WeakMap<WorkboardHost, ReturnType<typeof setTimeout>>();
 const workboardLifecycleTaskPreparedTimers = new WeakMap<
   WorkboardHost,
   ReturnType<typeof setTimeout>
@@ -451,15 +455,6 @@ const workboardLifecycleTaskRetryTimers = new WeakMap<
 const workboardLifecycleTaskContinuationTimers = new WeakMap<
   WorkboardHost,
   ReturnType<typeof setTimeout>
->();
-const workboardPollingEntries = new WeakMap<
-  WorkboardHost,
-  {
-    client: GatewayBrowserClient | null;
-    enabled: boolean;
-    intervalMs: WorkboardAutoRefreshIntervalMs;
-    requestUpdate?: () => void;
-  }
 >();
 const WORKBOARD_RECENT_DONE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const SESSION_CAPTURE_HISTORY_LIMIT = 40;
@@ -476,7 +471,9 @@ const WORKBOARD_LIFECYCLE_TASK_CONFIRMATION_WINDOW_MS = 5000;
 const WORKBOARD_LIFECYCLE_TASK_CONFIRMATION_TIMEOUT_ERROR =
   "Task confirmation exceeded its freshness window.";
 const WORKBOARD_LIFECYCLE_TASK_RETRY_MS = 5000;
+const WORKBOARD_LIFECYCLE_TASK_RECONCILE_MS = 5000;
 const WORKBOARD_LIFECYCLE_TASK_CONTINUE_MS = 100;
+const WORKBOARD_CHANGE_RETRY_DELAYS_MS = [1000, 2000, 5000] as const;
 
 function nextWorkboardLoadGeneration(host: WorkboardHost): number {
   const generation = (workboardLoadGenerations.get(host) ?? 0) + 1;
@@ -486,20 +483,6 @@ function nextWorkboardLoadGeneration(host: WorkboardHost): number {
 
 function isCurrentWorkboardLoadGeneration(host: WorkboardHost, generation: number): boolean {
   return workboardLoadGenerations.get(host) === generation;
-}
-
-function nextWorkboardPollingGeneration(host: WorkboardHost): number {
-  const generation = (workboardPollingGenerations.get(host) ?? 0) + 1;
-  workboardPollingGenerations.set(host, generation);
-  return generation;
-}
-
-function currentWorkboardPollingGeneration(host: WorkboardHost): number {
-  return workboardPollingGenerations.get(host) ?? 0;
-}
-
-function isCurrentWorkboardPollingGeneration(host: WorkboardHost, generation: number): boolean {
-  return currentWorkboardPollingGeneration(host) === generation;
 }
 
 function nextWorkboardLifecycleReconciliationEpoch(host: WorkboardHost): number {
@@ -539,6 +522,42 @@ function invalidateWorkboardLoads(host: WorkboardHost) {
   nextWorkboardLifecycleReconciliationEpoch(host);
 }
 
+function parseWorkboardChange(payload: unknown): { epoch: string; revision: number } | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const { epoch, revision } = payload as { epoch?: unknown; revision?: unknown };
+  return typeof epoch === "string" &&
+    epoch.length > 0 &&
+    typeof revision === "number" &&
+    Number.isSafeInteger(revision) &&
+    revision > 0
+    ? { epoch, revision }
+    : null;
+}
+
+export function isWorkboardDocumentVisible(): boolean {
+  return typeof document === "undefined" || document.visibilityState !== "hidden";
+}
+
+function clearWorkboardChangeRetryTimer(host: WorkboardHost) {
+  const timer = workboardChangeRetryTimers.get(host);
+  if (timer) {
+    clearTimeout(timer);
+    workboardChangeRetryTimers.delete(host);
+  }
+}
+
+function nextWorkboardLiveUpdateGeneration(host: WorkboardHost): number {
+  const generation = (workboardLiveUpdateGenerations.get(host) ?? 0) + 1;
+  workboardLiveUpdateGenerations.set(host, generation);
+  return generation;
+}
+
+function currentWorkboardLiveUpdateGeneration(host: WorkboardHost): number {
+  return workboardLiveUpdateGenerations.get(host) ?? 0;
+}
+
 function clearWorkboardLifecycleTaskPreparedTimer(host: WorkboardHost) {
   const timer = workboardLifecycleTaskPreparedTimers.get(host);
   if (timer) {
@@ -553,6 +572,186 @@ function clearWorkboardLifecycleTaskRetryTimer(host: WorkboardHost) {
     clearTimeout(timer);
     workboardLifecycleTaskRetryTimers.delete(host);
   }
+}
+
+function workboardChangePending(host: WorkboardHost): boolean {
+  const progress = workboardChangeProgress.get(host);
+  return Boolean(progress && progress.applied < progress.highestSeen);
+}
+
+function currentWorkboardChangeTarget(host: WorkboardHost): WorkboardChangeTarget | undefined {
+  const progress = workboardChangeProgress.get(host);
+  return progress ? { epoch: progress.epoch, revision: progress.highestSeen } : undefined;
+}
+
+function workboardChangeTargetCoversCurrent(
+  host: WorkboardHost,
+  target?: WorkboardChangeTarget,
+): boolean {
+  const progress = workboardChangeProgress.get(host);
+  return Boolean(
+    !progress ||
+    (target && target.epoch === progress.epoch && target.revision >= progress.highestSeen),
+  );
+}
+
+function markWorkboardChangeApplied(host: WorkboardHost, target?: WorkboardChangeTarget) {
+  if (!target) {
+    return;
+  }
+  const progress = workboardChangeProgress.get(host);
+  if (!progress || progress.epoch !== target.epoch) {
+    return;
+  }
+  progress.applied = Math.max(progress.applied, target.revision);
+  progress.failureCount = 0;
+  clearWorkboardChangeRetryTimer(host);
+}
+
+export function resetWorkboardLiveUpdates(host: WorkboardHost) {
+  nextWorkboardLiveUpdateGeneration(host);
+  workboardChangeProgress.delete(host);
+  workboardChangeRefreshPromises.delete(host);
+  clearWorkboardChangeRetryTimer(host);
+}
+
+type ResumeWorkboardLiveUpdatesParams = {
+  host: WorkboardHost;
+  client: GatewayBrowserClient | null;
+  requestUpdate?: () => void;
+  isActive?: () => boolean;
+};
+
+export function resumeWorkboardLiveUpdates(params: ResumeWorkboardLiveUpdatesParams) {
+  if (
+    !params.client ||
+    params.isActive?.() === false ||
+    !workboardChangePending(params.host) ||
+    workboardChangeRefreshPromises.has(params.host) ||
+    workboardChangeRetryTimers.has(params.host) ||
+    workboardLoadTokens.has(params.host)
+  ) {
+    return;
+  }
+  const state = getWorkboardState(params.host);
+  if (state.editingCardId && !workboardHasActiveWrites(state)) {
+    state.mutationReadiness = "stale_edit_draft";
+  }
+  if (shouldDeferWorkboardLiveApply(state)) {
+    return;
+  }
+  const generation = currentWorkboardLiveUpdateGeneration(params.host);
+  const refreshPromise = resumeWorkboardLiveUpdatesInternal(params, generation);
+  workboardChangeRefreshPromises.set(params.host, refreshPromise);
+  void refreshPromise.finally(() => {
+    if (workboardChangeRefreshPromises.get(params.host) === refreshPromise) {
+      workboardChangeRefreshPromises.delete(params.host);
+    }
+    params.requestUpdate?.();
+  });
+}
+
+async function resumeWorkboardLiveUpdatesInternal(
+  params: ResumeWorkboardLiveUpdatesParams,
+  generation: number,
+) {
+  while (
+    params.client &&
+    params.isActive?.() !== false &&
+    generation === currentWorkboardLiveUpdateGeneration(params.host) &&
+    workboardChangePending(params.host)
+  ) {
+    const state = getWorkboardState(params.host);
+    if (shouldDeferWorkboardLiveApply(state)) {
+      return;
+    }
+    const started = workboardChangeProgress.get(params.host);
+    if (!started) {
+      return;
+    }
+    const startedEpoch = started.epoch;
+    const startedRevision = started.highestSeen;
+    const refreshed = await refreshWorkboard({
+      host: params.host,
+      client: params.client,
+      requestUpdate: params.requestUpdate,
+      source: "live",
+      refreshDiagnostics: false,
+      changeTarget: { epoch: startedEpoch, revision: startedRevision },
+    });
+    if (
+      generation !== currentWorkboardLiveUpdateGeneration(params.host) ||
+      params.isActive?.() === false
+    ) {
+      return;
+    }
+    if (!workboardChangePending(params.host)) {
+      return;
+    }
+    const progress = workboardChangeProgress.get(params.host);
+    if (!progress) {
+      return;
+    }
+    const superseded = progress.epoch !== startedEpoch || progress.highestSeen > startedRevision;
+    if (refreshed || superseded) {
+      continue;
+    }
+    progress.failureCount += 1;
+    // Retry only this canonical reconciliation, at a capped rate. The timer is
+    // cleared by newer revisions, successful reads, reconnect, and teardown.
+    const retryIndex = Math.min(
+      progress.failureCount - 1,
+      WORKBOARD_CHANGE_RETRY_DELAYS_MS.length - 1,
+    );
+    const timer = setTimeout(() => {
+      workboardChangeRetryTimers.delete(params.host);
+      resumeWorkboardLiveUpdates(params);
+    }, WORKBOARD_CHANGE_RETRY_DELAYS_MS[retryIndex]);
+    workboardChangeRetryTimers.set(params.host, timer);
+    return;
+  }
+}
+
+export function handleWorkboardChanged(
+  params: ResumeWorkboardLiveUpdatesParams & {
+    payload: unknown;
+  },
+): boolean {
+  const change = parseWorkboardChange(params.payload);
+  if (!change) {
+    return false;
+  }
+  const current = workboardChangeProgress.get(params.host);
+  if (current?.epoch === change.epoch && change.revision <= current.highestSeen) {
+    return false;
+  }
+  if (current?.epoch === change.epoch) {
+    current.highestSeen = change.revision;
+    current.failureCount = 0;
+  } else {
+    workboardChangeProgress.set(params.host, {
+      epoch: change.epoch,
+      highestSeen: change.revision,
+      applied: 0,
+      failureCount: 0,
+    });
+  }
+  clearWorkboardChangeRetryTimer(params.host);
+  const state = getWorkboardState(params.host);
+  // Any accepted revision makes cached mutation payloads unsafe until a
+  // canonical read covers that exact high-water target.
+  state.mutationReadiness = state.editingCardId ? "stale_edit_draft" : "canonical_reload_required";
+  // Full/manual loads may have initiated a diagnostics mutation. Preserve their
+  // stronger task refresh; live reads remain replaceable by newer revisions.
+  const preserveCurrentLoad = workboardLoadTokens.get(params.host)?.preserveOnInvalidation === true;
+  if (!preserveCurrentLoad) {
+    state.loaded = false;
+    state.loadAttempted = false;
+    invalidateWorkboardLoads(params.host);
+  }
+  params.requestUpdate?.();
+  resumeWorkboardLiveUpdates(params);
+  return true;
 }
 
 function clearWorkboardLifecycleTaskContinuationTimer(host: WorkboardHost) {
@@ -597,6 +796,8 @@ function resetWorkboardLifecycleTaskConfirmations(
 }
 
 export function stopWorkboardLifecycleRefresh(host: WorkboardHost) {
+  nextWorkboardLiveUpdateGeneration(host);
+  clearWorkboardChangeRetryTimer(host);
   clearWorkboardLifecycleTaskPreparedTimer(host);
   clearWorkboardLifecycleTaskRetryTimer(host);
   clearWorkboardLifecycleTaskContinuationTimer(host);
@@ -646,32 +847,31 @@ function setWorkboardLifecycleTasksPrepared(
   if (
     !prepared ||
     !options.requestUpdate ||
-    state.autoRefreshIntervalMs === 0 ||
-    !shouldRefreshWorkboardTasksForLifecycle(state)
+    !state.cards.some(
+      (card) => !card.metadata?.archivedAt && taskIsActive(state.tasksByCardId.get(card.id)),
+    )
   ) {
     return;
   }
-  const nextTimer = setTimeout(
+  // Active linked task state lives outside Workboard SQLite and has no change
+  // event. Terminal and archived links never arm this reconciliation wake.
+  const timer = setTimeout(
     () => {
       workboardLifecycleTaskPreparedTimers.delete(host);
       options.requestUpdate?.();
     },
-    Math.max(0, preparedAt + state.autoRefreshIntervalMs - Date.now()),
+    Math.max(0, preparedAt + WORKBOARD_LIFECYCLE_TASK_RECONCILE_MS - Date.now()),
   );
-  workboardLifecycleTaskPreparedTimers.set(host, nextTimer);
+  workboardLifecycleTaskPreparedTimers.set(host, timer);
 }
 
 function workboardLifecycleTasksPreparedAt(state: WorkboardUiState, now = Date.now()) {
   if (!state.lifecycleTasksPrepared || state.lifecycleTasksPreparedAt === null) {
     return null;
   }
-  if (
-    state.autoRefreshIntervalMs > 0 &&
-    now - state.lifecycleTasksPreparedAt >= state.autoRefreshIntervalMs
-  ) {
-    return null;
-  }
-  return state.lifecycleTasksPreparedAt;
+  return now - state.lifecycleTasksPreparedAt >= WORKBOARD_LIFECYCLE_TASK_RECONCILE_MS
+    ? null
+    : state.lifecycleTasksPreparedAt;
 }
 
 function setWorkboardLifecycleTaskRefreshFailed(
@@ -691,14 +891,14 @@ function setWorkboardLifecycleTaskRefreshFailed(
     return;
   }
   clearWorkboardLifecycleTaskRetryTimer(host);
-  if (!failed || !options.requestUpdate || state.autoRefreshIntervalMs === 0) {
+  if (!failed || !options.requestUpdate) {
     return;
   }
-  const nextTimer = setTimeout(() => {
+  const timer = setTimeout(() => {
     workboardLifecycleTaskRetryTimers.delete(host);
     options.requestUpdate?.();
   }, retryDelayMs);
-  workboardLifecycleTaskRetryTimers.set(host, nextTimer);
+  workboardLifecycleTaskRetryTimers.set(host, timer);
 }
 
 function setWorkboardLifecycleTaskRefreshContinuation(
@@ -720,8 +920,7 @@ function setWorkboardLifecycleTaskRefreshContinuation(
   if (!pending || !options.requestUpdate) {
     return;
   }
-  // Continue bounded exact-confirmation even when routine polling is off.
-  // Keep this separate so render polling cannot cancel the freshness-bounded sequence.
+  // Continue the bounded exact-confirmation sequence without a routine refresh timer.
   const nextTimer = setTimeout(() => {
     workboardLifecycleTaskContinuationTimers.delete(host);
     options.requestUpdate?.();
@@ -746,6 +945,18 @@ function workboardLifecycleTaskRefreshContinuationWaiting(
   );
 }
 
+function shouldDeferWorkboardLiveApply(state: WorkboardUiState): boolean {
+  return Boolean(
+    state.draftOpen ||
+    state.editingCardId ||
+    workboardHasActiveWrites(state) ||
+    state.draggedCardId ||
+    state.dispatching ||
+    state.detailCommentBody.trim() ||
+    state.draftCommentBody.trim(),
+  );
+}
+
 function createDefaultState(): WorkboardUiState {
   return {
     loading: false,
@@ -767,12 +978,8 @@ function createDefaultState(): WorkboardUiState {
     showArchived: false,
     layout: "compact",
     hideEmptyColumns: false,
-    autoRefreshIntervalMs: 0,
     lastRefreshAt: null,
-    lastRefreshStartedAt: null,
     lastRefreshError: null,
-    lastRefreshSource: null,
-    pollRefreshInProgress: false,
     lifecycleTasksPrepared: false,
     lifecycleTasksPreparedAt: null,
     lifecycleTaskRefreshFailed: false,
@@ -2049,6 +2256,7 @@ type LoadWorkboardParams = {
   refreshDiagnostics?: boolean;
   taskRefresh?: "all" | "linked";
   preserveError?: boolean;
+  changeTarget?: WorkboardChangeTarget;
 };
 
 export async function loadWorkboard(params: LoadWorkboardParams): Promise<boolean> {
@@ -2060,10 +2268,12 @@ async function loadWorkboardInternal(
   queuedAfterGeneration?: number,
 ): Promise<boolean> {
   const state = getWorkboardState(params.host);
+  const changeTarget = params.changeTarget ?? currentWorkboardChangeTarget(params.host);
   if (
     !params.client ||
     state.dispatching ||
     workboardHasActiveWrites(state) ||
+    (changeTarget && workboardChangePending(params.host) && shouldDeferWorkboardLiveApply(state)) ||
     (!params.force && (state.loaded || state.loadAttempted))
   ) {
     return false;
@@ -2093,11 +2303,17 @@ async function loadWorkboardInternal(
       : result;
   }
   const generation = nextWorkboardLoadGeneration(params.host);
-  const loadToken: WorkboardLoadToken = { queuedAfterGeneration };
+  const loadToken: WorkboardLoadToken = {
+    queuedAfterGeneration,
+    preserveOnInvalidation: params.taskRefresh !== "linked",
+  };
   workboardLoadTokens.set(params.host, loadToken);
   const lastRefreshErrorBeforeLoad = state.lastRefreshError;
   state.loadAttempted = true;
   state.loading = true;
+  if (changeTarget && workboardChangePending(params.host)) {
+    state.mutationReadiness = "canonical_reload_required";
+  }
   if (!params.preserveError) {
     workboardLoadErrors.delete(params.host);
     state.error = null;
@@ -2221,7 +2437,7 @@ async function loadWorkboardInternal(
       if (!isCurrentWorkboardLoadGeneration(params.host, generation)) {
         return false;
       }
-      if (params.taskRefresh === "linked" && shouldDeferWorkboardPoll(state)) {
+      if (params.taskRefresh === "linked" && shouldDeferWorkboardLiveApply(state)) {
         return false;
       }
       if (nextUnfilteredCursor !== undefined) {
@@ -2272,8 +2488,14 @@ async function loadWorkboardInternal(
       workboardLoadErrors.delete(params.host);
       // Preserve stale edit text for recovery, but never re-enable its full-card
       // save payload after canonical state may have changed.
-      state.mutationReadiness = state.editingCardId ? "stale_edit_draft" : "ready";
+      const loadedCurrentChange = workboardChangeTargetCoversCurrent(params.host, changeTarget);
+      state.mutationReadiness = state.editingCardId
+        ? "stale_edit_draft"
+        : loadedCurrentChange
+          ? "ready"
+          : "canonical_reload_required";
       state.loaded = true;
+      markWorkboardChangeApplied(params.host, changeTarget);
       return true;
     } catch (error) {
       if (isCurrentWorkboardLoadGeneration(params.host, generation)) {
@@ -2312,42 +2534,20 @@ export async function refreshWorkboard(params: {
   requestUpdate?: () => void;
   source: WorkboardRefreshSource;
   refreshDiagnostics?: boolean;
-  pollGeneration?: number;
-}) {
+  changeTarget?: WorkboardChangeTarget;
+}): Promise<boolean> {
   const state = getWorkboardState(params.host);
-  const pollGeneration =
-    params.source === "poll"
-      ? (params.pollGeneration ?? currentWorkboardPollingGeneration(params.host))
-      : null;
-  if (
-    pollGeneration !== null &&
-    !isCurrentWorkboardPollingGeneration(params.host, pollGeneration)
-  ) {
-    return;
-  }
   if (state.dispatching || workboardHasActiveWrites(state)) {
-    return;
+    return false;
   }
-  const startedAt = Date.now();
-  state.lastRefreshStartedAt = startedAt;
-  state.lastRefreshSource = params.source;
-  if (params.source !== "poll" || !state.lifecycleTaskRefreshFailed) {
+  if (params.source === "manual" || !state.lifecycleTaskRefreshFailed) {
     state.lastRefreshError = null;
-  }
-  if (params.source === "poll") {
-    state.pollRefreshInProgress = true;
   }
   params.requestUpdate?.();
   if (!params.client) {
     state.lastRefreshError = "Gateway client unavailable";
-    if (
-      pollGeneration !== null &&
-      isCurrentWorkboardPollingGeneration(params.host, pollGeneration)
-    ) {
-      state.pollRefreshInProgress = false;
-    }
     params.requestUpdate?.();
-    return;
+    return false;
   }
   try {
     const refreshed = await loadWorkboard({
@@ -2356,135 +2556,19 @@ export async function refreshWorkboard(params: {
       requestUpdate: params.requestUpdate,
       force: true,
       refreshDiagnostics: params.refreshDiagnostics,
-      taskRefresh: params.source === "poll" ? "linked" : "all",
-      preserveError: params.source === "poll",
+      taskRefresh: params.source === "live" ? "linked" : "all",
+      preserveError: params.source === "live",
+      changeTarget: params.changeTarget,
     });
-    state.lastRefreshSource = params.source;
-    if (params.source !== "poll" && state.error) {
+    if (params.source === "manual" && state.error) {
       state.lastRefreshError = state.error;
     } else if (refreshed) {
       state.lastRefreshAt = Date.now();
     }
+    return refreshed;
   } finally {
-    if (
-      pollGeneration !== null &&
-      isCurrentWorkboardPollingGeneration(params.host, pollGeneration)
-    ) {
-      state.pollRefreshInProgress = false;
-    }
     params.requestUpdate?.();
   }
-}
-
-function workboardDocumentHidden(): boolean {
-  return typeof document !== "undefined" && document.visibilityState === "hidden";
-}
-
-function shouldDeferWorkboardPoll(state: WorkboardUiState): boolean {
-  return Boolean(
-    state.draftOpen ||
-    state.editingCardId ||
-    workboardHasActiveWrites(state) ||
-    state.draggedCardId ||
-    state.dispatching ||
-    state.detailCommentBody.trim() ||
-    state.draftCommentBody.trim(),
-  );
-}
-
-function clearWorkboardPolling(host: WorkboardHost) {
-  const timer = workboardPollingTimers.get(host);
-  if (timer) {
-    clearTimeout(timer);
-    workboardPollingTimers.delete(host);
-  }
-}
-
-function scheduleWorkboardPoll(host: WorkboardHost) {
-  clearWorkboardPolling(host);
-  const entry = workboardPollingEntries.get(host);
-  if (!entry?.enabled || !entry.client || entry.intervalMs <= 0) {
-    return;
-  }
-  const pollingGeneration = currentWorkboardPollingGeneration(host);
-  const timer = setTimeout(() => {
-    workboardPollingTimers.delete(host);
-    if (!isCurrentWorkboardPollingGeneration(host, pollingGeneration)) {
-      return;
-    }
-    const current = workboardPollingEntries.get(host);
-    const state = getWorkboardState(host);
-    if (!current?.enabled || !current.client || current.intervalMs <= 0) {
-      return;
-    }
-    const run = async () => {
-      if (!workboardDocumentHidden() && !shouldDeferWorkboardPoll(state)) {
-        await refreshWorkboard({
-          host,
-          client: current.client,
-          requestUpdate: current.requestUpdate,
-          source: "poll",
-          pollGeneration: pollingGeneration,
-        });
-      }
-    };
-    void run().finally(() => {
-      if (isCurrentWorkboardPollingGeneration(host, pollingGeneration)) {
-        scheduleWorkboardPoll(host);
-      }
-    });
-  }, entry.intervalMs);
-  workboardPollingTimers.set(host, timer);
-}
-
-export function configureWorkboardPolling(params: {
-  host: WorkboardHost;
-  client: GatewayBrowserClient | null;
-  enabled: boolean;
-  requestUpdate?: () => void;
-}) {
-  const state = getWorkboardState(params.host);
-  const intervalMs = state.autoRefreshIntervalMs;
-  const previous = workboardPollingEntries.get(params.host);
-  const enabled = params.enabled && intervalMs > 0;
-  workboardPollingEntries.set(params.host, {
-    client: params.client,
-    enabled,
-    intervalMs,
-    requestUpdate: params.requestUpdate,
-  });
-  if (!enabled) {
-    clearWorkboardPolling(params.host);
-    clearWorkboardLifecycleTaskPreparedTimer(params.host);
-    clearWorkboardLifecycleTaskRetryTimer(params.host);
-    return;
-  }
-  const configChanged =
-    !previous ||
-    previous.enabled !== enabled ||
-    previous.intervalMs !== intervalMs ||
-    previous.client !== params.client;
-  if (!state.pollRefreshInProgress && (configChanged || !workboardPollingTimers.get(params.host))) {
-    scheduleWorkboardPoll(params.host);
-  }
-}
-
-export function stopWorkboardPolling(host: WorkboardHost) {
-  nextWorkboardPollingGeneration(host);
-  clearWorkboardPolling(host);
-  workboardPollingEntries.delete(host);
-  const state = workboardStates.get(host);
-  if (!state?.pollRefreshInProgress) {
-    return;
-  }
-  state.pollRefreshInProgress = false;
-  state.loading = false;
-  if (!state.loaded) {
-    state.loadAttempted = false;
-  }
-  nextWorkboardLoadGeneration(host);
-  workboardLoadPromises.delete(host);
-  workboardLoadTokens.delete(host);
 }
 
 function replaceCard(state: WorkboardUiState, card: WorkboardCard) {
@@ -2993,16 +3077,29 @@ export async function captureSessionToWorkboard(params: {
   state.error = null;
   let captureStarted = false;
   try {
-    if (!state.loaded) {
+    if (!state.loaded || !workboardMutationsReady(state)) {
       await waitForWorkboardLifecycleWrites(params.host);
-      await loadWorkboard({
+      const loaded = await loadWorkboard({
         host: params.host,
         client: params.client,
         requestUpdate: params.requestUpdate,
         force: true,
       });
+      if (!loaded) {
+        return null;
+      }
+      // A change can land while the full list is in flight. One more canonical
+      // read may recover that race; another invalidation leaves capture blocked.
+      if (!workboardMutationsReady(state)) {
+        await loadWorkboard({
+          host: params.host,
+          client: params.client,
+          requestUpdate: params.requestUpdate,
+          force: true,
+        });
+      }
     }
-    if (!state.loaded || state.dispatching) {
+    if (!state.loaded || !workboardMutationsReady(state) || state.dispatching) {
       return null;
     }
     if (state.capturingSessionKeys.has(params.session.key)) {
@@ -3018,6 +3115,9 @@ export async function captureSessionToWorkboard(params: {
     );
     if (existing) {
       if (existing.metadata?.archivedAt) {
+        if (!workboardMutationsReady(state) || state.dispatching) {
+          return null;
+        }
         invalidateWorkboardLoads(params.host);
         const payload = await params.client.request("workboard.cards.archive", {
           id: existing.id,
@@ -3035,6 +3135,9 @@ export async function captureSessionToWorkboard(params: {
     });
     const recentUserText = extractChatHistoryText(messages, "user", "last");
     const lastAssistantText = extractChatHistoryText(messages, "assistant", "last");
+    if (!workboardMutationsReady(state) || state.dispatching) {
+      return null;
+    }
     invalidateWorkboardLoads(params.host);
     const payload = await params.client.request("workboard.cards.create", {
       title: sessionTitle(params.session, recentUserText),
