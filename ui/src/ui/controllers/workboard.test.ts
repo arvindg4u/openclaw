@@ -1256,6 +1256,43 @@ describe("workboard controller", () => {
     ).toHaveLength(1);
   });
 
+  it("releases stopped live-refresh ownership before the tab resumes", async () => {
+    const host = {};
+    const stoppedList = createDeferred<unknown>();
+    let listCalls = 0;
+    const client = createClient((method) => {
+      if (method === "workboard.cards.list") {
+        listCalls += 1;
+        return listCalls === 1 ? stoppedList.promise : { cards: [sampleCard], statuses: ["todo"] };
+      }
+      if (method === "tasks.list") {
+        return { tasks: [] };
+      }
+      return {};
+    });
+
+    handleWorkboardChanged({
+      host,
+      client: client as never,
+      payload: { epoch: "epoch-a", revision: 1 },
+    });
+    await vi.waitFor(() => expect(listCalls).toBe(1));
+    stopWorkboardLifecycleRefresh(host);
+
+    await loadWorkboard({ host, client: client as never, force: true });
+    expect(listCalls).toBe(2);
+
+    handleWorkboardChanged({
+      host,
+      client: client as never,
+      payload: { epoch: "epoch-a", revision: 2 },
+    });
+    await vi.waitFor(() => expect(listCalls).toBe(3));
+
+    stoppedList.resolve({ cards: [], statuses: ["todo"] });
+    await vi.waitFor(() => expect(getWorkboardState(host).cards).toEqual([sampleCard]));
+  });
+
   it("preserves mutation errors during successful live refreshes", async () => {
     const host = {};
     const state = getWorkboardState(host);

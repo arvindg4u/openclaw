@@ -805,6 +805,9 @@ function resetWorkboardLifecycleTaskConfirmations(
 
 export function stopWorkboardLifecycleRefresh(host: WorkboardHost) {
   nextWorkboardLiveUpdateGeneration(host);
+  // Release refresh ownership immediately. The generation guard keeps the
+  // detached request from applying or clearing a replacement owner later.
+  workboardChangeRefreshPromises.delete(host);
   clearWorkboardChangeRetryTimer(host);
   clearWorkboardLifecycleTaskPreparedTimer(host);
   clearWorkboardLifecycleTaskRetryTimer(host);
