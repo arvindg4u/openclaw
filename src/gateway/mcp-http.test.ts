@@ -23,7 +23,19 @@ type MockGatewayScopedTools = {
 };
 
 type MockBeforeToolCallHookResult =
-  | { blocked: true; reason: string }
+  | {
+      blocked: true;
+      kind: "veto";
+      deniedReason?: "plugin-before-tool-call" | "plugin-approval" | "tool-loop";
+      reason: string;
+    }
+  | {
+      blocked: true;
+      kind: "failure";
+      disposition: "blocked" | "cancelled" | "failed" | "timed_out";
+      deniedReason?: "plugin-before-tool-call" | "plugin-approval" | "tool-loop";
+      reason: string;
+    }
   | { blocked: false; params: unknown };
 
 type ScopedToolsCall = {
@@ -1099,6 +1111,7 @@ describe("mcp loopback server", () => {
 
     runBeforeToolCallHookMock.mockResolvedValueOnce({
       blocked: true,
+      kind: "veto",
       reason: "blocked for test",
     });
     expect(
@@ -1132,6 +1145,58 @@ describe("mcp loopback server", () => {
     expect(finishedTargets).toEqual(["chat123", "blocked"]);
     expect(blockedResults).toEqual([
       { correlationId: "blocked", deniedReason: "plugin-before-tool-call" },
+    ]);
+  });
+
+  it("preserves hook failure dispositions in CLI capture", async () => {
+    const captureKey = "hook-failure-dispositions";
+    const captured: unknown[] = [];
+    beginMcpLoopbackToolCallCapture({
+      captureKey,
+      onToolCallStart: ({ args }) => String(args.target),
+      onToolCallResult: (result) => {
+        captured.push({
+          outcome: result.outcome,
+          correlationId: result.correlationId,
+          ...(result.outcome === "blocked" ? { deniedReason: result.deniedReason } : {}),
+        });
+      },
+    });
+    const { runtime } = await startLoopbackServerForTest();
+    const cases = [
+      { disposition: "failed" },
+      { disposition: "cancelled" },
+      { disposition: "timed_out" },
+      { disposition: "blocked", deniedReason: "plugin-approval" },
+    ] as const;
+
+    for (const testCase of cases) {
+      runBeforeToolCallHookMock.mockResolvedValueOnce({
+        blocked: true,
+        kind: "failure",
+        disposition: testCase.disposition,
+        ...(testCase.disposition === "blocked" ? { deniedReason: testCase.deniedReason } : {}),
+        reason: "hook prevented execution",
+      });
+      const response = await sendLoopbackToolCall({
+        token: runtime.ownerToken,
+        name: "message",
+        args: { action: "send", target: testCase.disposition, message: "not sent" },
+        headers: { "x-openclaw-cli-capture-key": captureKey },
+      });
+      expect(response.status).toBe(200);
+      expect((await readMcpPayload(response)).result?.isError).toBe(true);
+    }
+
+    expect(captured).toEqual([
+      { outcome: "failed", correlationId: "failed" },
+      { outcome: "cancelled", correlationId: "cancelled" },
+      { outcome: "timed_out", correlationId: "timed_out" },
+      {
+        outcome: "blocked",
+        correlationId: "blocked",
+        deniedReason: "plugin-approval",
+      },
     ]);
   });
 
@@ -1543,6 +1608,7 @@ describe("mcp loopback server", () => {
     }));
     runBeforeToolCallHookMock.mockResolvedValueOnce({
       blocked: true,
+      kind: "veto",
       reason: "blocked by hook",
     });
     const payload = await callMessageToolWithExecute(execute);

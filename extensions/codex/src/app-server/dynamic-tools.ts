@@ -13,6 +13,7 @@ import {
   extractToolResultMediaArtifact,
   filterToolResultMediaUrls,
   finalizeToolTerminalPresentation,
+  getBeforeToolCallFailureDisposition,
   HEARTBEAT_RESPONSE_TOOL_NAME,
   embeddedAgentLog,
   getChannelAgentToolMeta,
@@ -49,6 +50,7 @@ import type {
   CodexDynamicToolCallOutputContentItem,
   CodexDynamicToolCallParams,
   CodexDynamicToolCallResponse,
+  CodexDynamicToolDiagnosticTerminalReason,
   CodexDynamicToolDiagnosticTerminalType,
   CodexDynamicToolFunctionSpec,
   CodexDynamicToolSpec,
@@ -645,6 +647,7 @@ export function createCodexDynamicToolBridge(params: {
         return withSideEffectEvidence(response, !replaySafe);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
+        const beforeToolCallDisposition = getBeforeToolCallFailureDisposition(error);
         const adjustedExecutedArgs = consumeAdjustedParamsForToolCall(
           call.callId,
           toolResultHookContext.runId,
@@ -691,7 +694,7 @@ export function createCodexDynamicToolBridge(params: {
           (isReplaySafeToolInstance(toolEntry.tool) &&
             isReplaySafeToolCall(toolName, executedArgs));
         return withSideEffectEvidence(
-          withDiagnosticTerminalType(
+          withBeforeToolCallFailureDisposition(
             {
               contentItems: [
                 {
@@ -701,7 +704,7 @@ export function createCodexDynamicToolBridge(params: {
               ],
               success: false,
             },
-            "error",
+            beforeToolCallDisposition,
           ),
           didStartExecution && !replaySafe,
         );
@@ -1233,6 +1236,21 @@ function withDiagnosticTerminalType<T extends CodexDynamicToolCallResponse>(
     enumerable: false,
     value: terminalType,
   });
+  return response;
+}
+
+function withBeforeToolCallFailureDisposition<T extends CodexDynamicToolCallResponse>(
+  response: T,
+  disposition: "blocked" | CodexDynamicToolDiagnosticTerminalReason | undefined,
+): T {
+  withDiagnosticTerminalType(response, disposition === "blocked" ? "blocked" : "error");
+  if (disposition && disposition !== "blocked") {
+    Object.defineProperty(response, "diagnosticTerminalReason", {
+      configurable: true,
+      enumerable: false,
+      value: disposition,
+    });
+  }
   return response;
 }
 

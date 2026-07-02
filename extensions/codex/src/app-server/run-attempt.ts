@@ -2380,6 +2380,8 @@ export async function runCodexAppServerAttempt(
             internalExecAutoReview: appServer.approvalsReviewer === "user",
             autoApprove: shouldAutoApproveCodexAppServerApprovals(appServer),
             signal: runAbortController.signal,
+            onNativeToolFailureDisposition: (itemId, disposition) =>
+              projector?.recordNativeToolApprovalFailure(itemId, disposition),
           });
         }
         return undefined;
@@ -3804,6 +3806,9 @@ function handleApprovalRequest(params: {
   internalExecAutoReview?: boolean;
   autoApprove?: boolean;
   signal?: AbortSignal;
+  onNativeToolFailureDisposition?: Parameters<
+    typeof handleCodexAppServerApprovalRequest
+  >[0]["onNativeToolFailureDisposition"];
 }): Promise<JsonValue | undefined> {
   return handleCodexAppServerApprovalRequest({
     method: params.method,
@@ -3817,6 +3822,7 @@ function handleApprovalRequest(params: {
     internalExecAutoReview: params.internalExecAutoReview,
     autoApprove: params.autoApprove,
     signal: params.signal,
+    onNativeToolFailureDisposition: params.onNativeToolFailureDisposition,
   });
 }
 

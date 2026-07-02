@@ -129,15 +129,14 @@ export async function handleMcpJsonRpc(params: {
           signal: params.signal,
         });
         if (hookResult.blocked) {
-          const hookFailed = hookResult.kind === "failure";
-          const outcome = hookFailed ? "failed" : "blocked";
-          const deniedReason = hookFailed
-            ? undefined
-            : (hookResult.deniedReason ?? "plugin-before-tool-call");
+          const disposition = hookResult.kind === "failure" ? hookResult.disposition : "blocked";
           reportToolCallResult(
-            outcome === "blocked"
-              ? { outcome, deniedReason: deniedReason ?? "plugin-before-tool-call" }
-              : { outcome },
+            disposition === "blocked"
+              ? {
+                  outcome: disposition,
+                  deniedReason: hookResult.deniedReason ?? "plugin-before-tool-call",
+                }
+              : { outcome: disposition },
           );
           return jsonRpcResult(id, {
             content: [{ type: "text", text: hookResult.reason }],

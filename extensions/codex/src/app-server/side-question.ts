@@ -53,6 +53,7 @@ import {
   buildCodexNativeHookRelayConfig,
   buildCodexNativeHookRelayDisabledConfig,
   CODEX_NATIVE_HOOK_RELAY_EVENTS,
+  emitCodexNativePreToolUseFailureDiagnostic,
 } from "./native-hook-relay.js";
 import {
   readCodexNotificationThreadId,
@@ -356,6 +357,8 @@ export async function runCodexAppServerSideQuestion(
             sandbox,
           }),
           signal: runAbortController.signal,
+          onNativeToolFailureDisposition: (itemId, disposition) =>
+            nativeToolLifecycleProjector?.recordApprovalFailureDisposition(itemId, disposition),
         });
       }
       if (request.method !== "item/tool/call") {
@@ -631,6 +634,15 @@ function registerCodexSideNativeHookRelay(params: {
       completionTimeoutMs: params.completionTimeoutMs,
     }),
     signal: params.signal,
+    onPreToolUseFailure: (failure) =>
+      emitCodexNativePreToolUseFailureDiagnostic({
+        agentId: params.agentId,
+        sessionId: params.sessionId,
+        sessionKey: params.sessionKey,
+        runId: params.runId,
+        signal: params.signal,
+        failure,
+      }),
     command: {
       timeoutMs: params.options.gatewayTimeoutMs,
     },

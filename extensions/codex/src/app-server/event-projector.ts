@@ -13,6 +13,7 @@ import {
   runAgentHarnessBeforeCompactionHook,
   TOOL_PROGRESS_OUTPUT_MAX_CHARS,
   type AgentMessage,
+  type BeforeToolCallFailureDisposition,
   type EmbeddedRunAttemptParams,
   type EmbeddedRunAttemptResult,
   type HeartbeatToolResponse,
@@ -89,6 +90,10 @@ export class CodexNativeToolLifecycleProjector {
   private readonly startedAtByItem = new Map<string, number>();
   private readonly activeItems = new Map<string, { toolName: string }>();
   private readonly completedItemIds = new Set<string>();
+  private readonly approvalFailureDispositionByItem = new Map<
+    string,
+    Exclude<BeforeToolCallFailureDisposition, "blocked">
+  >();
 
   constructor(
     private readonly context: CodexNativeToolLifecycleContext,
@@ -159,6 +164,15 @@ export class CodexNativeToolLifecycleProjector {
     this.recordTerminal(params.item.id, toolName, itemStatus(params.item), itemDurationMs);
   }
 
+  recordApprovalFailureDisposition(
+    toolCallId: string,
+    disposition: Exclude<BeforeToolCallFailureDisposition, "blocked">,
+  ): void {
+    if (!this.completedItemIds.has(toolCallId)) {
+      this.approvalFailureDispositionByItem.set(toolCallId, disposition);
+    }
+  }
+
   private recordRawWebSearchResult(item: JsonObject): void {
     if (readString(item, "type") !== "web_search_call") {
       return;
@@ -189,14 +203,22 @@ export class CodexNativeToolLifecycleProjector {
     status: CodexNativeToolAuditStatus,
     itemDurationMs?: number,
   ): void {
+    const approvalFailureDisposition = this.approvalFailureDispositionByItem.get(toolCallId);
+    this.approvalFailureDispositionByItem.delete(toolCallId);
     this.completedItemIds.add(toolCallId);
     this.activeItems.delete(toolCallId);
     const startedAt = this.startedAtByItem.get(toolCallId);
     this.startedAtByItem.delete(toolCallId);
     const durationMs =
       itemDurationMs ?? (startedAt === undefined ? 0 : Math.max(0, Date.now() - startedAt));
-    const terminalEvent =
-      status === "blocked"
+    const terminalEvent = approvalFailureDisposition
+      ? {
+          type: "tool.execution.error" as const,
+          durationMs,
+          errorCategory: "codex_native_tool_approval",
+          terminalReason: approvalFailureDisposition,
+        }
+      : status === "blocked"
         ? {
             type: "tool.execution.blocked" as const,
             reason: "codex_native_tool_blocked",
@@ -231,17 +253,22 @@ export class CodexNativeToolLifecycleProjector {
       : "failed";
     for (const [toolCallId, { toolName }] of this.activeItems) {
       const startedAt = this.startedAtByItem.get(toolCallId);
+      const approvalFailureDisposition = this.approvalFailureDispositionByItem.get(toolCallId);
       emitTrustedDiagnosticEvent({
         type: "tool.execution.error",
         ...this.buildBase(toolCallId, toolName),
         durationMs: startedAt === undefined ? 0 : Math.max(0, Date.now() - startedAt),
-        errorCategory: "codex_native_tool_error",
-        terminalReason,
+        errorCategory: approvalFailureDisposition
+          ? "codex_native_tool_approval"
+          : "codex_native_tool_error",
+        terminalReason: approvalFailureDisposition ?? terminalReason,
       });
       this.completedItemIds.add(toolCallId);
       this.startedAtByItem.delete(toolCallId);
+      this.approvalFailureDispositionByItem.delete(toolCallId);
     }
     this.activeItems.clear();
+    this.approvalFailureDispositionByItem.clear();
   }
 
   private recordSnapshotItem(item: CodexThreadItem): void {
@@ -514,6 +541,13 @@ export class CodexAppServerEventProjector {
     if (ordinal !== undefined) {
       this.nativeToolOutcomeOrdinals.set(item.id, ordinal);
     }
+  }
+
+  recordNativeToolApprovalFailure(
+    toolCallId: string,
+    disposition: Exclude<BeforeToolCallFailureDisposition, "blocked">,
+  ): void {
+    this.nativeToolLifecycleProjector.recordApprovalFailureDisposition(toolCallId, disposition);
   }
 
   async handleNotification(notification: CodexServerNotification): Promise<void> {

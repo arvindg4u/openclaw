@@ -2782,6 +2782,75 @@ describe("createCodexDynamicToolBridge", () => {
     });
   });
 
+  it("preserves hook timeout classification for the outer lifecycle owner", async () => {
+    const beforeToolCall = vi.fn(async () => {
+      throw new Error("timed out after 5ms");
+    });
+    initializeGlobalHookRunner(
+      createMockPluginRegistry([{ hookName: "before_tool_call", handler: beforeToolCall }]),
+    );
+    const execute = vi.fn(async () => textToolResult("should not run"));
+    const bridge = createCodexDynamicToolBridge({
+      tools: [createTool({ name: "exec", execute })],
+      signal: new AbortController().signal,
+      hookContext: { runId: "run-hook-timeout" },
+    });
+
+    const result = await bridge.handleToolCall({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      callId: "call-hook-timeout",
+      namespace: null,
+      tool: "exec",
+      arguments: { command: "pwd" },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.diagnosticTerminalType).toBe("error");
+    expect(result.diagnosticTerminalReason).toBe("timed_out");
+    expect(result.sideEffectEvidence).toBeUndefined();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("preserves report-only approval blocks for the outer lifecycle owner", async () => {
+    const beforeToolCall = vi.fn(async () => ({
+      requireApproval: {
+        pluginId: "test-plugin",
+        title: "Needs approval",
+        description: "Review before running",
+      },
+    }));
+    initializeGlobalHookRunner(
+      createMockPluginRegistry([{ hookName: "before_tool_call", handler: beforeToolCall }]),
+    );
+    const execute = vi.fn(async () => textToolResult("should not run"));
+    const tool = wrapToolWithBeforeToolCallHook(
+      createTool({ name: "exec", execute }),
+      { runId: "run-approval-report" },
+      { approvalMode: "report" },
+    );
+    const bridge = createCodexDynamicToolBridge({
+      tools: [tool],
+      signal: new AbortController().signal,
+      hookContext: { runId: "run-approval-report" },
+    });
+
+    const result = await bridge.handleToolCall({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      callId: "call-approval-report",
+      namespace: null,
+      tool: "exec",
+      arguments: { command: "pwd" },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.diagnosticTerminalType).toBe("blocked");
+    expect(result.diagnosticTerminalReason).toBeUndefined();
+    expect(result.sideEffectEvidence).toBeUndefined();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("applies dynamic tool result middleware before after_tool_call observes the result", async () => {
     const events: string[] = [];
     const beforeToolCall = vi.fn(async () => {

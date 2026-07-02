@@ -306,6 +306,7 @@ export {
   consumeAdjustedParamsForToolCall,
   consumePreExecutionBlockedToolCall,
   finalizeToolTerminalPresentation,
+  getBeforeToolCallFailureDisposition,
   getBeforeToolCallPolicyDiagnosticState,
   hasBeforeToolCallPolicy,
   isToolWrappedWithBeforeToolCallHook,
@@ -314,6 +315,7 @@ export {
   setBeforeToolCallDiagnosticsEnabled,
   wrapToolWithBeforeToolCallHook,
   type BeforeToolCallPolicyDiagnosticState,
+  type BeforeToolCallFailureDisposition,
   type DeferredPluginToolApproval,
 } from "../agents/agent-tools.before-tool-call.js";
 export { isReplaySafeToolCall } from "../agents/tool-mutation.js";

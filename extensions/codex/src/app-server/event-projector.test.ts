@@ -2761,6 +2761,68 @@ describe("CodexAppServerEventProjector", () => {
     });
   });
 
+  it.each(["failed", "cancelled", "timed_out"] as const)(
+    "projects a declined native approval with %s disposition as one terminal error",
+    async (disposition) => {
+      const projector = await createProjector();
+      const diagnosticEvents: DiagnosticEventPayload[] = [];
+      const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
+
+      try {
+        await projector.handleNotification(
+          forCurrentTurn("item/started", {
+            item: {
+              type: "commandExecution",
+              id: "cmd-approval-failure",
+              command: "pnpm test extensions/codex",
+              cwd: "/workspace",
+              processId: null,
+              source: "agent",
+              status: "inProgress",
+              commandActions: [],
+              aggregatedOutput: null,
+              exitCode: null,
+              durationMs: null,
+            },
+          }),
+        );
+        projector.recordNativeToolApprovalFailure("cmd-approval-failure", disposition);
+        await projector.handleNotification(
+          forCurrentTurn("item/completed", {
+            item: {
+              type: "commandExecution",
+              id: "cmd-approval-failure",
+              command: "pnpm test extensions/codex",
+              cwd: "/workspace",
+              processId: null,
+              source: "agent",
+              status: "declined",
+              commandActions: [],
+              aggregatedOutput: null,
+              exitCode: null,
+              durationMs: 1,
+            },
+          }),
+        );
+        await flushDiagnosticEvents();
+      } finally {
+        unsubscribe();
+      }
+
+      expect(
+        diagnosticEvents
+          .filter((event) => event.type.startsWith("tool.execution."))
+          .map((event) => ({
+            type: event.type,
+            ...("terminalReason" in event ? { terminalReason: event.terminalReason } : {}),
+          })),
+      ).toEqual([
+        { type: "tool.execution.started" },
+        { type: "tool.execution.error", terminalReason: disposition },
+      ]);
+    },
+  );
+
   it("clears a recovered declined native tool error", async () => {
     const projector = await createProjector();
 

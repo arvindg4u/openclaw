@@ -25,6 +25,7 @@ import { setPluginToolMeta } from "../plugins/tools.js";
 import { createCanonicalFixtureSkill } from "../skills/test-support/test-helpers.js";
 import { createChannelTestPluginBase, createTestRegistry } from "../test-utils/channel-plugins.js";
 import {
+  getBeforeToolCallFailureDisposition,
   getBeforeToolCallPolicyDiagnosticState,
   runBeforeToolCallHook,
   wrapToolWithBeforeToolCallHook,
@@ -570,6 +571,190 @@ describe("before_tool_call loop detection behavior", () => {
       expect(JSON.stringify(emitted)).not.toContain("sk-1234567890abcdef1234567890abcdef");
       expect(JSON.stringify(emitted)).not.toContain("pwd");
     });
+  });
+
+  it.each([
+    { label: "fails", error: new Error("hook crashed"), terminalReason: "failed" },
+    {
+      label: "times out",
+      error: new Error("timed out after 5ms"),
+      terminalReason: "timed_out",
+    },
+  ] as const)(
+    "emits a terminal diagnostic when a before_tool_call hook $label",
+    async (testCase) => {
+      hookRunner.hasHooks.mockImplementation((hookName: string) => hookName === "before_tool_call");
+      hookRunner.runBeforeToolCall.mockRejectedValueOnce(testCase.error);
+      const execute = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+      const tool = wrapToolWithBeforeToolCallHook(
+        { name: "exec", execute } as unknown as AnyAgentTool,
+        {
+          agentId: "main",
+          sessionKey: "session-key",
+          sessionId: "session-id",
+          runId: "run-1",
+          loopDetection: { enabled: false },
+        },
+      );
+
+      await withToolExecutionEvents(async (emitted, flush) => {
+        await expect(
+          tool.execute("tool-call-hook-failure", { command: "private" }, undefined, undefined),
+        ).rejects.toThrow("Tool call blocked because before_tool_call hook failed");
+        await flush();
+
+        expect(execute).not.toHaveBeenCalled();
+        expect(emitted.map((event) => event.type)).toEqual(["tool.execution.error"]);
+        const terminal = expectEventFields(emitted[0], {
+          type: "tool.execution.error",
+          runId: "run-1",
+          sessionKey: "session-key",
+          sessionId: "session-id",
+          agentId: "main",
+          toolName: "exec",
+          toolCallId: "tool-call-hook-failure",
+          paramsSummary: { kind: "object" },
+          errorCategory: "before_tool_call",
+          terminalReason: testCase.terminalReason,
+        });
+        expect(typeof terminal.durationMs).toBe("number");
+        expect(JSON.stringify(emitted)).not.toContain("private");
+      });
+    },
+  );
+
+  it("emits a terminal diagnostic when hook preflight rejects", async () => {
+    const execute = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+    const params = Object.defineProperty({}, "private", {
+      enumerable: true,
+      get() {
+        throw new Error("private hook preflight failure");
+      },
+    });
+    const tool = wrapToolWithBeforeToolCallHook(
+      { name: "read", execute } as unknown as AnyAgentTool,
+      {
+        agentId: "main",
+        sessionKey: "session-key",
+        runId: "run-1",
+      },
+    );
+
+    await withToolExecutionEvents(async (emitted, flush) => {
+      await expect(
+        tool.execute("tool-call-preflight", params, undefined, undefined),
+      ).rejects.toThrow("Tool call blocked because before_tool_call hook failed");
+      await flush();
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(emitted.map((event) => event.type)).toEqual(["tool.execution.error"]);
+      expectEventFields(emitted[0], {
+        type: "tool.execution.error",
+        runId: "run-1",
+        sessionKey: "session-key",
+        agentId: "main",
+        toolName: "read",
+        toolCallId: "tool-call-preflight",
+        paramsSummary: { kind: "object" },
+        errorCategory: "before_tool_call",
+        terminalReason: "failed",
+      });
+      expect(JSON.stringify(emitted)).not.toContain("private hook preflight failure");
+    });
+  });
+
+  it("preserves preparation timeout disposition when wrapper diagnostics are delegated", async () => {
+    const timeout = Object.assign(new Error("private preparation timeout"), {
+      name: "TimeoutError",
+    });
+    const tool = wrapToolWithBeforeToolCallHook(
+      {
+        name: "exec",
+        execute: vi.fn(),
+        prepareBeforeToolCallParams: vi.fn().mockRejectedValue(timeout),
+      } as unknown as AnyAgentTool,
+      { runId: "run-1" },
+      { emitDiagnostics: false },
+    );
+
+    const error = await tool
+      .execute("tool-call-preparation-timeout", { command: "private" }, undefined, undefined)
+      .catch((cause: unknown) => cause);
+
+    expect(getBeforeToolCallFailureDisposition(error)).toBe("timed_out");
+    expect(error).toHaveProperty("cause", timeout);
+  });
+
+  it("emits a blocked terminal diagnostic when tool approval is denied", async () => {
+    hookRunner.hasHooks.mockImplementation((hookName: string) => hookName === "before_tool_call");
+    hookRunner.runBeforeToolCall.mockResolvedValueOnce({
+      requireApproval: { title: "Approve", description: "Approve tool" },
+    });
+    const mockCallGateway = vi.mocked(callGatewayTool);
+    mockCallGateway.mockResolvedValueOnce({ id: "approval-1", decision: "deny" });
+    const execute = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+    const tool = wrapToolWithBeforeToolCallHook(
+      { name: "exec", execute } as unknown as AnyAgentTool,
+      { agentId: "main", sessionKey: "session-key", runId: "run-1" },
+    );
+
+    await withToolExecutionEvents(async (emitted, flush) => {
+      await expect(
+        tool.execute("tool-call-denied", { command: "private" }, undefined, undefined),
+      ).rejects.toThrow("Denied by user");
+      await flush();
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(emitted.map((event) => event.type)).toEqual(["tool.execution.blocked"]);
+      expectEventFields(emitted[0], {
+        type: "tool.execution.blocked",
+        runId: "run-1",
+        sessionKey: "session-key",
+        toolName: "exec",
+        toolCallId: "tool-call-denied",
+        deniedReason: "plugin-approval",
+        reason: "plugin-approval",
+      });
+      expect(JSON.stringify(emitted)).not.toContain("private");
+    });
+    mockCallGateway.mockReset();
+  });
+
+  it("emits a blocked terminal diagnostic when approval is report-only", async () => {
+    hookRunner.hasHooks.mockImplementation((hookName: string) => hookName === "before_tool_call");
+    hookRunner.runBeforeToolCall.mockResolvedValueOnce({
+      requireApproval: { title: "Approve", description: "Review before running" },
+    });
+    const mockCallGateway = vi.mocked(callGatewayTool);
+    const execute = vi.fn().mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+    const tool = wrapToolWithBeforeToolCallHook(
+      { name: "exec", execute } as unknown as AnyAgentTool,
+      { agentId: "main", sessionKey: "session-key", runId: "run-1" },
+      { approvalMode: "report" },
+    );
+
+    await withToolExecutionEvents(async (emitted, flush) => {
+      await expect(
+        tool.execute("tool-call-report", { command: "private" }, undefined, undefined),
+      ).rejects.toThrow("Review before running");
+      await flush();
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(mockCallGateway).not.toHaveBeenCalled();
+      expect(emitted.map((event) => event.type)).toEqual(["tool.execution.blocked"]);
+      expectEventFields(emitted[0], {
+        type: "tool.execution.blocked",
+        runId: "run-1",
+        sessionKey: "session-key",
+        toolName: "exec",
+        toolCallId: "tool-call-report",
+        deniedReason: "plugin-approval",
+        reason: "plugin-approval",
+      });
+      expect(JSON.stringify(emitted)).not.toContain("private");
+      expect(JSON.stringify(emitted)).not.toContain("Review before running");
+    });
+    mockCallGateway.mockReset();
   });
 
   it.each([
@@ -1278,10 +1463,33 @@ describe("before_tool_call requireApproval handling", () => {
     });
 
     expect(result.blocked).toBe(true);
+    expect(result).toHaveProperty("disposition", "failed");
     expect(result).toHaveProperty(
       "reason",
       "Tool call blocked because before_tool_call hook failed",
     );
+  });
+
+  it("classifies a loop preflight exception as a before-tool failure", async () => {
+    const ctx = {
+      sessionKey: "main",
+      get loopDetection(): never {
+        throw new Error("loop state unavailable");
+      },
+    };
+
+    const result = await runBeforeToolCallHook({
+      toolName: "bash",
+      params: { command: "ls" },
+      ctx,
+    });
+
+    expect(result).toMatchObject({
+      blocked: true,
+      kind: "failure",
+      disposition: "failed",
+      reason: "Tool call blocked because before_tool_call hook failed",
+    });
   });
 
   it("passes diagnostic trace context to before_tool_call hooks", async () => {
@@ -1653,6 +1861,7 @@ describe("before_tool_call requireApproval handling", () => {
     });
 
     expect(result.blocked).toBe(true);
+    expect(result).toHaveProperty("disposition", "blocked");
     expect(result).toHaveProperty("reason", "Denied by user");
   });
 
@@ -1685,6 +1894,7 @@ describe("before_tool_call requireApproval handling", () => {
     });
 
     expect(result.blocked).toBe(true);
+    expect(result).toHaveProperty("disposition", "timed_out");
     expect(result).toHaveProperty(
       "reason",
       "Approval timed out\n\nConfigure Telegram native approval setup.",
