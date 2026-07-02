@@ -368,21 +368,24 @@ describe("agent activity audit projection", () => {
   );
 
   it.each([
-    ["cancelled", "cancelled", "tool_cancelled"],
-    ["timed_out", "timed_out", "tool_timed_out"],
-    ["failed", "failed", "tool_failed"],
-  ] as const)("projects trusted tool terminal reason %s", (terminalReason, status, errorCode) => {
-    const projected = projectToolExecutionEventToAudit(
-      toolEvent({
-        type: "tool.execution.error",
-        durationMs: 10,
-        errorCategory: "runtime_tool_error",
-        terminalReason,
-      }),
-    );
+    ["cancelled", "runtime_tool_error", "cancelled", "tool_cancelled"],
+    ["timed_out", "aborted", "timed_out", "tool_timed_out"],
+    ["failed", "AbortError", "failed", "tool_failed"],
+  ] as const)(
+    "projects trusted tool terminal reason %s ahead of error category %s",
+    (terminalReason, errorCategory, status, errorCode) => {
+      const projected = projectToolExecutionEventToAudit(
+        toolEvent({
+          type: "tool.execution.error",
+          durationMs: 10,
+          errorCategory,
+          terminalReason,
+        }),
+      );
 
-    expect(projected).toMatchObject({ status, errorCode });
-  });
+      expect(projected).toMatchObject({ status, errorCode });
+    },
+  );
 
   it("keeps the trusted tool lifecycle active when optional diagnostics are disabled", () => {
     const seen: TrustedToolExecutionEvent[] = [];

@@ -188,14 +188,17 @@ export function projectToolExecutionEventToAudit(
     event.type === "tool.execution.error"
       ? normalizeOptionalLowercaseString(event.errorCategory)
       : undefined;
+  const terminalReason = event.type === "tool.execution.error" ? event.terminalReason : undefined;
+  // Modern producers set terminalReason explicitly; errorCategory is only a
+  // legacy fallback and must not override a definitive timeout or failure.
   const toolCancelled =
-    (event.type === "tool.execution.error" && event.terminalReason === "cancelled") ||
-    errorCategory === "aborted" ||
-    errorCategory === "aborterror" ||
-    errorCategory === "cancelled" ||
-    errorCategory === "canceled";
-  const toolTimedOut =
-    event.type === "tool.execution.error" && event.terminalReason === "timed_out";
+    terminalReason === "cancelled" ||
+    (terminalReason === undefined &&
+      (errorCategory === "aborted" ||
+        errorCategory === "aborterror" ||
+        errorCategory === "cancelled" ||
+        errorCategory === "canceled"));
+  const toolTimedOut = terminalReason === "timed_out";
   const terminal =
     event.type === "tool.execution.started"
       ? { status: "started" as const }
