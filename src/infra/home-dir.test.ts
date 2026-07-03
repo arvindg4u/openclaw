@@ -8,6 +8,7 @@ import {
   resolveOsHomeDir,
   resolveOsHomeRelativePath,
   resolveRequiredHomeDir,
+  resolveUserPath,
 } from "./home-dir.js";
 
 describe("resolveEffectiveHomeDir", () => {
@@ -268,5 +269,23 @@ describe("resolveOsHomeRelativePath", () => {
         } as NodeJS.ProcessEnv,
       }),
     ).toBe(path.resolve("/home/alice/docs"));
+  });
+});
+
+describe("resolveUserPath", () => {
+  it.each([
+    { input: "", expected: "" },
+    { input: "   ", expected: "" },
+    { input: undefined as unknown as string, expected: "" },
+    { input: null as unknown as string, expected: "" },
+  ])("preserves blank input $input", ({ input, expected }) => {
+    expect(resolveUserPath(input)).toBe(expected);
+  });
+
+  it("uses the provided home sources", () => {
+    const env = { HOME: "/tmp/openclaw-home" } as NodeJS.ProcessEnv;
+    expect(resolveUserPath("~/openclaw", env, () => "/fallback")).toBe(
+      path.resolve("/tmp/openclaw-home", "openclaw"),
+    );
   });
 });

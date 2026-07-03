@@ -4,16 +4,11 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { MAX_TIMER_TIMEOUT_MS } from "./shared/number-coercion.js";
 import { withTempDir } from "./test-helpers/temp-dir.js";
-import { withEnv } from "./test-utils/env.js";
 import {
   CONFIG_DIR,
   ensureDir,
   pinConfigDir,
   resolveConfigDir,
-  resolveHomeDir,
-  resolveUserPath,
-  shortenHomeInString,
-  shortenHomePath,
   sleep,
 } from "./utils.js";
 
@@ -101,76 +96,5 @@ describe("resolveConfigDir", () => {
         OPENCLAW_TEST_FAST: "1",
       });
     }
-  });
-});
-
-describe("resolveHomeDir", () => {
-  it("prefers OPENCLAW_HOME over HOME", () => {
-    withEnv({ OPENCLAW_HOME: "/srv/openclaw-home", HOME: "/home/other" }, () => {
-      expect(resolveHomeDir()).toBe(path.resolve("/srv/openclaw-home"));
-    });
-  });
-});
-
-describe("shortenHomePath", () => {
-  it("uses $OPENCLAW_HOME prefix when OPENCLAW_HOME is set", () => {
-    withEnv({ OPENCLAW_HOME: "/srv/openclaw-home", HOME: "/home/other" }, () => {
-      expect(shortenHomePath(`${path.resolve("/srv/openclaw-home")}/.openclaw/openclaw.json`)).toBe(
-        "$OPENCLAW_HOME/.openclaw/openclaw.json",
-      );
-    });
-  });
-});
-
-describe("shortenHomeInString", () => {
-  it("uses $OPENCLAW_HOME replacement when OPENCLAW_HOME is set", () => {
-    withEnv({ OPENCLAW_HOME: "/srv/openclaw-home", HOME: "/home/other" }, () => {
-      expect(
-        shortenHomeInString(
-          `config: ${path.resolve("/srv/openclaw-home")}/.openclaw/openclaw.json`,
-        ),
-      ).toBe("config: $OPENCLAW_HOME/.openclaw/openclaw.json");
-    });
-  });
-});
-
-describe("resolveUserPath", () => {
-  it("expands ~ to home dir", () => {
-    expect(resolveUserPath("~", {}, () => "/Users/thoffman")).toBe(path.resolve("/Users/thoffman"));
-  });
-
-  it("expands ~/ to home dir", () => {
-    expect(resolveUserPath("~/openclaw", {}, () => "/Users/thoffman")).toBe(
-      path.resolve("/Users/thoffman", "openclaw"),
-    );
-  });
-
-  it("resolves relative paths", () => {
-    expect(resolveUserPath("tmp/dir")).toBe(path.resolve("tmp/dir"));
-  });
-
-  it("prefers OPENCLAW_HOME for tilde expansion", () => {
-    withEnv({ OPENCLAW_HOME: "/srv/openclaw-home", HOME: "/home/other" }, () => {
-      expect(resolveUserPath("~/openclaw")).toBe(path.resolve("/srv/openclaw-home", "openclaw"));
-    });
-  });
-
-  it("uses the provided env for tilde expansion", () => {
-    const env = {
-      HOME: "/tmp/openclaw-home",
-      OPENCLAW_HOME: "/srv/openclaw-home",
-    } as NodeJS.ProcessEnv;
-
-    expect(resolveUserPath("~/openclaw", env)).toBe(path.resolve("/srv/openclaw-home", "openclaw"));
-  });
-
-  it("keeps blank paths blank", () => {
-    expect(resolveUserPath("")).toBe("");
-    expect(resolveUserPath("   ")).toBe("");
-  });
-
-  it("returns empty string for undefined/null input", () => {
-    expect(resolveUserPath(undefined as unknown as string)).toBe("");
-    expect(resolveUserPath(null as unknown as string)).toBe("");
   });
 });

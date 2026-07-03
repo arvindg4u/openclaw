@@ -4,12 +4,23 @@ import os from "node:os";
 import path from "node:path";
 import { pathExists as fsSafePathExists } from "./infra/fs-safe.js";
 import {
-  resolveEffectiveHomeDir,
-  resolveHomeRelativePath,
-  resolveRequiredHomeDir,
-} from "./infra/home-dir.js";
+  displayPath,
+  displayString,
+  resolveHomeDir,
+  shortenHomeInString,
+  shortenHomePath,
+} from "./infra/home-dir-display.js";
+import { resolveRequiredHomeDir, resolveUserPath } from "./infra/home-dir.js";
 import { isPlainObject } from "./infra/plain-object.js";
 export { escapeRegExp } from "./shared/regexp.js";
+export {
+  displayPath,
+  displayString,
+  resolveHomeDir,
+  resolveUserPath,
+  shortenHomeInString,
+  shortenHomePath,
+};
 export { sleep } from "./utils/sleep.js";
 
 /** Creates a directory tree if it does not already exist. */
@@ -67,18 +78,6 @@ export function normalizeE164(number: string): string {
 // to preserve the historical `utils.ts` import surface.
 export { sliceUtf16Safe, truncateUtf16Safe } from "./shared/utf16-slice.js";
 
-/** Resolves `~` and OpenClaw home-relative paths with injectable env/home sources. */
-export function resolveUserPath(
-  input: string,
-  env: NodeJS.ProcessEnv = process.env,
-  homedir: () => string = os.homedir,
-): string {
-  if (!input) {
-    return "";
-  }
-  return resolveHomeRelativePath(input, { env, homedir });
-}
-
 /** Resolves the OpenClaw config directory from state/config env overrides or home. */
 export function resolveConfigDir(
   env: NodeJS.ProcessEnv = process.env,
@@ -102,64 +101,6 @@ export function resolveConfigDir(
     // best-effort
   }
   return newDir;
-}
-
-/** Resolves the effective OpenClaw home directory, if one can be determined. */
-export function resolveHomeDir(): string | undefined {
-  return resolveEffectiveHomeDir(process.env, os.homedir);
-}
-
-function resolveHomeDisplayPrefix(): { home: string; prefix: string } | undefined {
-  const home = resolveHomeDir();
-  if (!home) {
-    return undefined;
-  }
-  const explicitHome = process.env.OPENCLAW_HOME?.trim();
-  if (explicitHome) {
-    return { home, prefix: "$OPENCLAW_HOME" };
-  }
-  return { home, prefix: "~" };
-}
-
-/** Replaces the leading home directory in a path with `~` or `$OPENCLAW_HOME`. */
-export function shortenHomePath(input: string): string {
-  if (!input) {
-    return input;
-  }
-  const display = resolveHomeDisplayPrefix();
-  if (!display) {
-    return input;
-  }
-  const { home, prefix } = display;
-  if (input === home) {
-    return prefix;
-  }
-  if (input.startsWith(`${home}/`) || input.startsWith(`${home}\\`)) {
-    return `${prefix}${input.slice(home.length)}`;
-  }
-  return input;
-}
-
-/** Replaces all effective-home occurrences inside a diagnostic string. */
-export function shortenHomeInString(input: string): string {
-  if (!input) {
-    return input;
-  }
-  const display = resolveHomeDisplayPrefix();
-  if (!display) {
-    return input;
-  }
-  return input.split(display.home).join(display.prefix);
-}
-
-/** Shortens a path for display without changing non-home paths. */
-export function displayPath(input: string): string {
-  return shortenHomePath(input);
-}
-
-/** Shortens home paths embedded in arbitrary display text. */
-export function displayString(input: string): string {
-  return shortenHomeInString(input);
 }
 
 // Gateway startup re-pins this live binding after config/state selection converges so modules
