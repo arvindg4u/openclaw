@@ -532,10 +532,10 @@ writes.
 
 - Params: optional exact `agentId`, `sessionKey`, or `runId`; optional `kind`
   (`"agent_run"` or `"tool_action"`); optional `status` (`"started"`,
-  `"succeeded"`, `"failed"`, `"cancelled"`, `"timed_out"`, or `"blocked"`);
-  optional inclusive `after` / `before` Unix-millisecond bounds; optional
-  `limit` from `1` to `500`; and optional string `cursor` from the preceding
-  page.
+  `"succeeded"`, `"failed"`, `"cancelled"`, `"timed_out"`, `"blocked"`, or
+  `"unknown"`); optional inclusive `after` / `before` Unix-millisecond bounds;
+  optional `limit` from `1` to `500`; and optional string `cursor` from the
+  preceding page.
 - Result: `{ "events": AuditEvent[], "nextCursor"?: string }`.
 
 Each event includes a stable event id, monotonic ledger sequence, source event

@@ -2,7 +2,7 @@
 import type { Command } from "commander";
 import { formatDocsLink } from "../../../packages/terminal-core/src/links.js";
 import { theme } from "../../../packages/terminal-core/src/theme.js";
-import { auditListCommand } from "../../commands/audit.js";
+import { auditListCommand, type AuditListCommandOptions } from "../../commands/audit.js";
 import { defaultRuntime } from "../../runtime.js";
 import { runCommandWithRuntime } from "../cli-utils.js";
 
@@ -17,7 +17,7 @@ export function registerAuditCommand(program: Command): void {
     .option("--kind <kind>", "Filter by kind (agent_run or tool_action)")
     .option(
       "--status <status>",
-      "Filter by status (started, succeeded, failed, cancelled, timed_out, blocked)",
+      "Filter by status (started, succeeded, failed, cancelled, timed_out, blocked, unknown)",
     )
     .option("--after <timestamp>", "Include records at/after ISO time or Unix milliseconds")
     .option("--before <timestamp>", "Include records at/before ISO time or Unix milliseconds")
@@ -36,15 +36,8 @@ export function registerAuditCommand(program: Command): void {
             agentId: opts.agent as string | undefined,
             sessionKey: opts.session as string | undefined,
             runId: opts.run as string | undefined,
-            kind: opts.kind as "agent_run" | "tool_action" | undefined,
-            status: opts.status as
-              | "started"
-              | "succeeded"
-              | "failed"
-              | "cancelled"
-              | "timed_out"
-              | "blocked"
-              | undefined,
+            kind: opts.kind as AuditListCommandOptions["kind"],
+            status: opts.status as AuditListCommandOptions["status"],
             after: opts.after as string | undefined,
             before: opts.before as string | undefined,
             cursor: opts.cursor as string | undefined,
