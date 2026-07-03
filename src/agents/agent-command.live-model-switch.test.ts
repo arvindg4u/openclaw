@@ -2507,6 +2507,14 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     expect(state.persistSessionEntryMock).not.toHaveBeenCalled();
     expect(state.updateSessionStoreAfterAgentRunMock).not.toHaveBeenCalled();
     expect(sessionStore["agent:main:main"]).toBe(visibleEntry);
+    expect(state.registerAgentRunContextMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        sessionKey: "agent:main:main",
+        sessionId: "session-1",
+        isControlUiVisible: false,
+      }),
+    );
   });
 
   it("does not duplicate finishing lifecycle when an attempt already emitted finishing", async () => {
@@ -3364,6 +3372,31 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     expect(transcriptParams.transcriptBody).toContain("A background task completed.");
     expect(transcriptParams.transcriptBody).not.toContain(INTERNAL_RUNTIME_CONTEXT_BEGIN);
     expect(transcriptParams.transcriptBody).not.toContain(INTERNAL_RUNTIME_CONTEXT_END);
+  });
+
+  it("keeps session provenance for internal ACP turns", async () => {
+    state.acpResolveSessionMock.mockReturnValue({
+      kind: "ready",
+      meta: {
+        agent: "claude",
+        cwd: "/tmp/workspace",
+      },
+    });
+
+    await agentCommand({
+      message: "internal ACP turn",
+      sessionKey: "agent:main:main",
+      sessionEffects: "internal",
+    });
+
+    expect(state.registerAgentRunContextMock).toHaveBeenCalledWith(
+      "session-1",
+      expect.objectContaining({
+        sessionKey: "agent:main:main",
+        sessionId: "session-1",
+        isControlUiVisible: false,
+      }),
+    );
   });
 
   it("allows manual ACP spawn turns when ACP dispatch is disabled", async () => {

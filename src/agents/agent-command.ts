@@ -968,17 +968,13 @@ async function agentCommandInternal(
       const attemptExecutionRuntime = await loadAttemptExecutionRuntime();
       const acpToolTracker = attemptExecutionRuntime.createAcpToolLifecycleTracker();
       const startedAt = Date.now();
-      registerAgentRunContext(
-        runId,
-        suppressVisibleSessionEffects
-          ? { agentId: sessionAgentId, isControlUiVisible: false, lifecycleGeneration }
-          : {
-              sessionKey,
-              sessionId,
-              agentId: sessionAgentId,
-              lifecycleGeneration,
-            },
-      );
+      registerAgentRunContext(runId, {
+        sessionKey,
+        sessionId,
+        agentId: sessionAgentId,
+        lifecycleGeneration,
+        ...(suppressVisibleSessionEffects ? { isControlUiVisible: false } : {}),
+      });
       attemptExecutionRuntime.emitAcpLifecycleStart({
         runId,
         startedAt,
@@ -1203,7 +1199,7 @@ async function agentCommandInternal(
     assertAgentRunLifecycleGenerationCurrent(lifecycleGeneration);
     if (sessionKey || suppressVisibleSessionEffects) {
       registerAgentRunContext(runId, {
-        ...(sessionKey && !suppressVisibleSessionEffects ? { sessionKey, sessionId } : {}),
+        ...(sessionKey ? { sessionKey, sessionId } : {}),
         agentId: sessionAgentId,
         lifecycleGeneration,
         verboseLevel: resolvedVerboseLevel,
