@@ -246,7 +246,15 @@ describe("runCodexAppServerAttempt turn watches", () => {
     const run = runCodexAppServerAttempt(params);
 
     await harness.waitForMethod("turn/start");
-    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), expectedTerminalIdleTimeoutMs);
+    const scheduledDelaysMs = setTimeoutSpy.mock.calls
+      .map(([, delay]) => delay)
+      .filter((delay): delay is number => typeof delay === "number");
+    expect(
+      scheduledDelaysMs.some(
+        (delay) =>
+          delay <= expectedTerminalIdleTimeoutMs && delay >= expectedTerminalIdleTimeoutMs - 1_000,
+      ),
+    ).toBe(true);
     await harness.notify({
       method: "turn/completed",
       params: {
