@@ -3,10 +3,13 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { resolveStateDir } from "../config/paths.js";
+import { OPENCLAW_SQLITE_BUSY_TIMEOUT_MS } from "../state/openclaw-state-db.js";
 import type { AuditEventInput } from "./audit-event-types.js";
 
 const MAX_PENDING_AUDIT_EVENTS = 4_096;
-const AUDIT_WRITER_SHUTDOWN_TIMEOUT_MS = 5_000;
+// The worker can be synchronously blocked inside SQLite's busy timeout. Keep
+// shutdown beyond that window so a queued stop cannot kill an accepted write.
+const AUDIT_WRITER_SHUTDOWN_TIMEOUT_MS = OPENCLAW_SQLITE_BUSY_TIMEOUT_MS + 5_000;
 
 type AuditWriterMessage =
   | { type: "ready" }
@@ -183,6 +186,7 @@ export function createAuditEventWriter(
 }
 
 export const testApi = {
+  auditWriterShutdownTimeoutMs: AUDIT_WRITER_SHUTDOWN_TIMEOUT_MS,
   maxPendingAuditEvents: MAX_PENDING_AUDIT_EVENTS,
   resolveAuditEventWriterUrl,
 };

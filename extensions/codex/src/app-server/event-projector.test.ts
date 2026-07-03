@@ -2333,6 +2333,48 @@ describe("CodexAppServerEventProjector", () => {
     ]);
   });
 
+  it.each([
+    ["missing", undefined],
+    ["in-progress", "in_progress"],
+    ["unrecognized", "future_status"],
+  ] as const)(
+    "keeps %s native image-generation terminal status non-successful",
+    async (_, status) => {
+      const diagnosticEvents: DiagnosticEventPayload[] = [];
+      const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
+      const projector = await createProjector();
+      const startedItem = {
+        id: `image-generation-${status ?? "missing"}`,
+        type: "imageGeneration",
+        status: "in_progress",
+        revisedPrompt: null,
+        result: null,
+      };
+
+      try {
+        await projector.handleNotification(forCurrentTurn("item/started", { item: startedItem }));
+        await projector.handleNotification(
+          forCurrentTurn("item/completed", { item: { ...startedItem, status } }),
+        );
+        await flushDiagnosticEvents();
+      } finally {
+        unsubscribe();
+      }
+
+      expect(
+        diagnosticEvents
+          .filter((event) => "toolCallId" in event && event.toolCallId === startedItem.id)
+          .map((event) => ({
+            type: event.type,
+            errorCode: "errorCode" in event ? event.errorCode : undefined,
+          })),
+      ).toEqual([
+        { type: "tool.execution.started", errorCode: undefined },
+        { type: "tool.execution.error", errorCode: "tool_outcome_unknown" },
+      ]);
+    },
+  );
+
   it("synthesizes native tool progress from turn completion snapshots", async () => {
     const onAgentEvent = vi.fn();
     const onToolResult = vi.fn();

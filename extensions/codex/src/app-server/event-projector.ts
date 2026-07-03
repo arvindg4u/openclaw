@@ -182,7 +182,7 @@ export class CodexNativeToolLifecycleProjector {
 
     const itemDurationMs =
       typeof params.item.durationMs === "number" ? params.item.durationMs : undefined;
-    this.recordTerminal(params.item.id, toolName, itemStatus(params.item), {
+    this.recordTerminal(params.item.id, toolName, auditNativeToolTerminalStatus(params.item), {
       itemDurationMs,
       sourceTimestampMs: params.sourceTimestampMs,
     });
@@ -2734,6 +2734,25 @@ function itemStatus(item: CodexThreadItem): "completed" | "failed" | "running" |
     return "running";
   }
   return "completed";
+}
+
+function auditNativeToolTerminalStatus(item: CodexThreadItem): CodexNativeToolAuditStatus {
+  if (item.type === "imageView" || item.type === "sleep") {
+    return "completed";
+  }
+  const status = readItemString(item, "status");
+  if (status === "completed") {
+    return "completed";
+  }
+  if (status === "failed" || status === "error") {
+    return "failed";
+  }
+  if (status === "declined") {
+    return "blocked";
+  }
+  // A completed notification with a missing, active, or new status does not
+  // prove success. Preserve that ambiguity at the durable audit boundary.
+  return "unknown";
 }
 
 function formatMissingToolResultError(params: { id: string; name: string }): string {
