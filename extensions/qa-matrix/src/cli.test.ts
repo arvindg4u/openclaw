@@ -10,7 +10,7 @@ vi.mock("./cli.runtime.js", () => ({
   runQaMatrixCommand,
 }));
 
-import { matrixQaCliRegistration } from "./cli.js";
+import { matrixQaCliRegistration, matrixQaTransportFactory } from "./cli.js";
 
 function mockProcessWrite(
   _chunk: string | Uint8Array,
@@ -54,7 +54,7 @@ describe("matrix qa cli registration", () => {
   it("keeps disposable Matrix lane flags focused", () => {
     const qa = new Command();
 
-    matrixQaCliRegistration.register(qa);
+    matrixQaCliRegistration.register(qa, vi.fn());
 
     const matrix = qa.commands.find((command) => command.name() === "matrix");
     const optionNames = matrix?.options.map((option) => option.long) ?? [];
@@ -79,12 +79,14 @@ describe("matrix qa cli registration", () => {
 
   it("exits with failure after Matrix artifacts are written for a failed run", async () => {
     const qa = new Command();
-    matrixQaCliRegistration.register(qa);
-    runQaMatrixCommand.mockRejectedValue(new Error("Matrix QA failed.\nreport: /tmp/report.md"));
+    const runHosted = vi
+      .fn()
+      .mockRejectedValue(new Error("Matrix QA failed.\nreport: /tmp/report.md"));
+    matrixQaCliRegistration.register(qa, runHosted);
 
     await expect(qa.parseAsync(["node", "openclaw", "matrix"])).rejects.toThrow("process.exit(1)");
 
-    expect(runQaMatrixCommand).toHaveBeenCalledOnce();
+    expect(runHosted).toHaveBeenCalledOnce();
     expect(stderrSpy).toHaveBeenCalledWith("Matrix QA failed.\nreport: /tmp/report.md\n");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
@@ -92,11 +94,26 @@ describe("matrix qa cli registration", () => {
   it("can disable the forced exit for direct test harnesses", async () => {
     process.env.OPENCLAW_QA_MATRIX_DISABLE_FORCE_EXIT = "1";
     const qa = new Command();
-    matrixQaCliRegistration.register(qa);
-    runQaMatrixCommand.mockRejectedValue(new Error("scenario failed"));
+    const runHosted = vi.fn().mockRejectedValue(new Error("scenario failed"));
+    matrixQaCliRegistration.register(qa, runHosted);
 
     await expect(qa.parseAsync(["node", "openclaw", "matrix"])).rejects.toThrow("scenario failed");
 
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("adapts the Matrix runtime through its contributed factory", async () => {
+    const options = { scenarioIds: ["matrix-canary"] };
+    const adapter = await matrixQaTransportFactory.create({
+      channelId: "matrix",
+      commandOptions: options,
+      driver: "live",
+      outputDir: ".artifacts/qa-e2e",
+      state: undefined,
+    });
+
+    await adapter.run();
+
+    expect(runQaMatrixCommand).toHaveBeenCalledWith(options);
   });
 });

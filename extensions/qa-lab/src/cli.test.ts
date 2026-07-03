@@ -10,14 +10,20 @@ const TEST_QA_RUNNER = {
 } as const;
 
 function createAvailableQaRunnerContribution() {
+  const factory = {
+    id: TEST_QA_RUNNER.commandName,
+    matches: vi.fn(() => true),
+    create: vi.fn(),
+  };
   return {
     pluginId: TEST_QA_RUNNER.pluginId,
     commandName: TEST_QA_RUNNER.commandName,
     status: "available" as const,
     registration: {
       commandName: TEST_QA_RUNNER.commandName,
-      register: vi.fn((qa: Command) => {
-        qa.command(TEST_QA_RUNNER.commandName).action(() => undefined);
+      factory,
+      register: vi.fn((qa: Command, run) => {
+        qa.command(TEST_QA_RUNNER.commandName).action(async () => await run?.({}));
       }),
     },
   } satisfies QaRunnerCliContribution;
@@ -29,6 +35,20 @@ function createBlockedQaRunnerContribution(): QaRunnerCliContribution {
     commandName: TEST_QA_RUNNER.commandName,
     description: TEST_QA_RUNNER.description,
     status: "blocked",
+  };
+}
+
+function createLegacyQaRunnerContribution(): QaRunnerCliContribution {
+  return {
+    pluginId: TEST_QA_RUNNER.pluginId,
+    commandName: TEST_QA_RUNNER.commandName,
+    status: "available",
+    registration: {
+      commandName: TEST_QA_RUNNER.commandName,
+      register(qa) {
+        qa.command(TEST_QA_RUNNER.commandName).action(() => undefined);
+      },
+    },
   };
 }
 
@@ -51,7 +71,7 @@ const {
   runQaProfileCommand,
   runQaProviderServerCommand,
   runQaSuiteCommand,
-  runQaTelegramCommand,
+  runQaHostedTransportSuite,
   runMantisBeforeAfterCommand,
   runMantisDesktopBrowserSmokeCommand,
   runMantisDiscordSmokeCommand,
@@ -67,7 +87,7 @@ const {
   runQaProfileCommand: vi.fn(),
   runQaProviderServerCommand: vi.fn(),
   runQaSuiteCommand: vi.fn(),
-  runQaTelegramCommand: vi.fn(),
+  runQaHostedTransportSuite: vi.fn(),
   runMantisBeforeAfterCommand: vi.fn(),
   runMantisDesktopBrowserSmokeCommand: vi.fn(),
   runMantisDiscordSmokeCommand: vi.fn(),
@@ -82,11 +102,11 @@ const { listQaRunnerCliContributions } = vi.hoisted(() => ({
 }));
 
 function requireQaTelegramOptions() {
-  const [call] = runQaTelegramCommand.mock.calls;
+  const [call] = runQaHostedTransportSuite.mock.calls;
   if (!call) {
     throw new Error("expected qa telegram command call");
   }
-  const [options] = call;
+  const [, options] = call;
   return options;
 }
 
@@ -103,8 +123,8 @@ vi.mock("openclaw/plugin-sdk/qa-runner-runtime", () => ({
   listQaRunnerCliContributions,
 }));
 
-vi.mock("./live-transports/telegram/cli.runtime.js", () => ({
-  runQaTelegramCommand,
+vi.mock("./suite-launch.runtime.js", () => ({
+  runQaHostedTransportSuite,
 }));
 
 vi.mock("./mantis/cli.runtime.js", () => ({
@@ -143,7 +163,7 @@ describe("qa cli registration", () => {
     runQaProfileCommand.mockReset();
     runQaProviderServerCommand.mockReset();
     runQaSuiteCommand.mockReset();
-    runQaTelegramCommand.mockReset();
+    runQaHostedTransportSuite.mockReset();
     runMantisBeforeAfterCommand.mockReset();
     runMantisDesktopBrowserSmokeCommand.mockReset();
     runMantisDiscordSmokeCommand.mockReset();
@@ -740,6 +760,18 @@ describe("qa cli registration", () => {
     expect(registration.register).toHaveBeenCalledTimes(1);
   });
 
+  it("mounts shipped registration-only runners without the factory host", () => {
+    listQaRunnerCliContributions.mockReset().mockReturnValue([createLegacyQaRunnerContribution()]);
+
+    const legacyProgram = new Command();
+    registerQaLabCli(legacyProgram);
+
+    const qa = legacyProgram.commands.find((command) => command.name() === "qa");
+    expect(qa?.commands.some((command) => command.name() === TEST_QA_RUNNER.commandName)).toBe(
+      true,
+    );
+  });
+
   it("keeps Telegram credential flags on the shared host CLI", () => {
     const qa = program.commands.find((command) => command.name() === "qa");
     const telegram = qa?.commands.find((command) => command.name() === "telegram");
@@ -850,20 +882,24 @@ describe("qa cli registration", () => {
   it("routes telegram CLI defaults into the lane runtime", async () => {
     await program.parseAsync(["node", "openclaw", "qa", "telegram"]);
 
-    expect(runQaTelegramCommand).toHaveBeenCalledWith({
-      repoRoot: undefined,
-      outputDir: undefined,
-      providerMode: "live-frontier",
-      primaryModel: undefined,
-      alternateModel: undefined,
-      fastMode: false,
-      allowFailures: false,
-      scenarioIds: [],
-      listScenarios: false,
-      sutAccountId: "sut",
-      credentialSource: undefined,
-      credentialRole: undefined,
-    });
+    expect(runQaHostedTransportSuite).toHaveBeenCalledWith(
+      "telegram",
+      {
+        repoRoot: undefined,
+        outputDir: undefined,
+        providerMode: "live-frontier",
+        primaryModel: undefined,
+        alternateModel: undefined,
+        fastMode: false,
+        allowFailures: false,
+        scenarioIds: [],
+        listScenarios: false,
+        sutAccountId: "sut",
+        credentialSource: undefined,
+        credentialRole: undefined,
+      },
+      expect.any(Array),
+    );
   });
 
   it("forwards --list-scenarios for telegram runs", async () => {

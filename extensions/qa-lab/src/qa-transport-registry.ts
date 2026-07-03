@@ -1,3 +1,4 @@
+import type { QaRunnerCliRegistration } from "openclaw/plugin-sdk/qa-runner-runtime";
 // Qa Lab plugin module implements qa transport registry behavior.
 import type { QaBusState } from "./bus-state.js";
 import {
@@ -7,29 +8,47 @@ import {
 import type { QaTransportAdapter } from "./qa-transport.js";
 
 export type QaTransportId = "qa-channel";
-export type QaTransportDriver = QaTransportId | "crabline";
+export type QaTransportDriver = QaTransportId | "crabline" | "live";
 
 export type QaTransportFactoryContext = {
   channelId: string;
   driver: QaTransportDriver;
   outputDir: string;
+  commandOptions?: NonNullable<Parameters<QaRunnerCliRegistration["register"]>[1]> extends (
+    options: infer TOptions,
+  ) => Promise<void>
+    ? TOptions
+    : never;
   state: QaBusState;
 };
 
-export type QaTransportAdapterFactoryResult = {
-  adapter: QaTransportAdapter;
+export type QaTransportAdapterFactoryResult<
+  TAdapter extends QaTransportAdapter | QaHostedTransportAdapter = QaTransportAdapter,
+> = {
+  adapter: TAdapter;
   cleanup: () => Promise<void>;
 };
+
+export type QaHostedTransportAdapter = Awaited<
+  ReturnType<NonNullable<QaRunnerCliRegistration["factory"]>["create"]>
+>;
 
 export type QaTransportAdapterFactory = {
   id: string;
   matches: (context: Pick<QaTransportFactoryContext, "channelId" | "driver">) => boolean;
-  create: (context: QaTransportFactoryContext) => Promise<QaTransportAdapter>;
+  create: (
+    context: QaTransportFactoryContext,
+  ) => Promise<QaTransportAdapter | QaHostedTransportAdapter>;
 };
 
 export type QaTransportAdapterFactoryRegistry = {
-  create: (context: QaTransportFactoryContext) => Promise<QaTransportAdapterFactoryResult>;
+  create: (
+    context: QaTransportFactoryContext,
+  ) => Promise<QaTransportAdapterFactoryResult<QaTransportAdapter | QaHostedTransportAdapter>>;
 };
+
+export type QaHostedTransportAdapterFactoryResult =
+  QaTransportAdapterFactoryResult<QaHostedTransportAdapter>;
 
 const DEFAULT_QA_TRANSPORT_ID: QaTransportId = "qa-channel";
 
@@ -73,12 +92,12 @@ function requireQaTransportFactory(
 }
 
 export function createQaTransportAdapterFactoryRegistry(
-  factories: readonly QaTransportAdapterFactory[] = DEFAULT_QA_TRANSPORT_FACTORIES,
+  factories: readonly QaTransportAdapterFactory[] = [...DEFAULT_QA_TRANSPORT_FACTORIES],
 ): QaTransportAdapterFactoryRegistry {
   return {
     async create(context) {
       const factory = requireQaTransportFactory(factories, context);
-      let adapter: QaTransportAdapter;
+      let adapter: QaTransportAdapter | QaHostedTransportAdapter;
       try {
         adapter = await factory.create(context);
       } catch (error) {
@@ -111,7 +130,17 @@ export function normalizeQaTransportId(input?: string | null): QaTransportId {
 export async function createQaTransportAdapter(
   context: QaTransportFactoryContext,
 ): Promise<QaTransportAdapterFactoryResult> {
-  return await qaTransportAdapterFactoryRegistry.create(context);
+  const created = await qaTransportAdapterFactoryRegistry.create(context);
+  if (created.adapter.kind === "hosted") {
+    await created.cleanup();
+    throw new Error(
+      `QA transport factory for ${context.driver}:${context.channelId} created a hosted adapter`,
+    );
+  }
+  return {
+    adapter: created.adapter,
+    cleanup: created.cleanup,
+  };
 }
 
 export function defaultQaSuiteConcurrencyForTransport(id: QaTransportId): number {

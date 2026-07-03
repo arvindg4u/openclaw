@@ -3,7 +3,6 @@ import {
   createLazyCliRuntimeLoader,
   createLiveTransportQaCliRegistration,
   type LiveTransportQaCliRegistration,
-  type LiveTransportQaCommandOptions,
 } from "../shared/live-transport-cli.js";
 
 type SlackQaCliRuntime = typeof import("./cli.runtime.js");
@@ -12,14 +11,24 @@ const loadSlackQaCliRuntime = createLazyCliRuntimeLoader<SlackQaCliRuntime>(
   () => import("./cli.runtime.js"),
 );
 
-async function runQaSlack(opts: LiveTransportQaCommandOptions) {
-  const runtime = await loadSlackQaCliRuntime();
-  await runtime.runQaSlackCommand(opts);
-}
+export const slackQaTransportFactory: NonNullable<LiveTransportQaCliRegistration["factory"]> = {
+  id: "slack",
+  matches: ({ channelId, driver }) => driver === "live" && channelId === "slack",
+  async create(context) {
+    const options = context.commandOptions ?? {};
+    const runtime = await loadSlackQaCliRuntime();
+    return {
+      kind: "hosted",
+      id: "slack",
+      run: async () => await runtime.runQaSlackCommand(options),
+    };
+  },
+};
 
 export const slackQaCliRegistration: LiveTransportQaCliRegistration =
   createLiveTransportQaCliRegistration({
     commandName: "slack",
+    factory: slackQaTransportFactory,
     credentialOptions: {
       sourceDescription: "Credential source for Slack QA: env or convex (default: env)",
       roleDescription:
@@ -29,5 +38,4 @@ export const slackQaCliRegistration: LiveTransportQaCliRegistration =
     outputDirHelp: "Slack QA artifact directory",
     scenarioHelp: "Run only the named Slack QA scenario (repeatable)",
     sutAccountHelp: "Temporary Slack account id inside the QA gateway config",
-    run: runQaSlack,
   });

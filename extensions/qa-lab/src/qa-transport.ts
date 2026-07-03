@@ -175,6 +175,7 @@ export function createFailureAwareTransportWaitForCondition(state: QaTransportSt
 }
 
 export type QaTransportAdapter = {
+  kind?: "flow";
   id: string;
   label: string;
   accountId: string;

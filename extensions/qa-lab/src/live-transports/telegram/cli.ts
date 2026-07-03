@@ -3,7 +3,6 @@ import {
   createLazyCliRuntimeLoader,
   createLiveTransportQaCliRegistration,
   type LiveTransportQaCliRegistration,
-  type LiveTransportQaCommandOptions,
 } from "../shared/live-transport-cli.js";
 
 type TelegramQaCliRuntime = typeof import("./cli.runtime.js");
@@ -12,14 +11,24 @@ const loadTelegramQaCliRuntime = createLazyCliRuntimeLoader<TelegramQaCliRuntime
   () => import("./cli.runtime.js"),
 );
 
-async function runQaTelegram(opts: LiveTransportQaCommandOptions) {
-  const runtime = await loadTelegramQaCliRuntime();
-  await runtime.runQaTelegramCommand(opts);
-}
+export const telegramQaTransportFactory: NonNullable<LiveTransportQaCliRegistration["factory"]> = {
+  id: "telegram",
+  matches: ({ channelId, driver }) => driver === "live" && channelId === "telegram",
+  async create(context) {
+    const options = context.commandOptions ?? {};
+    const runtime = await loadTelegramQaCliRuntime();
+    return {
+      kind: "hosted",
+      id: "telegram",
+      run: async () => await runtime.runQaTelegramCommand(options),
+    };
+  },
+};
 
 export const telegramQaCliRegistration: LiveTransportQaCliRegistration =
   createLiveTransportQaCliRegistration({
     commandName: "telegram",
+    factory: telegramQaTransportFactory,
     credentialOptions: {
       sourceDescription: "Credential source for Telegram QA: env or convex (default: env)",
       roleDescription:
@@ -30,5 +39,4 @@ export const telegramQaCliRegistration: LiveTransportQaCliRegistration =
     outputDirHelp: "Telegram QA artifact directory",
     scenarioHelp: "Run only the named Telegram QA scenario (repeatable)",
     sutAccountHelp: "Temporary Telegram account id inside the QA gateway config",
-    run: runQaTelegram,
   });

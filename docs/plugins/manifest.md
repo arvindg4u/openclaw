@@ -472,7 +472,22 @@ that best describes ownership.
 Use `qaRunners` when a plugin contributes one or more transport runners beneath
 the shared `openclaw qa` root. Keep this metadata cheap and static; the plugin
 runtime still owns actual CLI registration through a lightweight
-`runtime-api.ts` surface that exports `qaRunnerCliRegistrations`.
+`runtime-api.ts` surface.
+
+Factory-backed runners export `qaRunnerCliRegistrations`, with one registration
+per manifest command. Each registration carries its matching asynchronous
+`factory`; the shared host passes the registration a runner callback when
+mounting the CLI, then uses the factory to select the live transport and create
+the adapter run by the shared `qa-lab` suite host.
+
+Keep `runtime-api.ts` lightweight. Lazy-load channel runtimes from the factory
+or another runtime entrypoint instead of importing them into the discovery
+surface.
+
+Registration-only runner plugins remain supported for compatibility with the
+original contract. The shared `qa` root mounts those registrations directly;
+they do not use the adapter registry or shared suite lifecycle until they add a
+matching factory.
 
 ```json
 {
@@ -489,6 +504,9 @@ runtime still owns actual CLI registration through a lightweight
 | ------------- | -------- | -------- | ------------------------------------------------------------------ |
 | `commandName` | Yes      | `string` | Subcommand mounted beneath `openclaw qa`, for example `matrix`.    |
 | `description` | No       | `string` | Fallback help text used when the shared host needs a stub command. |
+
+The factory id must match the registration's `commandName`. A plugin must not
+export registrations for commands absent from its manifest.
 
 ## setup reference
 

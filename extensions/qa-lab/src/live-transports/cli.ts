@@ -1,10 +1,13 @@
 // Qa Lab plugin module implements cli behavior.
 import { listQaRunnerCliContributions } from "openclaw/plugin-sdk/qa-runner-runtime";
+import { runQaHostedTransportSuite } from "../suite-launch.runtime.js";
 import { discordQaCliRegistration } from "./discord/cli.js";
 import type { LiveTransportQaCliRegistration } from "./shared/live-transport-cli.js";
 import { slackQaCliRegistration } from "./slack/cli.js";
+import { slackQaTransportFactory } from "./slack/cli.js";
 import { telegramQaCliRegistration } from "./telegram/cli.js";
-import { whatsappQaCliRegistration } from "./whatsapp/cli.js";
+import { telegramQaTransportFactory } from "./telegram/cli.js";
+import { whatsappQaCliRegistration, whatsappQaTransportFactory } from "./whatsapp/cli.js";
 
 function createBlockedQaRunnerCliRegistration(params: {
   commandName: string;
@@ -29,7 +32,18 @@ function createQaRunnerCliRegistration(
   runner: ReturnType<typeof listQaRunnerCliContributions>[number],
 ): LiveTransportQaCliRegistration {
   if (runner.status === "available") {
-    return runner.registration;
+    const factory = runner.registration.factory;
+    if (!factory) {
+      return runner.registration;
+    }
+    return {
+      commandName: runner.commandName,
+      register(qa) {
+        runner.registration.register(qa, async (options) => {
+          await runQaHostedTransportSuite(runner.commandName, options, [factory]);
+        });
+      },
+    };
   }
   return createBlockedQaRunnerCliRegistration({
     commandName: runner.commandName,
@@ -38,11 +52,17 @@ function createQaRunnerCliRegistration(
   });
 }
 
+const BUILT_IN_LIVE_TRANSPORT_FACTORIES = [
+  telegramQaTransportFactory,
+  slackQaTransportFactory,
+  whatsappQaTransportFactory,
+] as const;
+
 const LIVE_TRANSPORT_QA_CLI_REGISTRATIONS: readonly LiveTransportQaCliRegistration[] = [
-  telegramQaCliRegistration,
+  registerBuiltInLiveTransportQaCli(telegramQaCliRegistration),
   discordQaCliRegistration,
-  slackQaCliRegistration,
-  whatsappQaCliRegistration,
+  registerBuiltInLiveTransportQaCli(slackQaCliRegistration),
+  registerBuiltInLiveTransportQaCli(whatsappQaCliRegistration),
 ];
 
 export function listLiveTransportQaCliRegistrations(): readonly LiveTransportQaCliRegistration[] {
@@ -54,4 +74,21 @@ export function listLiveTransportQaCliRegistrations(): readonly LiveTransportQaC
   }
 
   return liveRegistrations;
+}
+
+function registerBuiltInLiveTransportQaCli(
+  registration: LiveTransportQaCliRegistration,
+): LiveTransportQaCliRegistration {
+  return {
+    commandName: registration.commandName,
+    register(qa) {
+      registration.register(qa, async (options) => {
+        await runQaHostedTransportSuite(
+          registration.commandName,
+          options,
+          BUILT_IN_LIVE_TRANSPORT_FACTORIES,
+        );
+      });
+    },
+  };
 }

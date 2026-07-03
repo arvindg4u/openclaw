@@ -109,6 +109,7 @@ describe("plugin-sdk qa-runner-runtime linked plugin smoke", () => {
         "export const qaRunnerCliRegistrations = [",
         "  {",
         '    commandName: "linked",',
+        '    factory: { id: "linked", matches() { return true; }, async create() { return { kind: "hosted", id: "linked", async run() {} }; } },',
         "    register() {}",
         "  }",
         "];",
@@ -132,6 +133,9 @@ describe("plugin-sdk qa-runner-runtime linked plugin smoke", () => {
         status: "available",
         registration: {
           commandName: "linked",
+          factory: expect.objectContaining({
+            id: "linked",
+          }),
           register,
         },
       },

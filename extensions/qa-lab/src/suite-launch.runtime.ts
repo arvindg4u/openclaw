@@ -1,7 +1,9 @@
 // Qa Lab plugin module implements suite launch behavior.
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { QaRunnerCliRegistration } from "openclaw/plugin-sdk/qa-runner-runtime";
 import { renderQaMarkdownReport, type QaReportScenario } from "openclaw/plugin-sdk/qa-runtime";
+import { createQaBusState } from "./bus-state.js";
 import { toRepoRelativePath } from "./cli-paths.js";
 import {
   QA_EVIDENCE_FILENAME,
@@ -13,6 +15,7 @@ import {
 import { isQaFastModeEnabled } from "./model-selection.js";
 import { DEFAULT_QA_PROVIDER_MODE } from "./providers/index.js";
 import {
+  createQaTransportAdapterFactoryRegistry,
   defaultQaSuiteConcurrencyForTransport,
   normalizeQaTransportId,
 } from "./qa-transport-registry.js";
@@ -662,4 +665,60 @@ export async function runQaFlowSuiteFromRuntime(
   return await (
     await loadQaFlowSuiteRuntime()
   )(args[0]);
+}
+
+export async function runQaHostedTransportSuite(
+  channelId: string,
+  options: Parameters<NonNullable<Parameters<QaRunnerCliRegistration["register"]>[1]>>[0],
+  factories: readonly NonNullable<QaRunnerCliRegistration["factory"]>[],
+) {
+  const normalizeError = (error: unknown) => {
+    if (error instanceof Error) {
+      return error;
+    }
+    let message = "non-Error rejection";
+    try {
+      message = String(error);
+    } catch {}
+    return new Error(message, { cause: error });
+  };
+  const registry = createQaTransportAdapterFactoryRegistry(factories);
+  const created = await registry.create({
+    channelId,
+    commandOptions: options,
+    driver: "live",
+    outputDir: options.outputDir ?? ".artifacts/qa-e2e",
+    state: createQaBusState(),
+  });
+  if (created.adapter.kind !== "hosted") {
+    await created.cleanup();
+    throw new Error(`QA transport factory for live:${channelId} did not create a hosted adapter`);
+  }
+
+  let runError: unknown;
+  let runFailed = false;
+  try {
+    await created.adapter.run();
+  } catch (error) {
+    runFailed = true;
+    runError = error;
+  }
+  try {
+    await created.cleanup();
+  } catch (cleanupError) {
+    const cleanupFailure = normalizeError(cleanupError);
+    if (runFailed) {
+      const runFailure = normalizeError(runError);
+      const aggregateFailure = new AggregateError(
+        [runFailure, cleanupFailure],
+        `${channelId} QA run and cleanup failed`,
+        { cause: cleanupFailure },
+      );
+      throw aggregateFailure;
+    }
+    throw cleanupFailure;
+  }
+  if (runFailed) {
+    throw normalizeError(runError);
+  }
 }

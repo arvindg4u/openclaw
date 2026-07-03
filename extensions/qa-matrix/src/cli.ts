@@ -1,5 +1,4 @@
 // Qa Matrix plugin module implements cli behavior.
-import type { Command } from "commander";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import {
   createLazyCliRuntimeLoader,
@@ -37,14 +36,16 @@ async function exitMatrixQaCommand(code: number): Promise<never> {
   process.exit(code);
 }
 
-async function runQaMatrix(opts: LiveTransportQaCommandOptions) {
-  const runtime = await loadMatrixQaCliRuntime();
+async function runQaMatrix(
+  runHosted: (options: LiveTransportQaCommandOptions) => Promise<void>,
+  opts: LiveTransportQaCommandOptions,
+) {
   if (process.env[DISABLE_MATRIX_QA_FORCE_EXIT_ENV] === "1") {
-    await runtime.runQaMatrixCommand(opts);
+    await runHosted(opts);
     return;
   }
   try {
-    await runtime.runQaMatrixCommand(opts);
+    await runHosted(opts);
     await exitMatrixQaCommand(0);
   } catch (error) {
     process.stderr.write(`${formatErrorMessage(error)}\n`);
@@ -52,9 +53,24 @@ async function runQaMatrix(opts: LiveTransportQaCommandOptions) {
   }
 }
 
+export const matrixQaTransportFactory: NonNullable<LiveTransportQaCliRegistration["factory"]> = {
+  id: "matrix",
+  matches: ({ channelId, driver }) => driver === "live" && channelId === "matrix",
+  async create(context) {
+    const options = context.commandOptions ?? {};
+    const runtime = await loadMatrixQaCliRuntime();
+    return {
+      kind: "hosted",
+      id: "matrix",
+      run: async () => await runtime.runQaMatrixCommand(options),
+    };
+  },
+};
+
 export const matrixQaCliRegistration: LiveTransportQaCliRegistration =
   createLiveTransportQaCliRegistration({
     commandName: "matrix",
+    factory: matrixQaTransportFactory,
     description: "Run the Docker-backed Matrix live QA lane against a disposable homeserver",
     outputDirHelp: "Matrix QA artifact directory",
     profileHelp:
@@ -62,11 +78,7 @@ export const matrixQaCliRegistration: LiveTransportQaCliRegistration =
     failFastHelp: "Stop after the first failed Matrix check or scenario",
     scenarioHelp: "Run only the named Matrix QA scenario (repeatable)",
     sutAccountHelp: "Temporary Matrix account id inside the QA gateway config",
-    run: runQaMatrix,
+    wrapRun: (runHosted) => async (options) => await runQaMatrix(runHosted, options),
   });
 
 export const qaRunnerCliRegistrations = [matrixQaCliRegistration] as const;
-
-export function registerMatrixQaCli(qa: Command) {
-  matrixQaCliRegistration.register(qa);
-}

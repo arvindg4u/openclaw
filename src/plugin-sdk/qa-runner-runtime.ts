@@ -8,10 +8,47 @@ import {
 } from "./facade-runtime.js";
 import { resolvePrivateQaBundledPluginsEnv } from "./private-qa-bundled-env.js";
 
-/** CLI registration exported by a QA runner plugin runtime surface. */
+type QaRunnerCommandOptions = {
+  repoRoot?: string;
+  outputDir?: string;
+  providerMode?: string;
+  primaryModel?: string;
+  alternateModel?: string;
+  fastMode?: boolean;
+  allowFailures?: boolean;
+  failFast?: boolean;
+  profile?: string;
+  scenarioIds?: string[];
+  listScenarios?: boolean;
+  sutAccountId?: string;
+  credentialSource?: string;
+  credentialRole?: string;
+};
+
+type QaHostedTransportAdapter = {
+  kind: "hosted";
+  id: string;
+  run: () => Promise<void>;
+  cleanup?: () => Promise<void>;
+};
+
+type QaRunnerTransportFactory = {
+  id: string;
+  matches: (context: { channelId: string; driver: string }) => boolean;
+  create: (context: {
+    channelId: string;
+    commandOptions?: QaRunnerCommandOptions;
+    driver: string;
+    outputDir: string;
+    state: unknown;
+  }) => Promise<QaHostedTransportAdapter>;
+};
+
+/** CLI registration and optional adapter factory exported by a QA runner plugin. */
 export type QaRunnerCliRegistration = {
   commandName: string;
-  register(qa: Command): void;
+  factory?: QaRunnerTransportFactory;
+  register(qa: Command, run?: (options: QaRunnerCommandOptions) => Promise<void>): void;
 };
 
 type QaRunnerRuntimeSurface = {
@@ -185,6 +222,17 @@ export function listQaRunnerCliContributions(): readonly QaRunnerCliContribution
       if (!registration) {
         throw new Error(
           `QA runner plugin "${plugin.id}" declared "${runner.commandName}" in openclaw.plugin.json but did not export a matching CLI registration`,
+        );
+      }
+      const factory = registration.factory;
+      if (
+        factory &&
+        (factory.id !== runner.commandName ||
+          typeof factory.matches !== "function" ||
+          typeof factory.create !== "function")
+      ) {
+        throw new Error(
+          `QA runner plugin "${plugin.id}" exported an invalid transport factory for "${runner.commandName}"`,
         );
       }
       contributions.set(runner.commandName, {

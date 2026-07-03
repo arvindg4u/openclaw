@@ -8,6 +8,7 @@ import { formatErrorMessage } from "./error-runtime.js";
 import { loadBundledPluginPublicSurfaceModuleSync } from "./facade-runtime.js";
 import { resolvePrivateQaBundledPluginsEnv } from "./private-qa-bundled-env.js";
 import { runExec } from "./process-runtime.js";
+import type { QaRunnerCliRegistration } from "./qa-runner-runtime.js";
 import { fetchWithSsrFGuard } from "./ssrf-runtime.js";
 import { normalizeStringEntries } from "./string-coerce-runtime.js";
 
@@ -54,22 +55,9 @@ export function isQaRuntimeAvailable(): boolean {
 }
 
 /** Normalized options passed from live-transport QA CLIs into lane runners. */
-export type LiveTransportQaCommandOptions = {
-  repoRoot?: string;
-  outputDir?: string;
-  providerMode?: string;
-  primaryModel?: string;
-  alternateModel?: string;
-  fastMode?: boolean;
-  allowFailures?: boolean;
-  failFast?: boolean;
-  profile?: string;
-  scenarioIds?: string[];
-  listScenarios?: boolean;
-  sutAccountId?: string;
-  credentialSource?: string;
-  credentialRole?: string;
-};
+export type LiveTransportQaCommandOptions = Parameters<
+  NonNullable<Parameters<QaRunnerCliRegistration["register"]>[1]>
+>[0];
 
 type LiveTransportQaCommanderOptions = {
   repoRoot?: string;
@@ -89,10 +77,7 @@ type LiveTransportQaCommanderOptions = {
 };
 
 /** Commander registration hook for one live-transport QA subcommand. */
-export type LiveTransportQaCliRegistration = {
-  commandName: string;
-  register(qa: Command): void;
-};
+export type LiveTransportQaCliRegistration = QaRunnerCliRegistration;
 
 /** Help text customizations for live credential source and role flags. */
 export type LiveTransportQaCredentialCliOptions = {
@@ -114,7 +99,11 @@ export type LiveTransportQaCliRegistrationOptions = {
   allowFailuresHelp?: string;
   scenarioHelp: string;
   sutAccountHelp: string;
-  run: (opts: LiveTransportQaCommandOptions) => Promise<void>;
+  factory?: QaRunnerCliRegistration["factory"];
+  run?: (opts: LiveTransportQaCommandOptions) => Promise<void>;
+  wrapRun?: (
+    run: (opts: LiveTransportQaCommandOptions) => Promise<void>,
+  ) => (opts: LiveTransportQaCommandOptions) => Promise<void>;
 };
 
 /** Memoize a lazy CLI runtime import so repeated command paths share one loaded module. */
@@ -155,6 +144,7 @@ function mapLiveTransportQaCommanderOptions(
 function registerLiveTransportQaCli(
   params: LiveTransportQaCliRegistrationOptions & {
     qa: Command;
+    run: (opts: LiveTransportQaCommandOptions) => Promise<void>;
   },
 ) {
   const command = params.qa
@@ -208,10 +198,17 @@ export function createLiveTransportQaCliRegistration(
 ): LiveTransportQaCliRegistration {
   return {
     commandName: params.commandName,
-    register(qa: Command) {
+    factory: params.factory,
+    register(qa: Command, run) {
+      const hostRunner = run ?? params.run;
+      if (!hostRunner) {
+        throw new Error(`QA runner "${params.commandName}" has no host runner`);
+      }
+      const commandRunner = params.wrapRun ? params.wrapRun(hostRunner) : hostRunner;
       registerLiveTransportQaCli({
         ...params,
         qa,
+        run: commandRunner,
       });
     },
   };

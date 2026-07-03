@@ -958,7 +958,7 @@ The minimum adoption bar for a new channel:
 1. Keep `qa-lab` as the owner of the shared `qa` root.
 2. Implement the transport runner on the shared `qa-lab` host seam.
 3. Keep transport-specific mechanics inside the runner plugin or channel harness.
-4. Mount the runner as `openclaw qa <runner>` instead of registering a competing root command. Runner plugins should declare `qaRunners` in `openclaw.plugin.json` and export a matching `qaRunnerCliRegistrations` array from `runtime-api.ts`. Keep `runtime-api.ts` light; lazy CLI and runner execution should stay behind separate entrypoints.
+4. Mount the runner as `openclaw qa <runner>` instead of registering a competing root command. Runner plugins should declare `qaRunners` in `openclaw.plugin.json`, then export matching `qaRunnerCliRegistrations` from `runtime-api.ts`. A factory-backed registration carries its asynchronous `factory`; the host injects the CLI runner callback and executes the created adapter through the shared suite host. Keep `runtime-api.ts` light; lazy CLI and runner execution should stay behind separate entrypoints. Registration-only plugins keep their original direct-mount behavior for compatibility but do not join the shared adapter lifecycle.
 5. Author or adapt YAML scenarios under the themed `qa/scenarios/` directories.
 6. Use the generic scenario helpers for new scenarios.
 7. Keep existing compatibility aliases working unless the repo is doing an intentional migration.
