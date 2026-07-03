@@ -2216,7 +2216,7 @@ describe("CodexAppServerEventProjector", () => {
     },
   );
 
-  it("treats raw open-page status as a completed native web-search action", async () => {
+  it("keeps raw open-page status unknown until explicit completion", async () => {
     const diagnosticEvents: DiagnosticEventPayload[] = [];
     const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
     const projector = await createProjector();
@@ -2248,8 +2248,23 @@ describe("CodexAppServerEventProjector", () => {
     expect(
       diagnosticEvents
         .filter((event) => "toolCallId" in event && event.toolCallId === item.id)
-        .map((event) => event.type),
-    ).toEqual(["tool.execution.started", "tool.execution.completed"]);
+        .map((event) => ({
+          type: event.type,
+          terminalReason: "terminalReason" in event ? event.terminalReason : undefined,
+          errorCode: "errorCode" in event ? event.errorCode : undefined,
+        })),
+    ).toEqual([
+      {
+        type: "tool.execution.started",
+        terminalReason: undefined,
+        errorCode: undefined,
+      },
+      {
+        type: "tool.execution.error",
+        terminalReason: "failed",
+        errorCode: "tool_outcome_unknown",
+      },
+    ]);
     expect(JSON.stringify(diagnosticEvents)).not.toContain("sensitive");
   });
 
