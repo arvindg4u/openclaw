@@ -1827,6 +1827,7 @@ describe("CodexAppServerEventProjector", () => {
     try {
       await projector.handleNotification(
         forCurrentTurn("item/started", {
+          startedAtMs: 1_750_000_000_000,
           item: {
             type: "commandExecution",
             id: "cmd-1",
@@ -1844,6 +1845,7 @@ describe("CodexAppServerEventProjector", () => {
       );
       await projector.handleNotification(
         forCurrentTurn("item/completed", {
+          completedAtMs: 1_750_000_000_042,
           item: {
             type: "commandExecution",
             id: "cmd-1",
@@ -1912,6 +1914,7 @@ describe("CodexAppServerEventProjector", () => {
         toolName: event.toolName,
         toolCallId: event.toolCallId,
         durationMs: "durationMs" in event ? event.durationMs : undefined,
+        sourceTimestampMs: event.sourceTimestampMs,
       })),
     ).toEqual([
       {
@@ -1919,12 +1922,14 @@ describe("CodexAppServerEventProjector", () => {
         toolName: "bash",
         toolCallId: "cmd-1",
         durationMs: undefined,
+        sourceTimestampMs: 1_750_000_000_000,
       },
       {
         type: "tool.execution.completed",
         toolName: "bash",
         toolCallId: "cmd-1",
         durationMs: 42,
+        sourceTimestampMs: 1_750_000_000_042,
       },
     ]);
     const result = projector.buildResult(buildEmptyToolTelemetry());
@@ -2114,8 +2119,12 @@ describe("CodexAppServerEventProjector", () => {
       const projector = await createProjector();
 
       try {
-        await projector.handleNotification(forCurrentTurn("item/started", { item }));
-        await projector.handleNotification(forCurrentTurn("item/completed", { item }));
+        await projector.handleNotification(
+          forCurrentTurn("item/started", { item, startedAtMs: 1_750_000_000_000 }),
+        );
+        await projector.handleNotification(
+          forCurrentTurn("item/completed", { item, completedAtMs: 1_750_000_000_042 }),
+        );
         await flushDiagnosticEvents();
       } finally {
         unsubscribe();
@@ -2156,8 +2165,12 @@ describe("CodexAppServerEventProjector", () => {
       };
 
       try {
-        await projector.handleNotification(forCurrentTurn("item/started", { item }));
-        await projector.handleNotification(forCurrentTurn("item/completed", { item }));
+        await projector.handleNotification(
+          forCurrentTurn("item/started", { item, startedAtMs: 1_750_000_000_000 }),
+        );
+        await projector.handleNotification(
+          forCurrentTurn("item/completed", { item, completedAtMs: 1_750_000_000_042 }),
+        );
         await projector.handleNotification(
           forCurrentTurn("rawResponseItem/completed", {
             item: {
@@ -2181,6 +2194,7 @@ describe("CodexAppServerEventProjector", () => {
             toolName: "toolName" in event ? event.toolName : null,
             terminalReason: "terminalReason" in event ? event.terminalReason : undefined,
             errorCode: "errorCode" in event ? event.errorCode : undefined,
+            sourceTimestampMs: event.sourceTimestampMs,
           })),
       ).toEqual([
         {
@@ -2188,8 +2202,15 @@ describe("CodexAppServerEventProjector", () => {
           toolName: "web_search",
           terminalReason: undefined,
           errorCode: undefined,
+          sourceTimestampMs: 1_750_000_000_000,
         },
-        { type: terminalType, toolName: "web_search", terminalReason, errorCode },
+        {
+          type: terminalType,
+          toolName: "web_search",
+          terminalReason,
+          errorCode,
+          sourceTimestampMs: 1_750_000_000_042,
+        },
       ]);
       expect(JSON.stringify(diagnosticEvents)).not.toContain("sensitive");
     },

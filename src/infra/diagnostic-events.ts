@@ -450,6 +450,8 @@ type DiagnosticToolExecutionBaseEvent = DiagnosticBaseEvent & {
   sessionKey?: string;
   sessionId?: string;
   agentId?: string;
+  /** Authoritative lifecycle time from the tool runtime, when it exposes one. */
+  sourceTimestampMs?: number;
   toolName: string;
   toolSource?: DiagnosticToolSource;
   toolOwner?: string;

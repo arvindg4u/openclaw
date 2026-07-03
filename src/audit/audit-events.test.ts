@@ -280,6 +280,18 @@ describe("agent activity audit projection", () => {
     });
   });
 
+  it("prefers authoritative tool lifecycle time over diagnostic observation time", () => {
+    const sourceTimestampMs = 1_750_000_000_000;
+    const projected = projectToolExecutionEventToAudit(
+      toolEvent({ ts: sourceTimestampMs + 30_000, sourceTimestampMs }),
+    );
+
+    expect(projected?.occurredAt).toBe(sourceTimestampMs);
+    expect(projectToolExecutionEventToAudit(toolEvent({ ts: sourceTimestampMs }))?.occurredAt).toBe(
+      sourceTimestampMs,
+    );
+  });
+
   it("omits prompt, arguments, results, and raw errors from run and tool records", () => {
     const secret = "super-secret-payload";
     projectAgentEventToAudit(agentEvent({ data: { phase: "start", prompt: secret }, seq: 1 }));

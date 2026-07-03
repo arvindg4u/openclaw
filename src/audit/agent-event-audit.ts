@@ -1,4 +1,5 @@
 /** Redaction-safe projection from live agent events into durable audit metadata. */
+import { asDateTimestampMs } from "@openclaw/normalization-core/number-coercion";
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import {
   AGENT_RUN_TERMINAL_RETRY_GRACE_MS,
@@ -249,7 +250,7 @@ export function projectToolExecutionEventToAudit(
                 : { status: "failed" as const, errorCode: "tool_failed" as const };
   return {
     sourceSequence: event.seq,
-    occurredAt: event.ts,
+    occurredAt: asDateTimestampMs(event.sourceTimestampMs) ?? event.ts,
     kind: "tool_action",
     action:
       event.type === "tool.execution.started" ? "tool.action.started" : "tool.action.finished",

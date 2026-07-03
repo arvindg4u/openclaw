@@ -122,6 +122,7 @@ export function emitCodexNativePreToolUseFailureDiagnostic(params: {
   signal?: AbortSignal;
   failure: CodexNativePreToolUseFailure;
   terminalReason?: CodexNativePreToolUseFailure["disposition"];
+  sourceTimestampMs?: number;
 }): void {
   emitTrustedDiagnosticEvent({
     type: "tool.execution.error",
@@ -138,6 +139,9 @@ export function emitCodexNativePreToolUseFailureDiagnostic(params: {
       (params.signal?.aborted
         ? resolveCodexToolAbortTerminalReason(params.signal)
         : params.failure.disposition),
+    ...(params.sourceTimestampMs !== undefined
+      ? { sourceTimestampMs: params.sourceTimestampMs }
+      : {}),
   });
 }
 

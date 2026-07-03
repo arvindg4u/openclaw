@@ -96,7 +96,10 @@ type CodexNativePreToolUseFailureRecord = {
 export class CodexNativeToolLifecycleProjector {
   private readonly startedAtByItem = new Map<string, number>();
   private readonly activeItems = new Map<string, { toolName: string }>();
-  private readonly webSearchAbortStateAtCompletion = new Map<string, boolean>();
+  private readonly webSearchCompletionByItem = new Map<
+    string,
+    { runWasAborted: boolean; sourceTimestampMs?: number }
+  >();
   private readonly completedItemIds = new Set<string>();
   private readonly approvalFailureDispositionByItem = new Map<
     string,
@@ -148,31 +151,41 @@ export class CodexNativeToolLifecycleProjector {
     this.recordItem({
       phase: notification.method === "item/started" ? "start" : "result",
       item,
+      sourceTimestampMs: asDateTimestampMs(
+        notification.method === "item/started" ? params.startedAtMs : params.completedAtMs,
+      ),
     });
   }
 
-  recordItem(params: { phase: "start" | "result"; item: CodexThreadItem }): void {
+  recordItem(params: {
+    phase: "start" | "result";
+    item: CodexThreadItem;
+    sourceTimestampMs?: number;
+  }): void {
     const toolName = auditNativeToolName(params.item);
     if (!toolName || this.completedItemIds.has(params.item.id)) {
       return;
     }
     if (params.phase === "start") {
-      this.recordStarted(params.item.id, toolName);
+      this.recordStarted(params.item.id, toolName, params.sourceTimestampMs);
       return;
     }
     if (params.item.type === "webSearch") {
       // Warm resumes retain raw-event delivery, while cold resumes expose no
       // capability bit. Wait through the drain; finalization closes misses unknown.
-      this.webSearchAbortStateAtCompletion.set(
-        params.item.id,
-        this.options.runAbortSignal?.aborted === true,
-      );
+      this.webSearchCompletionByItem.set(params.item.id, {
+        runWasAborted: this.options.runAbortSignal?.aborted === true,
+        sourceTimestampMs: params.sourceTimestampMs,
+      });
       return;
     }
 
     const itemDurationMs =
       typeof params.item.durationMs === "number" ? params.item.durationMs : undefined;
-    this.recordTerminal(params.item.id, toolName, itemStatus(params.item), itemDurationMs);
+    this.recordTerminal(params.item.id, toolName, itemStatus(params.item), {
+      itemDurationMs,
+      sourceTimestampMs: params.sourceTimestampMs,
+    });
   }
 
   recordApprovalFailureDisposition(
@@ -230,29 +243,41 @@ export class CodexNativeToolLifecycleProjector {
           : rawStatus === "failed" || rawStatus === "error" || rawStatus === "incomplete"
             ? "failed"
             : "unknown";
-    this.recordTerminal(toolCallId, toolName, status);
+    this.recordTerminal(toolCallId, toolName, status, {
+      sourceTimestampMs: this.webSearchCompletionByItem.get(toolCallId)?.sourceTimestampMs,
+    });
   }
 
   private recordTerminal(
     toolCallId: string,
     toolName: string,
     status: CodexNativeToolAuditStatus,
-    itemDurationMs?: number,
-    runWasAborted = this.options.runAbortSignal?.aborted === true,
+    options: {
+      itemDurationMs?: number;
+      sourceTimestampMs?: number;
+      runWasAborted?: boolean;
+    } = {},
   ): void {
+    const runWasAborted = options.runWasAborted ?? this.options.runAbortSignal?.aborted === true;
     const preToolUseFailure = this.preToolUseFailureByItem.get(toolCallId);
     this.preToolUseFailureByItem.delete(toolCallId);
     const approvalFailureDisposition = this.approvalFailureDispositionByItem.get(toolCallId);
     this.approvalFailureDispositionByItem.delete(toolCallId);
     this.completedItemIds.add(toolCallId);
     this.activeItems.delete(toolCallId);
-    this.webSearchAbortStateAtCompletion.delete(toolCallId);
+    this.webSearchCompletionByItem.delete(toolCallId);
     const startedAt = this.startedAtByItem.get(toolCallId);
     this.startedAtByItem.delete(toolCallId);
+    const endedAt = options.sourceTimestampMs ?? Date.now();
     const durationMs =
-      itemDurationMs ?? (startedAt === undefined ? 0 : Math.max(0, Date.now() - startedAt));
+      options.itemDurationMs ?? (startedAt === undefined ? 0 : Math.max(0, endedAt - startedAt));
     if (preToolUseFailure) {
-      this.emitPreToolUseFailure(preToolUseFailure, toolName, durationMs);
+      this.emitPreToolUseFailure(
+        preToolUseFailure,
+        toolName,
+        durationMs,
+        options.sourceTimestampMs,
+      );
       return;
     }
     const terminalEvent = approvalFailureDisposition
@@ -293,31 +318,35 @@ export class CodexNativeToolLifecycleProjector {
     emitTrustedDiagnosticEvent({
       ...this.buildBase(toolCallId, toolName),
       ...terminalEvent,
+      ...(options.sourceTimestampMs !== undefined
+        ? { sourceTimestampMs: options.sourceTimestampMs }
+        : {}),
     });
   }
 
   finalizeActive(runWasAborted = this.options.runAbortSignal?.aborted === true): void {
     this.finalized = true;
     for (const [toolCallId, { toolName }] of this.activeItems) {
-      const isWebSearchAwaitingRawResult = this.webSearchAbortStateAtCompletion.has(toolCallId);
+      const webSearchCompletion = this.webSearchCompletionByItem.get(toolCallId);
+      const isWebSearchAwaitingRawResult = webSearchCompletion !== undefined;
       const status = isWebSearchAwaitingRawResult ? "unknown" : "failed";
       const itemRunWasAborted = isWebSearchAwaitingRawResult
-        ? this.webSearchAbortStateAtCompletion.get(toolCallId) === true
+        ? webSearchCompletion.runWasAborted
         : runWasAborted;
-      this.recordTerminal(toolCallId, toolName, status, undefined, itemRunWasAborted);
+      this.recordTerminal(toolCallId, toolName, status, {
+        runWasAborted: itemRunWasAborted,
+        sourceTimestampMs: webSearchCompletion?.sourceTimestampMs,
+      });
     }
     for (const [toolCallId, record] of this.preToolUseFailureByItem) {
       if (!this.completedItemIds.has(toolCallId)) {
-        this.recordTerminal(
-          toolCallId,
-          record.failure.toolName,
-          "failed",
-          record.failure.durationMs,
-        );
+        this.recordTerminal(toolCallId, record.failure.toolName, "failed", {
+          itemDurationMs: record.failure.durationMs,
+        });
       }
     }
     this.activeItems.clear();
-    this.webSearchAbortStateAtCompletion.clear();
+    this.webSearchCompletionByItem.clear();
     this.approvalFailureDispositionByItem.clear();
     this.preToolUseFailureByItem.clear();
   }
@@ -326,6 +355,7 @@ export class CodexNativeToolLifecycleProjector {
     record: CodexNativePreToolUseFailureRecord,
     toolName: string,
     durationMs: number,
+    sourceTimestampMs?: number,
   ): void {
     emitCodexNativePreToolUseFailureDiagnostic({
       agentId: this.context.agentId,
@@ -334,6 +364,7 @@ export class CodexNativeToolLifecycleProjector {
       runId: this.context.runId,
       failure: { ...record.failure, toolName, durationMs },
       terminalReason: record.terminalReason,
+      sourceTimestampMs,
     });
   }
 
@@ -353,15 +384,16 @@ export class CodexNativeToolLifecycleProjector {
     this.recordItem({ phase: "result", item });
   }
 
-  private recordStarted(toolCallId: string, toolName: string): void {
+  private recordStarted(toolCallId: string, toolName: string, sourceTimestampMs?: number): void {
     if (this.activeItems.has(toolCallId)) {
       return;
     }
-    this.startedAtByItem.set(toolCallId, Date.now());
+    this.startedAtByItem.set(toolCallId, sourceTimestampMs ?? Date.now());
     this.activeItems.set(toolCallId, { toolName });
     emitTrustedDiagnosticEvent({
       type: "tool.execution.started",
       ...this.buildBase(toolCallId, toolName),
+      ...(sourceTimestampMs !== undefined ? { sourceTimestampMs } : {}),
     });
   }
 

@@ -56,7 +56,8 @@ The Gateway projects existing agent event streams into four actions:
 - `tool.action.finished`
 
 Every record has a stable event id, a monotonically increasing ledger sequence,
-the original run event sequence, timestamp, agent/run provenance, actor, and a
+the original run event sequence, lifecycle timestamp when the runtime provides
+one (otherwise observation time), agent/run provenance, actor, and a
 `redaction: "metadata_only"` marker. Terminal records distinguish success,
 failure, cancellation, timeout, and policy blocks with closed status and error
 codes. `unknown` is an explicit non-success result when an upstream runtime
