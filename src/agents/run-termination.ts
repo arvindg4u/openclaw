@@ -66,6 +66,21 @@ export function resolveAgentRunAbortLifecycleFields(signal: AbortSignal | undefi
   };
 }
 
+function isProviderTimeoutError(error: unknown): boolean {
+  try {
+    const candidate = isFailoverError(error)
+      ? error
+      : error instanceof Error
+        ? error.cause
+        : undefined;
+    return isFailoverError(candidate) && candidate.reason === "timeout";
+  } catch {
+    // Provider/runtime errors may expose hostile getters. Classification must
+    // not replace the original failure or suppress its terminal event.
+    return false;
+  }
+}
+
 /** Preserve structured provider watchdog timeouts when no abort signal was raised. */
 export function resolveAgentRunErrorLifecycleFields(
   error: unknown,
@@ -82,12 +97,7 @@ export function resolveAgentRunErrorLifecycleFields(
   if (abortFields.aborted) {
     return abortFields;
   }
-  const failoverError = isFailoverError(error)
-    ? error
-    : error instanceof Error && isFailoverError(error.cause)
-      ? error.cause
-      : undefined;
-  if (failoverError?.reason !== "timeout") {
+  if (!isProviderTimeoutError(error)) {
     return {};
   }
   return {

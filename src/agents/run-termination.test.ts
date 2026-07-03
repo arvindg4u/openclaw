@@ -86,6 +86,32 @@ describe("resolveAgentRunErrorLifecycleFields", () => {
     });
   });
 
+  it("contains throwing cause accessors", () => {
+    const error = Object.defineProperty(new Error("provider failed"), "cause", {
+      get() {
+        throw new Error("hostile cause");
+      },
+    });
+
+    expect(resolveAgentRunErrorLifecycleFields(error, undefined)).toEqual({});
+  });
+
+  it("contains hostile failover fields", () => {
+    const hostileName = Object.defineProperty({}, "name", {
+      get() {
+        throw new Error("hostile name");
+      },
+    });
+    const hostileReason = Object.defineProperty({ name: "FailoverError" }, "reason", {
+      get() {
+        throw new Error("hostile reason");
+      },
+    });
+
+    expect(resolveAgentRunErrorLifecycleFields(hostileName, undefined)).toEqual({});
+    expect(resolveAgentRunErrorLifecycleFields(hostileReason, undefined)).toEqual({});
+  });
+
   it("preserves explicit cancellation over a concurrent timeout error", () => {
     const controller = new AbortController();
     controller.abort();
