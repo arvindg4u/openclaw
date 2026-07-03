@@ -223,7 +223,7 @@ export class CodexNativeToolLifecycleProjector {
       return;
     }
     const status: CodexNativeToolAuditStatus =
-      rawStatus === "completed"
+      rawStatus === "completed" || rawStatus === "open"
         ? "completed"
         : rawStatus === "cancelled"
           ? "cancelled"

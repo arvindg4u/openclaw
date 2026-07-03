@@ -2195,6 +2195,43 @@ describe("CodexAppServerEventProjector", () => {
     },
   );
 
+  it("treats raw open-page status as a completed native web-search action", async () => {
+    const diagnosticEvents: DiagnosticEventPayload[] = [];
+    const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
+    const projector = await createProjector();
+    const item = {
+      id: "web-search-open-page-1",
+      type: "webSearch",
+      query: "",
+      action: { type: "openPage", url: "https://example.com/sensitive" },
+    };
+
+    try {
+      await projector.handleNotification(forCurrentTurn("item/started", { item }));
+      await projector.handleNotification(forCurrentTurn("item/completed", { item }));
+      await projector.handleNotification(
+        forCurrentTurn("rawResponseItem/completed", {
+          item: {
+            id: item.id,
+            type: "web_search_call",
+            status: "open",
+            action: { type: "open_page", url: "https://example.com/sensitive" },
+          },
+        }),
+      );
+      await flushDiagnosticEvents();
+    } finally {
+      unsubscribe();
+    }
+
+    expect(
+      diagnosticEvents
+        .filter((event) => "toolCallId" in event && event.toolCallId === item.id)
+        .map((event) => event.type),
+    ).toEqual(["tool.execution.started", "tool.execution.completed"]);
+    expect(JSON.stringify(diagnosticEvents)).not.toContain("sensitive");
+  });
+
   it("keeps native web-search outcomes unknown at finalization when no raw terminal arrives", async () => {
     const diagnosticEvents: DiagnosticEventPayload[] = [];
     const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
