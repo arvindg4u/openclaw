@@ -1930,11 +1930,11 @@ export async function runCodexAppServerAttempt(
     });
     lifecycleTerminalEmitted = true;
   };
-  const buildLifecycleTerminalMeta = (aborted: boolean) => {
-    const abortFields = aborted
+  const buildLifecycleTerminalMeta = (input: { aborted: boolean; timedOut: boolean }) => {
+    const abortFields = input.aborted
       ? resolveAgentRunAbortLifecycleFields(runAbortController.signal)
       : undefined;
-    if (timedOut || abortFields?.stopReason === "timeout") {
+    if (input.timedOut || abortFields?.stopReason === "timeout") {
       return {
         aborted: true,
         status: "timed_out",
@@ -1943,7 +1943,7 @@ export async function runCodexAppServerAttempt(
         providerStarted: true,
       } as const;
     }
-    return aborted
+    return input.aborted
       ? ({ aborted: true, status: "cancelled", stopReason: "stop" } as const)
       : undefined;
   };
@@ -3530,12 +3530,12 @@ export async function runCodexAppServerAttempt(
       emitLifecycleTerminal({
         phase: "error",
         error: formatErrorMessage(finalPromptError),
-        ...buildLifecycleTerminalMeta(finalAborted),
+        ...buildLifecycleTerminalMeta({ aborted: finalAborted, timedOut: effectiveTimedOut }),
       });
     } else {
       emitLifecycleTerminal({
         phase: "end",
-        ...buildLifecycleTerminalMeta(finalAborted),
+        ...buildLifecycleTerminalMeta({ aborted: finalAborted, timedOut: effectiveTimedOut }),
       });
     }
     return {
@@ -3558,7 +3558,10 @@ export async function runCodexAppServerAttempt(
     emitLifecycleTerminal({
       phase: "error",
       error: "codex app-server run completed without lifecycle terminal event",
-      ...buildLifecycleTerminalMeta(runAbortController.signal.aborted && !clientClosedAbort),
+      ...buildLifecycleTerminalMeta({
+        aborted: runAbortController.signal.aborted && !clientClosedAbort,
+        timedOut,
+      }),
     });
     if (trajectoryRecorder && !trajectoryEndRecorded) {
       trajectoryRecorder.recordEvent("session.ended", {

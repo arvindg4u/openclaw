@@ -135,8 +135,10 @@ function completedCommand(id: string, command: string): CodexServerNotification 
 
 async function runTurnWatchTimeoutScenario(notifications: CodexServerNotification[]) {
   const harness = createStartedThreadHarness();
+  const onRunAgentEvent = vi.fn();
   const params = createParams(path.join(tempDir, "session.jsonl"), path.join(tempDir, "workspace"));
   params.timeoutMs = 100;
+  params.onAgentEvent = onRunAgentEvent;
   const run = runCodexAppServerAttempt(params, {
     turnCompletionIdleTimeoutMs: 500,
     turnAssistantCompletionIdleTimeoutMs: 1_000,
@@ -146,7 +148,7 @@ async function runTurnWatchTimeoutScenario(notifications: CodexServerNotificatio
   for (const notification of notifications) {
     await harness.notify(notification);
   }
-  return { params, result: await run };
+  return { onRunAgentEvent, params, result: await run };
 }
 
 async function runClientCloseScenario(notifications: CodexServerNotification[]) {
@@ -569,7 +571,7 @@ describe("runCodexAppServerAttempt turn watches", () => {
 
   it("recovers completed assistant output from a non-completion timeout", async () => {
     const warn = vi.spyOn(embeddedAgentLog, "warn").mockImplementation(() => undefined);
-    const { params, result } = await runTurnWatchTimeoutScenario([
+    const { onRunAgentEvent, params, result } = await runTurnWatchTimeoutScenario([
       completedCommand("cmd-1", "touch done.txt"),
       completedAssistant("msg-1", "Finished."),
     ]);
@@ -583,6 +585,12 @@ describe("runCodexAppServerAttempt turn watches", () => {
     expect(result.itemLifecycle.completedCount).toBe(2);
     expect(result.codexAppServerFailure).toBeUndefined();
     expect(result.promptTimeoutOutcome).toBeUndefined();
+    const terminalLifecycle = onRunAgentEvent.mock.calls
+      .map(([event]) => event)
+      .find((event) => event.stream === "lifecycle" && event.data.phase === "end")?.data;
+    expect(terminalLifecycle).toMatchObject({ phase: "end" });
+    expect(terminalLifecycle?.status).toBeUndefined();
+    expect(terminalLifecycle?.aborted).toBeUndefined();
     expect(warn).toHaveBeenCalledWith(
       "codex app-server recovered completed assistant output after missing turn completion",
       expect.objectContaining({
