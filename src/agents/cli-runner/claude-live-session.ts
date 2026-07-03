@@ -99,6 +99,7 @@ type ClaudeLiveDiagnosticRefs = {
 type ClaudeLiveActiveTool = {
   toolName: string;
   toolCallId: string;
+  kind: CliToolUseStartDelta["kind"];
   startedAt: number;
 };
 type ClaudeLiveToolTerminalOutcome =
@@ -572,6 +573,7 @@ function markClaudeLiveToolStarted(turn: ClaudeLiveTurn, tool: CliToolUseStartDe
   turn.activeTools.set(tool.toolCallId, {
     toolName: tool.name,
     toolCallId: tool.toolCallId,
+    kind: tool.kind,
     startedAt: now,
   });
   turn.toolEventCount += 1;
@@ -664,19 +666,29 @@ function failActiveClaudeLiveTools(turn: ClaudeLiveTurn, error: unknown): void {
   const errorCategory = timedOut ? "timeout" : aborted ? "aborted" : "error";
   const terminalReason = timedOut ? "timed_out" : aborted ? "cancelled" : "failed";
   for (const activeTool of turn.activeTools.values()) {
-    const event: Omit<DiagnosticToolExecutionErrorEvent, "seq" | "ts" | "type"> = {
-      ...claudeLiveDiagnosticBase(turn),
-      toolName: activeTool.toolName,
-      toolSource: diagnosticToolSourceForClaudeLiveTool(activeTool.toolName),
-      toolOwner: "claude-cli",
-      toolCallId: activeTool.toolCallId,
-      durationMs: Math.max(0, Date.now() - activeTool.startedAt),
-      errorCategory,
-      terminalReason,
-    };
+    const event: Omit<DiagnosticToolExecutionErrorEvent, "seq" | "ts" | "type" | "errorCategory"> =
+      {
+        ...claudeLiveDiagnosticBase(turn),
+        toolName: activeTool.toolName,
+        toolSource: diagnosticToolSourceForClaudeLiveTool(activeTool.toolName),
+        toolOwner: "claude-cli",
+        toolCallId: activeTool.toolCallId,
+        durationMs: Math.max(0, Date.now() - activeTool.startedAt),
+      };
+    if (activeTool.kind === "server_tool_use") {
+      emitTrustedDiagnosticEvent({
+        type: "tool.execution.error",
+        ...event,
+        errorCategory: "cli_tool_ambiguous",
+        errorCode: "tool_outcome_unknown",
+      });
+      continue;
+    }
     emitTrustedDiagnosticEvent({
       type: "tool.execution.error",
       ...event,
+      errorCategory,
+      terminalReason,
     });
   }
   turn.activeTools.clear();
@@ -834,6 +846,7 @@ function handleClaudeLiveControlRequest(
     markClaudeLiveToolDenied(turn, {
       toolCallId: toolUseId,
       name: toolName,
+      kind: "tool_use",
       args: toolInput,
     });
   }

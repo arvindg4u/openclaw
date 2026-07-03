@@ -1105,7 +1105,22 @@ describe("executePreparedCliRun supervisor output capture", () => {
     ]);
   });
 
-  it("times out an outstanding parsed CLI tool with the enclosing run", async () => {
+  it.each([
+    {
+      label: "MCP tool",
+      type: "mcp_tool_use",
+      toolCallId: "call-timeout",
+      name: "mcp__team__lookup",
+      expected: { terminalReason: "timed_out" },
+    },
+    {
+      label: "server-native tool",
+      type: "server_tool_use",
+      toolCallId: "call-native-unknown",
+      name: "web_search",
+      expected: { errorCode: "tool_outcome_unknown" },
+    },
+  ] as const)("classifies an outstanding parsed $label when the run times out", async (fixture) => {
     const toolEvents: TrustedToolExecutionEvent[] = [];
     const stop = onTrustedToolExecutionEvent((event) => toolEvents.push(event));
     const toolStart = `${JSON.stringify({
@@ -1114,9 +1129,9 @@ describe("executePreparedCliRun supervisor output capture", () => {
         role: "assistant",
         content: [
           {
-            type: "mcp_tool_use",
-            id: "call-timeout",
-            name: "mcp__team__lookup",
+            type: fixture.type,
+            id: fixture.toolCallId,
+            name: fixture.name,
             input: {},
           },
         ],
@@ -1125,6 +1140,15 @@ describe("executePreparedCliRun supervisor output capture", () => {
     supervisorSpawnMock.mockImplementationOnce(async (...args: unknown[]) => {
       const input = args[0] as SupervisorSpawnInput;
       input.onStdout?.(toolStart);
+      if (fixture.type === "server_tool_use") {
+        recordMcpLoopbackToolCallResult({
+          captureKey: input.env?.OPENCLAW_MCP_CLI_CAPTURE_KEY ?? "",
+          toolName: "web_search",
+          args: {},
+          isError: false,
+          outcome: "completed",
+        });
+      }
       return createManagedRun({
         reason: "overall-timeout",
         exitCode: null,
@@ -1138,23 +1162,24 @@ describe("executePreparedCliRun supervisor output capture", () => {
     });
 
     try {
-      await expect(
-        executePreparedCliRun(
-          buildPreparedCliRunContext({ output: "jsonl", provider: "claude-cli" }),
-        ),
-      ).rejects.toThrow("exceeded timeout");
+      const context = buildPreparedCliRunContext({ output: "jsonl", provider: "claude-cli" });
+      context.mcpDeliveryCapture = true;
+      await expect(executePreparedCliRun(context)).rejects.toThrow("exceeded timeout");
     } finally {
       stop();
     }
 
     expect(toolEvents).toMatchObject([
-      { type: "tool.execution.started", toolCallId: "call-timeout" },
+      { type: "tool.execution.started", toolCallId: fixture.toolCallId },
       {
         type: "tool.execution.error",
-        toolCallId: "call-timeout",
-        terminalReason: "timed_out",
+        toolCallId: fixture.toolCallId,
+        ...fixture.expected,
       },
     ]);
+    if (fixture.type === "server_tool_use") {
+      expect(toolEvents[1]).not.toHaveProperty("terminalReason");
+    }
   });
 
   it("reports only confirmed message deliveries from correlated JSONL tool events", async () => {

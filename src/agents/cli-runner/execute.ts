@@ -37,6 +37,7 @@ import {
   parseCliOutput,
   type CliOutput,
   type CliStreamingDelta,
+  type CliToolUseStartDelta,
 } from "../cli-output.js";
 import { classifyFailoverReason } from "../embedded-agent-helpers.js";
 import {
@@ -1131,44 +1132,47 @@ export async function executePreparedCliRun(
         beginGatewayCapture(initialGatewayCaptureKey);
         let observedCliActivity = false;
         const emitLiveEvents = params.executionMode !== "side-question";
-        const activeParsedTools = new Map<string, { startedAt: number; toolName: string }>();
-        const emitCliToolUseStart = (event: {
-          toolCallId: string;
-          name: string;
-          args: Record<string, unknown>;
-        }) => {
+        const activeParsedTools = new Map<
+          string,
+          { startedAt: number; toolName: string; kind: CliToolUseStartDelta["kind"] }
+        >();
+        const emitCliToolUseStart = (event: CliToolUseStartDelta) => {
           observedCliActivity = true;
-          const activeTool = {
-            toolName: event.name,
-            args: event.args,
-            loopbackAmbiguous: cliLoopbackCorrelationOverflowed && event.name.startsWith("mcp__"),
-          };
-          activeCliTools.set(event.toolCallId, activeTool);
-          const admittedCall = {
-            toolName: normalizeCliMessagingToolName(event.name),
-            args: event.args,
-          };
-          const pendingCandidates = cliLoopbackCalls.filter(
-            (candidate) =>
-              candidate.boundToolCallId === undefined &&
-              matchesCliLoopbackCall(event.name, event.args, candidate.admitted),
-          );
-          const hasAssociatedPeer = matchingActiveCliTools(admittedCall).some(
-            ([toolCallId, peer]) =>
-              toolCallId !== event.toolCallId &&
-              (peer.loopbackCall !== undefined || peer.loopbackAmbiguous),
-          );
-          const pending = pendingCandidates[0];
-          if (hasAssociatedPeer || pendingCandidates.length > 1 || pending?.ambiguous) {
-            markCliLoopbackSignatureAmbiguous(admittedCall);
-            if (pending) {
+          // Server-native calls have their own result stream and must never inherit MCP outcomes.
+          if (event.kind !== "server_tool_use") {
+            const activeTool = {
+              toolName: event.name,
+              args: event.args,
+              loopbackAmbiguous: cliLoopbackCorrelationOverflowed && event.name.startsWith("mcp__"),
+            };
+            activeCliTools.set(event.toolCallId, activeTool);
+            const admittedCall = {
+              toolName: normalizeCliMessagingToolName(event.name),
+              args: event.args,
+            };
+            const pendingCandidates = cliLoopbackCalls.filter(
+              (candidate) =>
+                candidate.boundToolCallId === undefined &&
+                matchesCliLoopbackCall(event.name, event.args, candidate.admitted),
+            );
+            const hasAssociatedPeer = matchingActiveCliTools(admittedCall).some(
+              ([toolCallId, peer]) =>
+                toolCallId !== event.toolCallId &&
+                (peer.loopbackCall !== undefined || peer.loopbackAmbiguous),
+            );
+            const pending = pendingCandidates[0];
+            if (hasAssociatedPeer || pendingCandidates.length > 1 || pending?.ambiguous) {
+              markCliLoopbackSignatureAmbiguous(admittedCall);
+              if (pending) {
+                bindCliLoopbackCall(pending, event.toolCallId, activeTool);
+              }
+            } else if (pendingCandidates.length === 1 && pending) {
               bindCliLoopbackCall(pending, event.toolCallId, activeTool);
             }
-          } else if (pendingCandidates.length === 1 && pending) {
-            bindCliLoopbackCall(pending, event.toolCallId, activeTool);
           }
           const toolName = normalizeCliMessagingToolName(event.name);
           if (
+            event.kind !== "server_tool_use" &&
             !gatewayCaptureKey &&
             event.args.dryRun !== true &&
             isMessagingToolDeliveryAction(toolName, event.args)
@@ -1238,13 +1242,13 @@ export async function executePreparedCliRun(
             },
           });
         };
-        const emitParsedToolUseStart = (event: {
-          toolCallId: string;
-          name: string;
-          args: Record<string, unknown>;
-        }) => {
+        const emitParsedToolUseStart = (event: CliToolUseStartDelta) => {
           const startedAt = Date.now();
-          activeParsedTools.set(event.toolCallId, { startedAt, toolName: event.name });
+          activeParsedTools.set(event.toolCallId, {
+            startedAt,
+            toolName: event.name,
+            kind: event.kind,
+          });
           emitTrustedDiagnosticEvent({
             type: "tool.execution.started",
             runId: params.runId,
@@ -1291,6 +1295,19 @@ export async function executePreparedCliRun(
             durationMs: Math.max(0, now - (activeTool?.startedAt ?? now)),
           };
           if (trustedOutcome?.outcome === "unknown") {
+            emitTrustedDiagnosticEvent({
+              type: "tool.execution.error",
+              ...diagnosticBase,
+              errorCategory: "cli_tool_ambiguous",
+              errorCode: "tool_outcome_unknown",
+            });
+            return;
+          }
+          if (
+            event.incomplete &&
+            activeTool?.kind === "server_tool_use" &&
+            trustedOutcome === undefined
+          ) {
             emitTrustedDiagnosticEvent({
               type: "tool.execution.error",
               ...diagnosticBase,

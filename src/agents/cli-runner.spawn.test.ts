@@ -2408,15 +2408,40 @@ ${JSON.stringify({
 
   it.each([
     [
-      "timeout",
+      "client timeout",
+      "tool_use",
+      "Bash",
       Object.assign(new Error("gateway timeout"), { name: "TimeoutError" }),
       "TimeoutError",
-      "timed_out",
+      { terminalReason: "timed_out" },
     ],
-    ["cancellation", new Error("operator cancelled"), "AbortError", "cancelled"],
+    [
+      "client cancellation",
+      "tool_use",
+      "Bash",
+      new Error("operator cancelled"),
+      "AbortError",
+      { terminalReason: "cancelled" },
+    ],
+    [
+      "server-native timeout",
+      "server_tool_use",
+      "web_search",
+      Object.assign(new Error("gateway timeout"), { name: "TimeoutError" }),
+      "TimeoutError",
+      { errorCode: "tool_outcome_unknown" },
+    ],
+    [
+      "server-native cancellation",
+      "server_tool_use",
+      "web_search",
+      new Error("operator cancelled"),
+      "AbortError",
+      { errorCode: "tool_outcome_unknown" },
+    ],
   ] as const)(
-    "preserves enclosing %s provenance for active Claude live tools",
-    async (_, abortReason, expectedErrorName, terminalReason) => {
+    "classifies active Claude live tools on %s",
+    async (_, toolType, toolName, abortReason, expectedErrorName, expectedOutcome) => {
       const abortController = new AbortController();
       const diagnosticEvents: Array<Record<string, unknown>> = [];
       const stopDiagnostics = onInternalDiagnosticEvent((event) => {
@@ -2437,9 +2462,9 @@ ${JSON.stringify({
                   role: "assistant",
                   content: [
                     {
-                      type: "server_tool_use",
+                      type: toolType,
                       id: "tool-live-timeout",
-                      name: "web_search",
+                      name: toolName,
                       input: { query: "status" },
                     },
                   ],
@@ -2499,9 +2524,15 @@ ${JSON.stringify({
         expect(diagnosticEvents).toContainEqual(
           expect.objectContaining({
             toolCallId: "tool-live-timeout",
-            terminalReason,
+            ...expectedOutcome,
           }),
         );
+        if (toolType === "server_tool_use") {
+          const terminal = diagnosticEvents.find(
+            (event) => event.toolCallId === "tool-live-timeout",
+          );
+          expect(terminal).not.toHaveProperty("terminalReason");
+        }
       } finally {
         stopDiagnostics();
       }
@@ -2528,10 +2559,10 @@ ${JSON.stringify({
                 role: "assistant",
                 content: [
                   {
-                    type: "server_tool_use",
+                    type: "tool_use",
                     id: "tool-live-no-output",
-                    name: "web_search",
-                    input: { query: "status" },
+                    name: "Bash",
+                    input: { command: "sleep 10" },
                   },
                 ],
               },
