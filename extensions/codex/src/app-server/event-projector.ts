@@ -87,6 +87,7 @@ type CodexNativeToolLifecycleProjectorOptions = {
 };
 
 type CodexNativeToolAuditStatus = ReturnType<typeof itemStatus> | "cancelled" | "unknown";
+type CodexNativeToolUnfinishedStatus = Extract<CodexNativeToolAuditStatus, "failed" | "unknown">;
 type CodexNativePreToolUseFailureRecord = {
   failure: CodexNativePreToolUseFailure;
   terminalReason: CodexNativePreToolUseFailure["disposition"];
@@ -95,7 +96,10 @@ type CodexNativePreToolUseFailureRecord = {
 /** Projects metadata-only lifecycle diagnostics for native tool items. */
 export class CodexNativeToolLifecycleProjector {
   private readonly startedAtByItem = new Map<string, number>();
-  private readonly activeItems = new Map<string, { toolName: string }>();
+  private readonly activeItems = new Map<
+    string,
+    { toolName: string; unfinishedStatus: CodexNativeToolUnfinishedStatus }
+  >();
   private readonly webSearchCompletionByItem = new Map<
     string,
     { runWasAborted: boolean; sourceTimestampMs?: number }
@@ -167,7 +171,12 @@ export class CodexNativeToolLifecycleProjector {
       return;
     }
     if (params.phase === "start") {
-      this.recordStarted(params.item.id, toolName, params.sourceTimestampMs);
+      this.recordStarted(
+        params.item.id,
+        toolName,
+        auditNativeToolUnfinishedStatus(params.item),
+        params.sourceTimestampMs,
+      );
       return;
     }
     if (params.item.type === "webSearch") {
@@ -230,7 +239,7 @@ export class CodexNativeToolLifecycleProjector {
       return;
     }
     const toolName = "web_search";
-    this.recordStarted(toolCallId, toolName);
+    this.recordStarted(toolCallId, toolName, "unknown");
     const rawStatus = readString(item, "status");
     if (rawStatus === "in_progress" || rawStatus === "running") {
       return;
@@ -330,14 +339,12 @@ export class CodexNativeToolLifecycleProjector {
 
   finalizeActive(runWasAborted = this.options.runAbortSignal?.aborted === true): void {
     this.finalized = true;
-    for (const [toolCallId, { toolName }] of this.activeItems) {
+    for (const [toolCallId, { toolName, unfinishedStatus }] of this.activeItems) {
       const webSearchCompletion = this.webSearchCompletionByItem.get(toolCallId);
-      const isWebSearchAwaitingRawResult = webSearchCompletion !== undefined;
-      const status = isWebSearchAwaitingRawResult ? "unknown" : "failed";
-      const itemRunWasAborted = isWebSearchAwaitingRawResult
+      const itemRunWasAborted = webSearchCompletion
         ? webSearchCompletion.runWasAborted
         : runWasAborted;
-      this.recordTerminal(toolCallId, toolName, status, {
+      this.recordTerminal(toolCallId, toolName, unfinishedStatus, {
         runWasAborted: itemRunWasAborted,
         sourceTimestampMs: webSearchCompletion?.sourceTimestampMs,
       });
@@ -384,16 +391,21 @@ export class CodexNativeToolLifecycleProjector {
     if (!toolName) {
       return;
     }
-    this.recordStarted(item.id, toolName);
+    this.recordStarted(item.id, toolName, auditNativeToolUnfinishedStatus(item));
     this.recordItem({ phase: "result", item });
   }
 
-  private recordStarted(toolCallId: string, toolName: string, sourceTimestampMs?: number): void {
+  private recordStarted(
+    toolCallId: string,
+    toolName: string,
+    unfinishedStatus: CodexNativeToolUnfinishedStatus,
+    sourceTimestampMs?: number,
+  ): void {
     if (this.activeItems.has(toolCallId)) {
       return;
     }
     this.startedAtByItem.set(toolCallId, sourceTimestampMs ?? Date.now());
-    this.activeItems.set(toolCallId, { toolName });
+    this.activeItems.set(toolCallId, { toolName, unfinishedStatus });
     emitTrustedDiagnosticEvent({
       type: "tool.execution.started",
       ...this.buildBase(toolCallId, toolName),
@@ -2757,6 +2769,14 @@ function auditNativeToolTerminalStatus(item: CodexThreadItem): CodexNativeToolAu
   // A completed notification with a missing, active, or new status does not
   // prove success. Preserve that ambiguity at the durable audit boundary.
   return "unknown";
+}
+
+function auditNativeToolUnfinishedStatus(
+  item: CodexThreadItem,
+): CodexNativeToolUnfinishedStatus {
+  // Search and image generation publish explicit terminal states. An enclosing
+  // run outcome cannot substitute when that dependency-owned state is absent.
+  return item.type === "webSearch" || item.type === "imageGeneration" ? "unknown" : "failed";
 }
 
 function formatMissingToolResultError(params: { id: string; name: string }): string {

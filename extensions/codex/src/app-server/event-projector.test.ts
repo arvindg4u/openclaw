@@ -2315,6 +2315,71 @@ describe("CodexAppServerEventProjector", () => {
     expect(JSON.stringify(diagnosticEvents)).not.toContain("sensitive extension query");
   });
 
+  it.each([
+    [
+      "web search",
+      "cancelled",
+      {
+        id: "web-search-started-only",
+        type: "webSearch",
+        query: "sensitive query",
+        action: { type: "search", query: "sensitive query", queries: null },
+      },
+    ],
+    [
+      "image generation",
+      Object.assign(new Error("turn timed out"), { name: "TimeoutError" }),
+      {
+        id: "image-generation-started-only",
+        type: "imageGeneration",
+        status: "in_progress",
+        revisedPrompt: "sensitive prompt",
+        result: null,
+      },
+    ],
+  ] as const)(
+    "keeps started-only native %s outcomes unknown when the enclosing run stops",
+    async (_, abortReason, item) => {
+      const abortController = new AbortController();
+      abortController.abort(abortReason);
+      const diagnosticEvents: DiagnosticEventPayload[] = [];
+      const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
+      const projector = await createProjector(undefined, {
+        runAbortSignal: abortController.signal,
+      });
+
+      try {
+        await projector.handleNotification(forCurrentTurn("item/started", { item }));
+        projector.buildResult(buildEmptyToolTelemetry());
+        await flushDiagnosticEvents();
+      } finally {
+        unsubscribe();
+      }
+
+      expect(
+        diagnosticEvents
+          .filter((event) => "toolCallId" in event && event.toolCallId === item.id)
+          .map((event) => ({
+            type: event.type,
+            terminalReason: "terminalReason" in event ? event.terminalReason : undefined,
+            errorCode: "errorCode" in event ? event.errorCode : undefined,
+          })),
+      ).toEqual([
+        {
+          type: "tool.execution.started",
+          terminalReason: undefined,
+          errorCode: undefined,
+        },
+        {
+          type: "tool.execution.error",
+          terminalReason: "failed",
+          errorCode: "tool_outcome_unknown",
+        },
+      ]);
+      expect(JSON.stringify(diagnosticEvents)).not.toContain("sensitive");
+    },
+  );
+
   it("projects native image-generation error status as a failed audit action", async () => {
     const diagnosticEvents: DiagnosticEventPayload[] = [];
     const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
