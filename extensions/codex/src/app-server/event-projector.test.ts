@@ -2194,7 +2194,7 @@ describe("CodexAppServerEventProjector", () => {
             toolName: "toolName" in event ? event.toolName : null,
             terminalReason: "terminalReason" in event ? event.terminalReason : undefined,
             errorCode: "errorCode" in event ? event.errorCode : undefined,
-            sourceTimestampMs: event.sourceTimestampMs,
+            sourceTimestampMs: "sourceTimestampMs" in event ? event.sourceTimestampMs : undefined,
           })),
       ).toEqual([
         {
