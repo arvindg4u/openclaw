@@ -156,9 +156,10 @@ function toDatabaseOptions(scope: {
   storePath: string;
 }): OpenClawAgentDatabaseOptions {
   const requestedAgentId = scope.agentId ? normalizeAgentId(scope.agentId) : undefined;
-  const target = resolveSqliteTargetFromSessionStorePath(scope.storePath, {
-    ...(requestedAgentId ? { agentId: requestedAgentId } : {}),
-  });
+  const target = resolveSqliteTargetFromSessionStorePath(
+    scope.storePath,
+    requestedAgentId ? { agentId: requestedAgentId } : {},
+  );
   if (requestedAgentId && target.agentId && requestedAgentId !== target.agentId) {
     throw new Error(
       `SQLite trajectory store path belongs to agent ${target.agentId}; requested agent ${requestedAgentId}.`,

@@ -175,7 +175,7 @@ async function seedSqliteTrajectoryEvent(params: {
     runId: "budget-test",
     data: { content: params.content },
   };
-  await appendSqliteTrajectoryRuntimeEvents(
+  appendSqliteTrajectoryRuntimeEvents(
     { sessionId: params.sessionId, storePath: params.storePath },
     [event],
   );

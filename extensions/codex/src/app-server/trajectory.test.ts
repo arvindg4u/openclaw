@@ -6,6 +6,7 @@ import { upsertSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import {
   appendSqliteTrajectoryRuntimeEvents,
   loadSqliteTrajectoryRuntimeEvents,
+  type SqliteTrajectoryRuntimeEventForTest,
 } from "openclaw/plugin-sdk/sqlite-runtime-testing";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -48,10 +49,22 @@ function createSqliteHostTrajectoryRecorder(params: {
   sessionId: string;
   storePath: string;
 }): CodexHostTrajectoryRecorder {
-  const events: Array<{ data?: Record<string, unknown>; type: string }> = [];
+  const events: SqliteTrajectoryRuntimeEventForTest[] = [];
+  let seq = 0;
   return {
     recordEvent: (type, data) => {
-      events.push(data === undefined ? { type } : { type, data });
+      events.push({
+        traceSchema: "openclaw-trajectory",
+        schemaVersion: 1,
+        traceId: `${params.sessionId}:test`,
+        source: "runtime",
+        type,
+        ts: new Date(0).toISOString(),
+        seq,
+        sessionId: params.sessionId,
+        ...(data === undefined ? {} : { data }),
+      });
+      seq += 1;
     },
     flush: async () => {
       appendSqliteTrajectoryRuntimeEvents(params, events);

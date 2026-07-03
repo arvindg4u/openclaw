@@ -40,7 +40,7 @@ describe("SQLite trajectory runtime store", () => {
   });
 
   it("appends events in database order without trusting recorder-local seq", async () => {
-    await appendSqliteTrajectoryRuntimeEvents({ sessionId: "session-1", storePath }, [
+    appendSqliteTrajectoryRuntimeEvents({ sessionId: "session-1", storePath }, [
       createTrajectoryEvent({ seq: 1, type: "model.started" }),
       createTrajectoryEvent({ seq: 1, type: "model.completed" }),
     ]);
@@ -69,7 +69,7 @@ describe("SQLite trajectory runtime store", () => {
   });
 
   it("trims oldest rows beyond the configured byte window", async () => {
-    await appendSqliteTrajectoryRuntimeEvents(
+    appendSqliteTrajectoryRuntimeEvents(
       { maxRuntimeBytes: 900, sessionId: "session-1", storePath },
       [
         createTrajectoryEvent({ type: "event-1" }),
@@ -93,7 +93,7 @@ describe("SQLite trajectory runtime store", () => {
   });
 
   it("cascades trajectory rows when the session row is deleted", async () => {
-    await appendSqliteTrajectoryRuntimeEvents({ sessionId: "session-1", storePath }, [
+    appendSqliteTrajectoryRuntimeEvents({ sessionId: "session-1", storePath }, [
       createTrajectoryEvent({ type: "model.started" }),
     ]);
 

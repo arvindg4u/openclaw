@@ -21,6 +21,7 @@ export {
   loadSqliteTrajectoryRuntimeEvents,
   type SqliteTrajectoryRuntimeScope,
 } from "../trajectory/runtime-store.sqlite.js";
+export { type TrajectoryEvent as SqliteTrajectoryRuntimeEventForTest } from "../trajectory/types.js";
 export {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
