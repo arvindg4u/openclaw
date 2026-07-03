@@ -49,6 +49,9 @@ After startup import, the isolated proof may run
 `openclaw doctor --session-sqlite inspect` and
 `openclaw doctor --session-sqlite validate` as diagnostic evidence. Those
 doctor commands are not the migration driver for the startup-upgrade proof.
+Separate doctor-import scenarios should seed legacy transcript files plus
+trajectory sidecars and verify doctor archives those artifacts while SQLite
+remains canonical.
 
 ## Preflight
 

@@ -217,8 +217,27 @@ describe("SQLite sessions/transcripts flip proof harness", () => {
       doctorImportedTranscriptEvents: 2,
       sessionId: "sqlite-downgrade-reupgrade",
       sessionKey: "agent:main:dashboard:sqlite-downgrade-reupgrade",
+      trajectoryPointerArchived: true,
+      trajectoryPointerSourceRemoved: true,
+      trajectorySidecarArchived: true,
+      trajectorySidecarSourceRemoved: true,
       transcriptEvents: 2,
     });
+    const downgradeCheckpoint = report.checkpoints.find(
+      (checkpoint) => checkpoint.label === "after-downgrade-reupgrade-import",
+    );
+    expect(
+      downgradeCheckpoint?.archiveArtifacts.some(
+        (artifact) =>
+          artifact.path.includes("sqlite-downgrade-reupgrade.trajectory.jsonl") &&
+          artifact.textTail?.includes("trajectory") === true,
+      ),
+    ).toBe(true);
+    expect(
+      downgradeCheckpoint?.archiveArtifacts.some((artifact) =>
+        artifact.path.includes("sqlite-downgrade-reupgrade.trajectory-path.json"),
+      ),
+    ).toBe(true);
     expect(
       report.checkpoints.some(
         (checkpoint) =>

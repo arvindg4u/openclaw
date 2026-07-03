@@ -143,6 +143,10 @@ type DowngradeReupgradeEvidence = {
   activeJsonlArchived: boolean;
   doctorImportedEntries: number;
   doctorImportedTranscriptEvents: number;
+  trajectoryPointerArchived: boolean;
+  trajectoryPointerSourceRemoved: boolean;
+  trajectorySidecarArchived: boolean;
+  trajectorySidecarSourceRemoved: boolean;
   sessionId: string;
   sessionKey: string;
   transcriptEvents: number;
@@ -1516,6 +1520,14 @@ async function runDowngradeReupgradeProof(
     context.activeSessionsDir,
     `${DOWNGRADE_REUPGRADE_SESSION_ID}.jsonl`,
   );
+  const trajectoryPath = path.join(
+    context.activeSessionsDir,
+    `${DOWNGRADE_REUPGRADE_SESSION_ID}.trajectory.jsonl`,
+  );
+  const trajectoryPointerPath = path.join(
+    context.activeSessionsDir,
+    `${DOWNGRADE_REUPGRADE_SESSION_ID}.trajectory-path.json`,
+  );
   await writeTranscript(context.activeSessionsDir, DOWNGRADE_REUPGRADE_SESSION_ID, [
     legacySessionEvent(DOWNGRADE_REUPGRADE_SESSION_ID),
     {
@@ -1524,6 +1536,21 @@ async function runDowngradeReupgradeProof(
       message: { role: "user", content: DOWNGRADE_REUPGRADE_TEXT },
     },
   ]);
+  await fs.writeFile(
+    trajectoryPath,
+    `${JSON.stringify({ type: "trajectory", sessionId: DOWNGRADE_REUPGRADE_SESSION_ID })}\n`,
+    { mode: 0o600 },
+  );
+  await fs.writeFile(
+    trajectoryPointerPath,
+    `${JSON.stringify({
+      traceSchema: "openclaw-trajectory-pointer",
+      schemaVersion: 1,
+      sessionId: DOWNGRADE_REUPGRADE_SESSION_ID,
+      runtimeFile: trajectoryPath,
+    })}\n`,
+    { mode: 0o600 },
+  );
 
   const doctor = await runDoctor(inst, "import", context.storePath);
   if (doctor.code !== 0) {
@@ -1539,10 +1566,39 @@ async function runDowngradeReupgradeProof(
     "user",
     DOWNGRADE_REUPGRADE_TEXT,
   );
+  const manifestPath = doctor.migrationRun?.manifestPath;
+  if (!manifestPath) {
+    throw new Error(`downgrade/re-upgrade import did not report a migration manifest`);
+  }
+  const manifest = await readJsonObjectFile(manifestPath);
+  const trajectoryMove = findManifestMoveForSource(manifest, trajectoryPath);
+  const trajectoryPointerMove = findManifestMoveForSource(manifest, trajectoryPointerPath);
+  if (!trajectoryMove || !trajectoryPointerMove) {
+    throw new Error(
+      `downgrade/re-upgrade import did not record trajectory artifact moves: ${JSON.stringify({
+        trajectoryMove,
+        trajectoryPointerMove,
+      })}`,
+    );
+  }
+  const trajectorySidecarArchived = fsSync.existsSync(trajectoryMove.archivePath);
+  const trajectoryPointerArchived = fsSync.existsSync(trajectoryPointerMove.archivePath);
+  if (!trajectorySidecarArchived || !trajectoryPointerArchived) {
+    throw new Error(
+      `downgrade/re-upgrade import did not archive trajectory artifacts: ${JSON.stringify({
+        trajectoryArchive: trajectoryMove.archivePath,
+        trajectoryPointerArchive: trajectoryPointerMove.archivePath,
+      })}`,
+    );
+  }
   return {
     activeJsonlArchived: !fsSync.existsSync(transcriptPath),
     doctorImportedEntries: totals.importedEntries,
     doctorImportedTranscriptEvents: totals.importedTranscriptEvents,
+    trajectoryPointerArchived,
+    trajectoryPointerSourceRemoved: !fsSync.existsSync(trajectoryPointerPath),
+    trajectorySidecarArchived,
+    trajectorySidecarSourceRemoved: !fsSync.existsSync(trajectoryPath),
     sessionId: DOWNGRADE_REUPGRADE_SESSION_ID,
     sessionKey: DOWNGRADE_REUPGRADE_SESSION_KEY,
     transcriptEvents: countSqliteTranscriptEvents(
@@ -2203,6 +2259,7 @@ async function inventoryArchiveArtifacts(context: ProofContext): Promise<FileInv
       const basename = path.basename(filePath);
       const archiveLike =
         basename.includes(".jsonl") ||
+        basename.includes(".trajectory-path.json") ||
         basename.includes(".reset.") ||
         basename.includes(".deleted.") ||
         basename.includes(".bak.");

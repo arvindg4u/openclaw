@@ -1751,3 +1751,8 @@
 {"type":"rename","timestamp":"2026-07-03T17:42:03.5015Z","issue_id":"oc-a85","payload":{"new_id":"oc-08c.9"}}
 {"type":"dep_add","timestamp":"2026-07-03T17:42:03.5015Z","issue_id":"oc-08c.9","payload":{"dep_type":"parent-child","depends_on":"oc-08c"}}
 {"type":"close","timestamp":"2026-07-03T17:44:47.739182Z","issue_id":"oc-08c.9","payload":{}}
+{"type":"create","timestamp":"2026-07-03T17:48:28.0434Z","issue_id":"oc-065","payload":{"description":"Extend the SQLite flip E2E harness so a doctor import/migration path seeds legacy trajectory sidecars and pointer files, runs doctor import, and asserts the artifacts are archived while SQLite transcripts remain canonical.","priority":"1","title":"AN-0009: cover doctor trajectory migration in SQLite flip E2E","type":"task"}}
+{"type":"status_update","timestamp":"2026-07-03T17:48:33.915074Z","issue_id":"oc-065","payload":{"status":"in_progress"}}
+{"type":"rename","timestamp":"2026-07-03T17:48:33.915074Z","issue_id":"oc-065","payload":{"new_id":"oc-08c.10"}}
+{"type":"dep_add","timestamp":"2026-07-03T17:48:33.915074Z","issue_id":"oc-08c.10","payload":{"dep_type":"parent-child","depends_on":"oc-08c"}}
+{"type":"close","timestamp":"2026-07-03T17:50:34.006777Z","issue_id":"oc-08c.10","payload":{}}
