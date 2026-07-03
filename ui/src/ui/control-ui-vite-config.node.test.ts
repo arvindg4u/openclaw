@@ -30,6 +30,12 @@ describe("Control UI Vite config", () => {
   it("resolves Control UI dev-server source aliases for internal packages", () => {
     const aliases = resolveSourcePackageAliasesForVite();
     expect(
+      aliases.find((alias) => alias.find === "@openclaw/normalization-core/json-coercion"),
+    )?.toEqual({
+      find: "@openclaw/normalization-core/json-coercion",
+      replacement: path.join(repoRoot, "packages/normalization-core/src/json-coercion.ts"),
+    });
+    expect(
       aliases.find((alias) => alias.find === "@openclaw/normalization-core/string-coerce"),
     )?.toEqual({
       find: "@openclaw/normalization-core/string-coerce",

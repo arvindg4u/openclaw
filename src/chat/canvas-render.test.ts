@@ -1,6 +1,16 @@
 // Canvas-render tests cover [embed] shortcode extraction and text stripping.
 import { describe, expect, it } from "vitest";
-import { extractCanvasShortcodes } from "./canvas-render.ts";
+import { extractCanvasFromText, extractCanvasShortcodes } from "./canvas-render.ts";
+
+describe("extractCanvasFromText", () => {
+  it("parses object JSON without accepting invalid or non-object JSON", () => {
+    expect(
+      extractCanvasFromText('{"kind":"canvas","view":{"url":"https://example.com/canvas"}}'),
+    ).toMatchObject({ kind: "canvas", url: "https://example.com/canvas" });
+    expect(extractCanvasFromText("{")).toBeUndefined();
+    expect(extractCanvasFromText("[]")).toBeUndefined();
+  });
+});
 
 describe("extractCanvasShortcodes", () => {
   it("does not let a self-closing embed start a greedy block match", () => {

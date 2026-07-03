@@ -58,6 +58,7 @@ const INTERNAL_CORE_PACKAGE_ALIASES = [
     subpaths: [
       ["", "index.ts"],
       ["boolean-coercion", "boolean-coercion.ts"],
+      ["json-coercion", "json-coercion.ts"],
       ["number-coercion", "number-coercion.ts"],
       ["record-coerce", "record-coerce.ts"],
       ["string-coerce", "string-coerce.ts"],

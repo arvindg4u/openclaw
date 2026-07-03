@@ -19,6 +19,11 @@
       "import": "./dist/boolean-coercion.mjs",
       "default": "./dist/boolean-coercion.mjs"
     },
+    "./json-coercion": {
+      "types": "./dist/json-coercion.d.mts",
+      "import": "./dist/json-coercion.mjs",
+      "default": "./dist/json-coercion.mjs"
+    },
     "./number-coercion": {
       "types": "./dist/number-coercion.d.mts",
       "import": "./dist/number-coercion.mjs",
@@ -41,6 +46,6 @@
     }
   },
   "scripts": {
-    "build": "tsdown src/index.ts src/boolean-coercion.ts src/number-coercion.ts src/record-coerce.ts src/string-coerce.ts src/string-normalization.ts --no-config --platform node --format esm --dts --out-dir dist --clean"
+    "build": "tsdown src/index.ts src/boolean-coercion.ts src/json-coercion.ts src/number-coercion.ts src/record-coerce.ts src/string-coerce.ts src/string-normalization.ts --no-config --platform node --format esm --dts --out-dir dist --clean"
   }
 }

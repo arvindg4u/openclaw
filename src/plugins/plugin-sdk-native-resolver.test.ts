@@ -384,10 +384,10 @@ describe("installOpenClawPluginSdkNativeResolver", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-sdk-native-core-internal-"));
     const { loaderModulePath } = writeFakeOpenClawPackage(root);
     const normalizationSource = writeNormalizationCoreSource(root);
-    const booleanCoercionSource = writeInternalCorePackageSource(
+    const jsonCoercionSource = writeInternalCorePackageSource(
       root,
       "normalization-core",
-      "boolean-coercion.ts",
+      "json-coercion.ts",
     );
     const mediaCoreSource = writeInternalCorePackageSource(root, "media-core", "mime.ts");
     const acpCoreSource = writeInternalCorePackageSource(
@@ -408,7 +408,7 @@ describe("installOpenClawPluginSdkNativeResolver", () => {
     });
 
     expect(installedAliases).toContain("@openclaw/normalization-core/string-coerce");
-    expect(installedAliases).toContain("@openclaw/normalization-core/boolean-coercion");
+    expect(installedAliases).toContain("@openclaw/normalization-core/json-coercion");
     expect(installedAliases).toContain("@openclaw/media-core/mime");
     expect(installedAliases).toContain("@openclaw/acp-core/runtime/types");
     expect(installedAliases).toContain("@openclaw/llm-core");
@@ -418,10 +418,8 @@ describe("installOpenClawPluginSdkNativeResolver", () => {
       fs.realpathSync(requireFromCoreSource.resolve("@openclaw/normalization-core/string-coerce")),
     ).toBe(fs.realpathSync(normalizationSource));
     expect(
-      fs.realpathSync(
-        requireFromCoreSource.resolve("@openclaw/normalization-core/boolean-coercion"),
-      ),
-    ).toBe(fs.realpathSync(booleanCoercionSource));
+      fs.realpathSync(requireFromCoreSource.resolve("@openclaw/normalization-core/json-coercion")),
+    ).toBe(fs.realpathSync(jsonCoercionSource));
     expect(fs.realpathSync(requireFromCoreSource.resolve("@openclaw/media-core/mime"))).toBe(
       fs.realpathSync(mediaCoreSource),
     );
@@ -432,9 +430,7 @@ describe("installOpenClawPluginSdkNativeResolver", () => {
       fs.realpathSync(llmCoreSource),
     );
     expect(() => requireFromPlugin.resolve("@openclaw/normalization-core/string-coerce")).toThrow();
-    expect(() =>
-      requireFromPlugin.resolve("@openclaw/normalization-core/boolean-coercion"),
-    ).toThrow();
+    expect(() => requireFromPlugin.resolve("@openclaw/normalization-core/json-coercion")).toThrow();
     expect(() => requireFromPlugin.resolve("@openclaw/media-core/mime")).toThrow();
     expect(() => requireFromPlugin.resolve("@openclaw/acp-core/runtime/types")).toThrow();
     expect(() => requireFromPlugin.resolve("@openclaw/llm-core")).toThrow();
