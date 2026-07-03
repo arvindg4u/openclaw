@@ -1064,7 +1064,7 @@ describe("executePreparedCliRun supervisor output capture", () => {
           {
             type: "mcp_tool_use",
             id: "call-cancelled",
-            name: "mcp__team__lookup",
+            name: "mcp__openclaw__cron",
             input: {},
           },
         ],
@@ -1073,6 +1073,13 @@ describe("executePreparedCliRun supervisor output capture", () => {
     supervisorSpawnMock.mockImplementationOnce(async (...args: unknown[]) => {
       const input = args[0] as SupervisorSpawnInput;
       input.onStdout?.(toolStart);
+      recordMcpLoopbackToolCallResult({
+        captureKey: input.env?.OPENCLAW_MCP_CLI_CAPTURE_KEY ?? "",
+        toolName: "cron",
+        args: {},
+        isError: true,
+        outcome: "unknown",
+      });
       abortController.abort();
       return createManagedRun({
         reason: "manual-cancel",
@@ -1087,6 +1094,7 @@ describe("executePreparedCliRun supervisor output capture", () => {
     });
     const context = buildPreparedCliRunContext({ output: "jsonl", provider: "claude-cli" });
     context.params.abortSignal = abortController.signal;
+    context.mcpDeliveryCapture = true;
 
     try {
       await expect(executePreparedCliRun(context)).rejects.toThrow("aborted");
@@ -1110,7 +1118,7 @@ describe("executePreparedCliRun supervisor output capture", () => {
       label: "MCP tool",
       type: "mcp_tool_use",
       toolCallId: "call-timeout",
-      name: "mcp__team__lookup",
+      name: "mcp__openclaw__cron",
       expected: { terminalReason: "timed_out" },
     },
     {
@@ -1140,6 +1148,15 @@ describe("executePreparedCliRun supervisor output capture", () => {
     supervisorSpawnMock.mockImplementationOnce(async (...args: unknown[]) => {
       const input = args[0] as SupervisorSpawnInput;
       input.onStdout?.(toolStart);
+      if (fixture.type === "mcp_tool_use") {
+        recordMcpLoopbackToolCallResult({
+          captureKey: input.env?.OPENCLAW_MCP_CLI_CAPTURE_KEY ?? "",
+          toolName: "cron",
+          args: {},
+          isError: true,
+          outcome: "unknown",
+        });
+      }
       if (fixture.type === "server_tool_use") {
         recordMcpLoopbackToolCallResult({
           captureKey: input.env?.OPENCLAW_MCP_CLI_CAPTURE_KEY ?? "",

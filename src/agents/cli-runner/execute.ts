@@ -1283,6 +1283,13 @@ export async function executePreparedCliRun(
           const terminalReason =
             trustedTerminalReason ??
             resolveToolTerminalReason(event.incomplete ? runError : undefined);
+          // Incomplete client/MCP tools inherit the enclosing failed run even when
+          // the loopback disconnect is ambiguous. Server-native tools do not.
+          const useEnclosingTerminalReason =
+            event.incomplete &&
+            runFailed &&
+            activeTool !== undefined &&
+            activeTool.kind !== "server_tool_use";
           const diagnosticBase = {
             runId: params.runId,
             sessionId: params.sessionId,
@@ -1294,7 +1301,7 @@ export async function executePreparedCliRun(
             toolCallId: event.toolCallId,
             durationMs: Math.max(0, now - (activeTool?.startedAt ?? now)),
           };
-          if (trustedOutcome?.outcome === "unknown") {
+          if (trustedOutcome?.outcome === "unknown" && !useEnclosingTerminalReason) {
             emitTrustedDiagnosticEvent({
               type: "tool.execution.error",
               ...diagnosticBase,
@@ -1333,7 +1340,7 @@ export async function executePreparedCliRun(
                     errorCategory:
                       terminalReason === "cancelled"
                         ? "aborted"
-                        : event.incomplete && !trustedOutcome
+                        : event.incomplete && (!trustedOutcome || useEnclosingTerminalReason)
                           ? "cli_tool_incomplete"
                           : "cli_tool",
                     terminalReason,
