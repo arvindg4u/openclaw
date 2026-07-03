@@ -30,6 +30,7 @@ import { redactSecrets, redactToolPayloadText } from "../logging/redact.js";
 import { safeJsonStringify } from "../utils/safe-json.js";
 import { TRAJECTORY_RUNTIME_FILE_MAX_BYTES, safeTrajectorySessionFileName } from "./paths.js";
 import { isRegularNonSymlinkFile, resolveTrajectoryRuntimeFile } from "./runtime-file.js";
+import { loadSqliteTrajectoryRuntimeEvents } from "./runtime-store.sqlite.js";
 import type {
   TrajectoryBundleManifest,
   TrajectoryBundleWarning,
@@ -351,6 +352,47 @@ async function parseJsonlFile<T>(
     }
   }
   return { events: parsed, warnings };
+}
+
+async function readRuntimeTrajectoryEvents(params: {
+  runtimeFile?: string;
+  sessionFile: string;
+  sessionId: string;
+}): Promise<{
+  events: TrajectoryEvent[];
+  runtimeFile?: string;
+  warnings: JsonlParseWarning[];
+}> {
+  const marker = parseSqliteSessionFileMarker(params.sessionFile);
+  if (marker && marker.sessionId === params.sessionId) {
+    const events = await loadSqliteTrajectoryRuntimeEvents({
+      agentId: marker.agentId,
+      sessionId: marker.sessionId,
+      storePath: marker.storePath,
+    });
+    if (events.length > MAX_TRAJECTORY_RUNTIME_EVENTS) {
+      throw new Error(
+        `Trajectory runtime store has too many events to export (limit ${MAX_TRAJECTORY_RUNTIME_EVENTS})`,
+      );
+    }
+    return { events, warnings: [] };
+  }
+
+  const runtimeFile = await resolveTrajectoryRuntimeFile({
+    runtimeFile: params.runtimeFile,
+    sessionFile: params.sessionFile,
+    sessionId: params.sessionId,
+  });
+  if (!runtimeFile) {
+    return { events: [], warnings: [] };
+  }
+  const parsed = await parseJsonlFile<TrajectoryEvent>(runtimeFile, {
+    maxBytes: TRAJECTORY_RUNTIME_FILE_MAX_BYTES,
+    maxEvents: MAX_TRAJECTORY_RUNTIME_EVENTS,
+    include: (value) => value.sessionId === params.sessionId,
+    validate: isRuntimeTrajectoryEvent,
+  });
+  return { ...parsed, runtimeFile };
 }
 
 function isRuntimeTrajectoryEvent(value: unknown): value is TrajectoryEvent {
@@ -1023,19 +1065,12 @@ export async function exportTrajectoryBundle(params: BuildTrajectoryBundleParams
     sessionId: params.sessionId,
     ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
   });
-  const runtimeFile = await resolveTrajectoryRuntimeFile({
+  const runtimeParse = await readRuntimeTrajectoryEvents({
     runtimeFile: params.runtimeFile,
     sessionFile: params.sessionFile,
     sessionId: params.sessionId,
   });
-  const runtimeParse = runtimeFile
-    ? await parseJsonlFile<TrajectoryEvent>(runtimeFile, {
-        maxBytes: TRAJECTORY_RUNTIME_FILE_MAX_BYTES,
-        maxEvents: MAX_TRAJECTORY_RUNTIME_EVENTS,
-        include: (value) => value.sessionId === params.sessionId,
-        validate: isRuntimeTrajectoryEvent,
-      })
-    : { events: [], warnings: [] };
+  const runtimeFile = runtimeParse.runtimeFile;
   const runtimeEvents = runtimeParse.events;
   const transcriptEvents = buildTranscriptEvents({
     entries: branchEntries,

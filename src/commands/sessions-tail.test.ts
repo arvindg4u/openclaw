@@ -8,7 +8,9 @@ import { formatSqliteSessionFileMarker } from "../config/sessions/sqlite-marker.
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
+import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { resolveTrajectoryPointerFilePath } from "../trajectory/paths.js";
+import { appendSqliteTrajectoryRuntimeEvents } from "../trajectory/runtime-store.sqlite.js";
 import type { TrajectoryEvent } from "../trajectory/types.js";
 import { sessionsTailCommand, setSessionsTailFollowIntervalMsForTests } from "./sessions-tail.js";
 
@@ -105,6 +107,7 @@ describe("sessionsTailCommand", () => {
       process.env.OPENCLAW_STATE_DIR = previousStateDir;
     }
     closeOpenClawAgentDatabasesForTest();
+    closeOpenClawStateDatabaseForTest();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -248,7 +251,7 @@ describe("sessionsTailCommand", () => {
     expect(output).not.toContain("No sessions found");
   });
 
-  it("tails SQLite marker trajectory files from the store trajectory directory", async () => {
+  it("tails SQLite marker trajectory rows from the database", async () => {
     const runtime = makeRuntime();
     await writeSessionEntry(sessionKey, {
       sessionFile: formatSqliteSessionFileMarker({
@@ -257,7 +260,7 @@ describe("sessionsTailCommand", () => {
         storePath,
       }),
     });
-    writeJsonl(path.join(tmpDir, "trajectory", "session-one.jsonl"), [
+    appendSqliteTrajectoryRuntimeEvents({ sessionId: "session-one", storePath }, [
       makeEvent({
         type: "tool.result",
         ts: "2026-05-18T12:04:21.000Z",
@@ -271,6 +274,7 @@ describe("sessionsTailCommand", () => {
     expect(output).toContain("tool.result");
     expect(output).toContain("sqlite ok");
     expect(output).not.toContain("No sessions found");
+    expect(fs.existsSync(path.join(tmpDir, "trajectory", "session-one.jsonl"))).toBe(false);
   });
 
   it("ignores stale trajectory pointers for another session id", async () => {
@@ -382,6 +386,54 @@ describe("sessionsTailCommand", () => {
     const output = runtimeOutput(runtime);
     expect(output).toContain("tool.result");
     expect(output).toContain("python ok");
+  });
+
+  it("continues following when SQLite trajectory rows are appended", async () => {
+    const runtime = makeRuntime();
+    await writeSessionEntry(sessionKey, {
+      sessionFile: formatSqliteSessionFileMarker({
+        agentId: "main",
+        sessionId: "session-one",
+        storePath,
+      }),
+    });
+    appendSqliteTrajectoryRuntimeEvents({ sessionId: "session-one", storePath }, [
+      makeEvent({
+        sourceSeq: 1,
+        type: "session.started",
+        ts: "2026-05-18T12:04:17.000Z",
+      }),
+    ]);
+    const appendedEvent = makeEvent({
+      sourceSeq: 2,
+      type: "tool.result",
+      ts: "2026-05-18T12:04:21.000Z",
+      data: { name: "sqlite", success: true },
+    });
+    let appended = false;
+    vi.mocked(runtime.log).mockImplementation((message) => {
+      if (!appended && String(message).includes("session.started")) {
+        appended = true;
+        appendSqliteTrajectoryRuntimeEvents({ sessionId: "session-one", storePath }, [
+          appendedEvent,
+        ]);
+      }
+    });
+
+    const run = sessionsTailCommand(
+      { store: storePath, sessionKey, tail: "1", follow: true },
+      runtime,
+    );
+    try {
+      await waitForRuntimeOutput(runtime, "sqlite ok");
+    } finally {
+      process.emit("SIGTERM", "SIGTERM");
+      await run;
+    }
+
+    const output = runtimeOutput(runtime);
+    expect(output).toContain("tool.result");
+    expect(output).toContain("sqlite ok");
   });
 
   it("resolves the target store from a fully qualified non-default agent session key", async () => {

@@ -20,6 +20,7 @@ import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { resolveTrajectoryFilePath } from "../trajectory/paths.js";
 import { resolveTrajectoryRuntimeFile } from "../trajectory/runtime-file.js";
+import { loadSqliteTrajectoryRuntimeEventRowsSync } from "../trajectory/runtime-store.sqlite.js";
 import type { TrajectoryEvent } from "../trajectory/types.js";
 import { resolveSessionStoreTargetsOrExit } from "./session-store-targets.js";
 import { shortenText } from "./text-format.js";
@@ -38,20 +39,43 @@ type TailSelection = {
   key: string;
   entry: SessionEntry;
   storePath: string;
-  trajectoryPath: string;
+  source: TailTrajectorySource;
 };
 
-type FollowState = {
+type TailTrajectorySource =
+  | {
+      kind: "file";
+      path: string;
+    }
+  | {
+      agentId: string;
+      kind: "sqlite";
+      sessionId: string;
+      storePath: string;
+    };
+
+type FileFollowState = {
   cursor: TrajectoryCursor | null;
   fileState: FollowFileState | null;
+  kind: "file";
   offset: number;
   pending: string;
-  selection: TailSelection;
+  selection: TailSelection & { source: Extract<TailTrajectorySource, { kind: "file" }> };
 };
+
+type SqliteFollowState = {
+  cursor: TrajectoryCursor | null;
+  kind: "sqlite";
+  lastStorageSeq: number;
+  selection: TailSelection & { source: Extract<TailTrajectorySource, { kind: "sqlite" }> };
+};
+
+type FollowState = FileFollowState | SqliteFollowState;
 
 type TrajectorySnapshot = {
   events: TrajectoryEvent[];
   fileState: FollowFileState | null;
+  maxStorageSeq?: number;
   offset: number;
 };
 
@@ -289,6 +313,28 @@ function readTrajectorySnapshot(filePath: string): TrajectorySnapshot {
   }
 }
 
+function readSqliteTrajectorySnapshot(
+  source: Extract<TailTrajectorySource, { kind: "sqlite" }>,
+): TrajectorySnapshot {
+  const rows = loadSqliteTrajectoryRuntimeEventRowsSync({
+    agentId: source.agentId,
+    sessionId: source.sessionId,
+    storePath: source.storePath,
+  });
+  return {
+    events: rows.map((row) => row.event),
+    fileState: null,
+    maxStorageSeq: rows.at(-1)?.seq ?? -1,
+    offset: 0,
+  };
+}
+
+function readTailSnapshot(selection: TailSelection): TrajectorySnapshot {
+  return selection.source.kind === "sqlite"
+    ? readSqliteTrajectorySnapshot(selection.source)
+    : readTrajectorySnapshot(selection.source.path);
+}
+
 function renderEvents(events: TrajectoryEvent[], runtime: RuntimeEnv): TrajectoryCursor | null {
   let cursor: TrajectoryCursor | null = null;
   for (const event of events) {
@@ -368,13 +414,25 @@ async function buildTailSelection(params: {
   let sessionFile: string;
   try {
     const entrySessionFile = params.entry.sessionFile?.trim();
-    sessionFile =
-      entrySessionFile && parseSqliteSessionFileMarker(entrySessionFile)
-        ? entrySessionFile
-        : resolveSessionFilePath(sessionId, params.entry, {
-            agentId: params.agentId,
-            sessionsDir,
-          });
+    const marker = entrySessionFile ? parseSqliteSessionFileMarker(entrySessionFile) : null;
+    if (marker && marker.sessionId === sessionId) {
+      return {
+        agentId: params.agentId,
+        entry: params.entry,
+        key: params.key,
+        source: {
+          agentId: marker.agentId,
+          kind: "sqlite",
+          sessionId: marker.sessionId,
+          storePath: marker.storePath,
+        },
+        storePath: params.storePath,
+      };
+    }
+    sessionFile = resolveSessionFilePath(sessionId, params.entry, {
+      agentId: params.agentId,
+      sessionsDir,
+    });
   } catch {
     return null;
   }
@@ -386,8 +444,11 @@ async function buildTailSelection(params: {
     agentId: params.agentId,
     entry: params.entry,
     key: params.key,
+    source: {
+      kind: "file",
+      path: trajectoryPath,
+    },
     storePath: params.storePath,
-    trajectoryPath,
   };
 }
 
@@ -419,8 +480,8 @@ function statFileSize(filePath: string): number {
   }
 }
 
-function readNewFollowEvents(state: FollowState): TrajectoryEvent[] {
-  const fileState = readFollowFileState(state.selection.trajectoryPath);
+function readNewFileFollowEvents(state: FileFollowState): TrajectoryEvent[] {
+  const fileState = readFollowFileState(state.selection.source.path);
   if (!fileState) {
     state.fileState = null;
     state.offset = 0;
@@ -436,7 +497,7 @@ function readNewFollowEvents(state: FollowState): TrajectoryEvent[] {
   if (replaced || truncated || possiblyRewrittenSameSize) {
     // Log rotation, truncation, and same-size rewrites all require a full
     // rescan; cursor filtering prevents duplicate event output.
-    const snapshot = readTrajectorySnapshot(state.selection.trajectoryPath);
+    const snapshot = readTrajectorySnapshot(state.selection.source.path);
     state.fileState = snapshot.fileState;
     state.offset = snapshot.offset;
     state.pending = "";
@@ -448,7 +509,7 @@ function readNewFollowEvents(state: FollowState): TrajectoryEvent[] {
     return [];
   }
 
-  const fd = fs.openSync(state.selection.trajectoryPath, "r");
+  const fd = fs.openSync(state.selection.source.path, "r");
   try {
     const buffer = Buffer.alloc(fileState.size - state.offset);
     fs.readSync(fd, buffer, 0, buffer.length, state.offset);
@@ -465,6 +526,26 @@ function readNewFollowEvents(state: FollowState): TrajectoryEvent[] {
   }
 }
 
+function readNewSqliteFollowEvents(state: SqliteFollowState): TrajectoryEvent[] {
+  const rows = loadSqliteTrajectoryRuntimeEventRowsSync({
+    agentId: state.selection.source.agentId,
+    afterSeq: state.lastStorageSeq,
+    sessionId: state.selection.source.sessionId,
+    storePath: state.selection.source.storePath,
+  });
+  if (rows.length === 0) {
+    return [];
+  }
+  state.lastStorageSeq = rows.at(-1)?.seq ?? state.lastStorageSeq;
+  return rows.map((row) => row.event);
+}
+
+function readNewFollowEvents(state: FollowState): TrajectoryEvent[] {
+  return state.kind === "sqlite"
+    ? readNewSqliteFollowEvents(state)
+    : readNewFileFollowEvents(state);
+}
+
 function renderFollowEvents(
   events: TrajectoryEvent[],
   state: FollowState,
@@ -479,16 +560,29 @@ function renderFollowEvents(
 async function followSelections(
   selections: TailSelection[],
   runtime: RuntimeEnv,
-  initialSnapshots: Map<string, TrajectorySnapshot>,
+  initialSnapshots: Map<TailSelection, TrajectorySnapshot>,
 ): Promise<void> {
   const states = selections.map((selection): FollowState => {
-    const snapshot = initialSnapshots.get(selection.trajectoryPath);
+    const snapshot = initialSnapshots.get(selection);
+    if (selection.source.kind === "sqlite") {
+      return {
+        cursor: snapshot ? maxCursorFromEvents(snapshot.events) : null,
+        kind: "sqlite",
+        lastStorageSeq: snapshot?.maxStorageSeq ?? -1,
+        selection: selection as TailSelection & {
+          source: Extract<TailTrajectorySource, { kind: "sqlite" }>;
+        },
+      };
+    }
     return {
       cursor: snapshot ? maxCursorFromEvents(snapshot.events) : null,
-      fileState: snapshot?.fileState ?? readFollowFileState(selection.trajectoryPath),
-      offset: snapshot?.offset ?? statFileSize(selection.trajectoryPath),
+      fileState: snapshot?.fileState ?? readFollowFileState(selection.source.path),
+      kind: "file",
+      offset: snapshot?.offset ?? statFileSize(selection.source.path),
       pending: "",
-      selection,
+      selection: selection as TailSelection & {
+        source: Extract<TailTrajectorySource, { kind: "file" }>;
+      },
     };
   });
 
@@ -575,10 +669,10 @@ export async function sessionsTailCommand(
     return;
   }
 
-  const followSnapshots = new Map<string, TrajectorySnapshot>();
+  const followSnapshots = new Map<TailSelection, TrajectorySnapshot>();
   for (const selection of selected) {
-    const snapshot = readTrajectorySnapshot(selection.trajectoryPath);
-    followSnapshots.set(selection.trajectoryPath, snapshot);
+    const snapshot = readTailSnapshot(selection);
+    followSnapshots.set(selection, snapshot);
     renderEvents(tailCount > 0 ? snapshot.events.slice(-tailCount) : [], runtime);
   }
 

@@ -36,6 +36,11 @@ export type SqliteTrajectoryRuntimeStats = {
   sizeBytes: number;
 };
 
+export type SqliteTrajectoryRuntimeEventRow = {
+  event: TrajectoryEvent;
+  seq: number;
+};
+
 type TrajectoryRuntimeRow = {
   event_json: string;
   seq: number;
@@ -86,17 +91,35 @@ export async function loadSqliteTrajectoryRuntimeEvents(
 export function loadSqliteTrajectoryRuntimeEventsSync(
   scope: Omit<SqliteTrajectoryRuntimeScope, "maxRuntimeBytes">,
 ): TrajectoryEvent[] {
+  return loadSqliteTrajectoryRuntimeEventRowsSync(scope).map((row) => row.event);
+}
+
+/** Loads runtime trajectory event rows with storage seqs for follow/export cursors. */
+export function loadSqliteTrajectoryRuntimeEventRowsSync(
+  scope: Omit<SqliteTrajectoryRuntimeScope, "maxRuntimeBytes"> & {
+    afterSeq?: number;
+    maxEvents?: number;
+  },
+): SqliteTrajectoryRuntimeEventRow[] {
   const database = openOpenClawAgentDatabase(toDatabaseOptions(scope));
   const db = getTrajectoryKysely(database.db);
-  const rows = executeSqliteQuerySync(
-    database.db,
-    db
-      .selectFrom("trajectory_runtime_events")
-      .select("event_json")
-      .where("session_id", "=", scope.sessionId)
-      .orderBy("seq", "asc"),
-  ).rows;
-  return rows.map((row) => JSON.parse(row.event_json) as TrajectoryEvent);
+  let query = db
+    .selectFrom("trajectory_runtime_events")
+    .select(["seq", "event_json"])
+    .where("session_id", "=", scope.sessionId)
+    .orderBy("seq", "asc");
+  const afterSeq = scope.afterSeq;
+  if (afterSeq !== undefined && Number.isFinite(afterSeq)) {
+    query = query.where("seq", ">", Math.floor(afterSeq));
+  }
+  const maxEvents = scope.maxEvents;
+  if (maxEvents !== undefined && Number.isFinite(maxEvents)) {
+    query = query.limit(Math.max(0, Math.floor(maxEvents)));
+  }
+  return executeSqliteQuerySync(database.db, query).rows.map((row) => ({
+    event: JSON.parse(row.event_json) as TrajectoryEvent,
+    seq: row.seq,
+  }));
 }
 
 /** Reads trajectory row count, max storage seq, and JSONL-compatible byte size. */
