@@ -184,15 +184,19 @@ export class CodexNativeToolLifecycleProjector {
     }
   }
 
-  recordPreToolUseFailure(failure: CodexNativePreToolUseFailure): void {
+  recordPreToolUseFailure(
+    failure: CodexNativePreToolUseFailure,
+    runWasAborted = this.options.runAbortSignal?.aborted === true,
+  ): void {
     if (this.completedItemIds.has(failure.toolCallId)) {
       return;
     }
     const record: CodexNativePreToolUseFailureRecord = {
       failure,
-      terminalReason: this.options.runAbortSignal?.aborted
-        ? resolveCodexToolAbortTerminalReason(this.options.runAbortSignal)
-        : failure.disposition,
+      terminalReason:
+        runWasAborted && this.options.runAbortSignal
+          ? resolveCodexToolAbortTerminalReason(this.options.runAbortSignal)
+          : failure.disposition,
     };
     if (this.finalized) {
       // Relay subprocesses can settle after result construction. Emit the

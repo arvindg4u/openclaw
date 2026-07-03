@@ -248,6 +248,7 @@ export async function runCodexAppServerSideQuestion(
   const pendingNativeToolNotifications: CodexServerNotification[] = [];
   const pendingNativePreToolUseFailures: CodexNativePreToolUseFailure[] = [];
   let nativePreToolUseFailureFallbackActive = false;
+  let nativeToolRunWasAbortedBeforeCleanup: boolean | undefined;
   let nativePreToolUseFailureFallbackTerminalReason:
     | CodexNativePreToolUseFailure["disposition"]
     | undefined;
@@ -273,7 +274,7 @@ export async function runCodexAppServerSideQuestion(
   };
   const activateNativePreToolUseFailureFallback = () => {
     if (!nativePreToolUseFailureFallbackActive) {
-      nativePreToolUseFailureFallbackTerminalReason = runAbortController.signal.aborted
+      nativePreToolUseFailureFallbackTerminalReason = nativeToolRunWasAbortedBeforeCleanup
         ? resolveCodexToolAbortTerminalReason(runAbortController.signal)
         : undefined;
       nativePreToolUseFailureFallbackActive = true;
@@ -477,7 +478,10 @@ export async function runCodexAppServerSideQuestion(
             if (nativePreToolUseFailureFallbackActive) {
               emitNativePreToolUseFailure(failure);
             } else if (nativeToolLifecycleProjector) {
-              nativeToolLifecycleProjector.recordPreToolUseFailure(failure);
+              nativeToolLifecycleProjector.recordPreToolUseFailure(
+                failure,
+                nativeToolRunWasAbortedBeforeCleanup,
+              );
             } else {
               pendingNativePreToolUseFailures.push(failure);
             }
@@ -614,9 +618,9 @@ export async function runCodexAppServerSideQuestion(
       // Cleanup aborts are ownership teardown, not a terminal run outcome.
       // Snapshot the real state while late app-server notifications can still drain.
       const runWasAbortedBeforeCleanup = runAbortController.signal.aborted;
+      nativeToolRunWasAbortedBeforeCleanup = runWasAbortedBeforeCleanup;
       params.opts?.abortSignal?.removeEventListener("abort", abortFromUpstream);
       removeRequestHandler?.();
-      activateNativePreToolUseFailureFallback();
       // Stop dispatched side tools before cleanup waits on the app server;
       // otherwise a stuck tool can outlive the side turn that owns it.
       if (!runAbortController.signal.aborted) {
@@ -631,7 +635,13 @@ export async function runCodexAppServerSideQuestion(
         });
       } finally {
         removeNotificationHandler();
-        nativeToolLifecycleProjector?.finalizeActive(runWasAbortedBeforeCleanup);
+        try {
+          nativeToolLifecycleProjector?.finalizeActive(runWasAbortedBeforeCleanup);
+        } finally {
+          // Keep cleanup-time relay failures with their active projected item.
+          // Direct emission owns only failures that arrive after projector retirement.
+          activateNativePreToolUseFailureFallback();
+        }
       }
     } finally {
       flushPendingNativePreToolUseFailures();
