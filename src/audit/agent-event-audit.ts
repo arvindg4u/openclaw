@@ -177,7 +177,7 @@ function projectAgentEvent(event: AgentEventPayload): AgentAuditProjection | und
     return {
       input: {
         sourceSequence: event.seq,
-        occurredAt: event.ts,
+        occurredAt: asDateTimestampMs(event.data.startedAt) ?? event.ts,
         kind: "agent_run",
         action: "agent.run.started",
         status: "started",
@@ -196,7 +196,7 @@ function projectAgentEvent(event: AgentEventPayload): AgentAuditProjection | und
     return {
       input: {
         sourceSequence: event.seq,
-        occurredAt: event.ts,
+        occurredAt: asDateTimestampMs(event.data.endedAt) ?? event.ts,
         kind: "agent_run",
         action: "agent.run.finished",
         ...terminal,

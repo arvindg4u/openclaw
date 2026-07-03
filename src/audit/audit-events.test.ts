@@ -292,6 +292,31 @@ describe("agent activity audit projection", () => {
     );
   });
 
+  it("prefers authoritative run lifecycle time over listener observation time", () => {
+    const startedAt = 1_750_000_000_000;
+    const endedAt = startedAt + 1_000;
+    const observedAt = endedAt + 30_000;
+
+    expect(
+      projectAgentEventToAudit(agentEvent({ ts: observedAt, data: { phase: "start", startedAt } }))
+        ?.occurredAt,
+    ).toBe(startedAt);
+    expect(
+      projectAgentEventToAudit(
+        agentEvent({
+          seq: 2,
+          ts: observedAt,
+          data: { phase: "end", startedAt, endedAt },
+        }),
+      )?.occurredAt,
+    ).toBe(endedAt);
+    expect(
+      projectAgentEventToAudit(
+        agentEvent({ ts: observedAt, data: { phase: "start", startedAt: "invalid" } }),
+      )?.occurredAt,
+    ).toBe(observedAt);
+  });
+
   it("omits prompt, arguments, results, and raw errors from run and tool records", () => {
     const secret = "super-secret-payload";
     projectAgentEventToAudit(agentEvent({ data: { phase: "start", prompt: secret }, seq: 1 }));
