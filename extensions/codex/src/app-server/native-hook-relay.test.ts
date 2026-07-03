@@ -18,7 +18,9 @@ import {
 afterEach(() => resetDiagnosticEventsForTest());
 
 function flushDiagnosticEvents(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
 }
 
 describe("Codex native hook relay config", () => {

@@ -714,7 +714,7 @@ function projectNativeHookRelayPreToolUseFailure(
     () => {
       record.settled = true;
     },
-    (error) => {
+    (error: unknown) => {
       record.settled = true;
       if (registration.preToolUseFailureProjections.get(failure.toolCallId) === record) {
         registration.preToolUseFailureProjections.delete(failure.toolCallId);

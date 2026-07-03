@@ -1683,7 +1683,7 @@ describe("native hook relay registry", () => {
   it("keeps a native pre-tool hook timeout distinct from a policy denial", async () => {
     const onPreToolUseFailure = vi.fn();
     const beforeToolCall = vi.fn(async () => {
-      throw new Error("timed out after 5000ms");
+      throw Object.assign(new Error("timed out after 5000ms"), { name: "TimeoutError" });
     });
     initializeGlobalHookRunner(
       createMockPluginRegistry([{ hookName: "before_tool_call", handler: beforeToolCall }]),
@@ -1768,7 +1768,12 @@ describe("native hook relay registry", () => {
   });
 
   it("does not delay a native hook response on a pending failure projection", async () => {
-    const onPreToolUseFailure = vi.fn(() => new Promise<void>(() => undefined));
+    const onPreToolUseFailure = vi.fn(
+      () =>
+        new Promise<void>(() => {
+          // Deliberately remain pending to prove projection does not block the response.
+        }),
+    );
     const beforeToolCall = vi.fn(async () => {
       throw new Error("hook crashed");
     });
@@ -1802,7 +1807,7 @@ describe("native hook relay registry", () => {
   it("leaves report-mode pre-tool failure projection to the approval owner", async () => {
     const onPreToolUseFailure = vi.fn();
     const beforeToolCall = vi.fn(async () => {
-      throw new Error("timed out after 5000ms");
+      throw Object.assign(new Error("timed out after 5000ms"), { name: "TimeoutError" });
     });
     initializeGlobalHookRunner(
       createMockPluginRegistry([{ hookName: "before_tool_call", handler: beforeToolCall }]),

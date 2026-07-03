@@ -433,10 +433,10 @@ function enrichAgentEvent(
     context?.lifecycleGeneration &&
     executionLifecycleGeneration !== context.lifecycleGeneration
   ) {
-    return;
+    return undefined;
   }
   if (ownedLifecycleGeneration && ownedLifecycleGeneration !== state.lifecycleGeneration) {
-    return;
+    return undefined;
   }
   const nextSeq = (state.seqByRun.get(event.runId) ?? 0) + 1;
   state.seqByRun.set(event.runId, nextSeq);
