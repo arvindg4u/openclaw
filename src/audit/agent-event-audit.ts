@@ -257,6 +257,8 @@ export function projectToolExecutionEventToAudit(
         errorCategory === "cancelled" ||
         errorCategory === "canceled"));
   const toolTimedOut = terminalReason === "timed_out";
+  // Unknown is an explicit dependency boundary, not a failed-run inference.
+  // Keep it authoritative when enclosing run provenance says cancel or timeout.
   const terminal =
     event.type === "tool.execution.started"
       ? { status: "started" as const }
@@ -264,12 +266,12 @@ export function projectToolExecutionEventToAudit(
         ? { status: "succeeded" as const }
         : event.type === "tool.execution.blocked"
           ? { status: "blocked" as const, errorCode: "tool_blocked" as const }
-          : toolCancelled
-            ? { status: "cancelled" as const, errorCode: "tool_cancelled" as const }
-            : toolTimedOut
-              ? { status: "timed_out" as const, errorCode: "tool_timed_out" as const }
-              : diagnosticErrorCode === "tool_outcome_unknown"
-                ? { status: "unknown" as const, errorCode: "tool_outcome_unknown" as const }
+          : diagnosticErrorCode === "tool_outcome_unknown"
+            ? { status: "unknown" as const, errorCode: "tool_outcome_unknown" as const }
+            : toolCancelled
+              ? { status: "cancelled" as const, errorCode: "tool_cancelled" as const }
+              : toolTimedOut
+                ? { status: "timed_out" as const, errorCode: "tool_timed_out" as const }
                 : { status: "failed" as const, errorCode: "tool_failed" as const };
   return {
     sourceSequence: event.seq,

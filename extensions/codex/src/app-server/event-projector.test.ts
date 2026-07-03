@@ -2269,9 +2269,13 @@ describe("CodexAppServerEventProjector", () => {
   });
 
   it("keeps native web-search outcomes unknown at finalization when no raw terminal arrives", async () => {
+    const abortController = new AbortController();
+    abortController.abort("cancelled");
     const diagnosticEvents: DiagnosticEventPayload[] = [];
     const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
-    const projector = await createProjector();
+    const projector = await createProjector(undefined, {
+      runAbortSignal: abortController.signal,
+    });
     const item = {
       id: "web-search-without-raw-terminal",
       type: "webSearch",
@@ -2349,15 +2353,25 @@ describe("CodexAppServerEventProjector", () => {
   });
 
   it.each([
-    ["missing", undefined],
-    ["in-progress", "in_progress"],
-    ["unrecognized", "future_status"],
+    ["missing", undefined, undefined],
+    ["in-progress", "in_progress", undefined],
+    [
+      "unrecognized",
+      "future_status",
+      Object.assign(new Error("turn timed out"), { name: "TimeoutError" }),
+    ],
   ] as const)(
     "keeps %s native image-generation terminal status non-successful",
-    async (_, status) => {
+    async (_, status, abortReason) => {
+      const abortController = new AbortController();
+      if (abortReason) {
+        abortController.abort(abortReason);
+      }
       const diagnosticEvents: DiagnosticEventPayload[] = [];
       const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
-      const projector = await createProjector();
+      const projector = await createProjector(undefined, {
+        runAbortSignal: abortController.signal,
+      });
       const startedItem = {
         id: `image-generation-${status ?? "missing"}`,
         type: "imageGeneration",
@@ -2381,11 +2395,20 @@ describe("CodexAppServerEventProjector", () => {
           .filter((event) => "toolCallId" in event && event.toolCallId === startedItem.id)
           .map((event) => ({
             type: event.type,
+            terminalReason: "terminalReason" in event ? event.terminalReason : undefined,
             errorCode: "errorCode" in event ? event.errorCode : undefined,
           })),
       ).toEqual([
-        { type: "tool.execution.started", errorCode: undefined },
-        { type: "tool.execution.error", errorCode: "tool_outcome_unknown" },
+        {
+          type: "tool.execution.started",
+          terminalReason: undefined,
+          errorCode: undefined,
+        },
+        {
+          type: "tool.execution.error",
+          terminalReason: "failed",
+          errorCode: "tool_outcome_unknown",
+        },
       ]);
     },
   );

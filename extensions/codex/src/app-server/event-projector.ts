@@ -305,11 +305,15 @@ export class CodexNativeToolLifecycleProjector {
                     : "codex_native_tool_error",
               ...(status === "unknown" ? { errorCode: "tool_outcome_unknown" } : {}),
               terminalReason:
-                runWasAborted && this.options.runAbortSignal
-                  ? resolveCodexToolAbortTerminalReason(this.options.runAbortSignal)
-                  : status === "cancelled"
-                    ? ("cancelled" as const)
-                    : ("failed" as const),
+                // An enclosing abort explains unfinished work, but cannot classify
+                // a native terminal whose status is absent or unrecognized.
+                status === "unknown"
+                  ? ("failed" as const)
+                  : runWasAborted && this.options.runAbortSignal
+                    ? resolveCodexToolAbortTerminalReason(this.options.runAbortSignal)
+                    : status === "cancelled"
+                      ? ("cancelled" as const)
+                      : ("failed" as const),
             }
           : {
               type: "tool.execution.completed" as const,

@@ -484,22 +484,25 @@ describe("agent activity audit projection", () => {
     },
   );
 
-  it("keeps an unavailable tool outcome explicitly unknown", () => {
-    const projected = projectToolExecutionEventToAudit(
-      toolEvent({
-        type: "tool.execution.error",
-        durationMs: 10,
-        errorCategory: "codex_native_tool_outcome_unknown",
-        errorCode: "tool_outcome_unknown",
-        terminalReason: "failed",
-      }),
-    );
+  it.each(["failed", "cancelled", "timed_out"] as const)(
+    "keeps an unavailable tool outcome explicitly unknown despite %s provenance",
+    (terminalReason) => {
+      const projected = projectToolExecutionEventToAudit(
+        toolEvent({
+          type: "tool.execution.error",
+          durationMs: 10,
+          errorCategory: "codex_native_tool_outcome_unknown",
+          errorCode: "tool_outcome_unknown",
+          terminalReason,
+        }),
+      );
 
-    expect(projected).toMatchObject({
-      status: "unknown",
-      errorCode: "tool_outcome_unknown",
-    });
-  });
+      expect(projected).toMatchObject({
+        status: "unknown",
+        errorCode: "tool_outcome_unknown",
+      });
+    },
+  );
 
   it("keeps the trusted tool lifecycle active when optional diagnostics are disabled", () => {
     const seen: TrustedToolExecutionEvent[] = [];
