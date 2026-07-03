@@ -42,6 +42,33 @@ describe("resolveAgentRunAbortLifecycleFields", () => {
     });
   });
 
+  it("contains hostile abort reasons", () => {
+    const controller = new AbortController();
+    const reason = Object.defineProperty({}, "name", {
+      get() {
+        throw new Error("hostile name");
+      },
+    });
+    controller.abort(reason);
+
+    expect(resolveAgentRunAbortLifecycleFields(controller.signal)).toEqual({
+      aborted: true,
+      stopReason: "aborted",
+    });
+  });
+
+  it("contains revoked abort reason proxies", () => {
+    const controller = new AbortController();
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    controller.abort(proxy);
+    revoke();
+
+    expect(resolveAgentRunAbortLifecycleFields(controller.signal)).toEqual({
+      aborted: true,
+      stopReason: "aborted",
+    });
+  });
+
   it("treats restart as an aborted terminal reason", () => {
     expect(isAbortedAgentStopReason("aborted")).toBe(true);
     expect(isAbortedAgentStopReason("restart")).toBe(true);

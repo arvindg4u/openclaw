@@ -1,4 +1,5 @@
 /** Redaction-safe projection from live agent events into durable audit metadata. */
+import { createHash } from "node:crypto";
 import { asDateTimestampMs } from "@openclaw/normalization-core/number-coercion";
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import {
@@ -8,6 +9,7 @@ import {
   type AgentRunTerminalOutcome,
 } from "../agents/agent-run-terminal-outcome.js";
 import { normalizeAgentRunTimeoutPhase } from "../agents/run-timeout-attribution.js";
+import { isAllowedToolCallName } from "../agents/tool-call-shared.js";
 import type { AgentEventPayload } from "../infra/agent-events.js";
 import type { TrustedToolExecutionEvent } from "../infra/diagnostic-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -29,6 +31,26 @@ let persistenceFailureWarned = false;
 
 function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function auditToolName(value: unknown): string | undefined {
+  const toolName = nonEmptyString(value)?.trim();
+  if (!toolName) {
+    return undefined;
+  }
+  // Tool lifecycle producers include provider-controlled streams. Preserve
+  // only the compact model-facing name contract at the durable boundary.
+  return isAllowedToolCallName(toolName, null) ? toolName : "unknown";
+}
+
+function auditToolCallId(value: unknown): string | undefined {
+  const toolCallId = nonEmptyString(value);
+  if (!toolCallId) {
+    return undefined;
+  }
+  // Call ids remain useful for correlation, but their provider-owned bytes
+  // are not operator metadata and must never enter the ledger verbatim.
+  return `sha256:${createHash("sha256").update(toolCallId).digest("hex")}`;
 }
 
 function rememberRunProvenance(
@@ -210,10 +232,11 @@ export function projectToolExecutionEventToAudit(
     return undefined;
   }
   const runId = nonEmptyString(event.runId);
-  const toolName = nonEmptyString(event.toolName);
+  const toolName = auditToolName(event.toolName);
   if (!runId || !toolName) {
     return undefined;
   }
+  const toolCallId = auditToolCallId(event.toolCallId);
   const provenance = resolveToolProvenance(runId, event);
   const errorCategory =
     event.type === "tool.execution.error"
@@ -261,7 +284,7 @@ export function projectToolExecutionEventToAudit(
     ...(provenance.sessionKey ? { sessionKey: provenance.sessionKey } : {}),
     ...(provenance.sessionId ? { sessionId: provenance.sessionId } : {}),
     runId,
-    ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+    ...(toolCallId ? { toolCallId } : {}),
     toolName,
   };
 }

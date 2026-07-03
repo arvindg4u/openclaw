@@ -61,8 +61,10 @@ one (otherwise observation time), agent/run provenance, actor, and a
 `redaction: "metadata_only"` marker. Terminal records distinguish success,
 failure, cancellation, timeout, and policy blocks with closed status and error
 codes. `unknown` is an explicit non-success result when an upstream runtime
-does not expose an authoritative terminal outcome. Session ids, session keys,
-run ids, tool call ids, and tool names are operator metadata; protect exports
+does not expose an authoritative terminal outcome. Tool call ids are exported
+only as stable one-way fingerprints. Tool names must match the compact
+model-facing name contract; other values become `unknown`. Session ids, session
+keys, run ids, and retained tool names are operator metadata; protect exports
 as operational records.
 
 The audit ledger does not replace transcripts, task history, cron run history,

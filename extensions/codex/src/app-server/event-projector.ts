@@ -2730,7 +2730,7 @@ function itemStatus(item: CodexThreadItem): "completed" | "failed" | "running" |
   if (status === "declined") {
     return "blocked";
   }
-  if (status === "inProgress" || status === "running") {
+  if (status === "inProgress" || status === "in_progress" || status === "running") {
     return "running";
   }
   return "completed";

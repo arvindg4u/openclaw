@@ -658,7 +658,8 @@ function markClaudeLiveToolDenied(turn: ClaudeLiveTurn, tool: CliToolUseStartDel
 }
 
 function failActiveClaudeLiveTools(turn: ClaudeLiveTurn, error: unknown): void {
-  const timedOut = isTimeoutError(error);
+  const timedOut =
+    isTimeoutError(error) || (error instanceof FailoverError && error.reason === "timeout");
   const aborted = error instanceof Error && error.name === "AbortError";
   const errorCategory = timedOut ? "timeout" : aborted ? "aborted" : "error";
   const terminalReason = timedOut ? "timed_out" : aborted ? "cancelled" : "failed";

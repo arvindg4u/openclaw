@@ -16,6 +16,7 @@ import {
 import { onAgentEvent, resetAgentEventsForTest } from "../infra/agent-events.js";
 import {
   onInternalDiagnosticEvent,
+  onTrustedToolExecutionEvent,
   waitForDiagnosticEventsDrained,
 } from "../infra/diagnostic-events.js";
 import {
@@ -2506,6 +2507,97 @@ ${JSON.stringify({
       }
     },
   );
+
+  it("preserves no-output watchdog timeout provenance for active Claude live tools", async () => {
+    const diagnosticEvents: Array<Record<string, unknown>> = [];
+    const stopDiagnostics = onTrustedToolExecutionEvent((event) => {
+      if (event.type === "tool.execution.error") {
+        diagnosticEvents.push(event as unknown as Record<string, unknown>);
+      }
+    });
+    let stdoutListener: ((chunk: string) => void) | undefined;
+    const stdin = {
+      write: vi.fn((_data: string, cb?: (err?: Error | null) => void) => {
+        stdoutListener?.(
+          [
+            JSON.stringify({ type: "system", subtype: "init", session_id: "live-no-output" }),
+            JSON.stringify({
+              type: "assistant",
+              session_id: "live-no-output",
+              message: {
+                role: "assistant",
+                content: [
+                  {
+                    type: "server_tool_use",
+                    id: "tool-live-no-output",
+                    name: "web_search",
+                    input: { query: "status" },
+                  },
+                ],
+              },
+            }),
+          ].join("\n") + "\n",
+        );
+        cb?.();
+      }),
+      end: vi.fn(),
+    };
+    supervisorSpawnMock.mockImplementation(async (...args: unknown[]) => {
+      const input = (args[0] ?? {}) as { onStdout?: (chunk: string) => void };
+      stdoutListener = input.onStdout;
+      return {
+        runId: "live-run-no-output",
+        pid: 3062,
+        startedAtMs: Date.now(),
+        stdin,
+        wait: vi.fn(() => new Promise(() => {})),
+        cancel: vi.fn(),
+      };
+    });
+
+    try {
+      const context = buildPreparedCliRunContext({
+        provider: "claude-cli",
+        model: "sonnet",
+        runId: "run-live-no-output",
+        sessionId: "session-live-no-output",
+        sessionKey: "agent:main:no-output",
+        backend: { liveSession: "claude-stdio" },
+        timeoutMs: 120_000,
+      });
+      const resultPromise = runClaudeLiveSessionTurn({
+        context,
+        args: context.preparedBackend.backend.args ?? [],
+        env: {},
+        prompt: "hello",
+        useResume: false,
+        noOutputTimeoutMs: 25,
+        getProcessSupervisor: () => ({
+          spawn: (params: Parameters<SupervisorSpawnFn>[0]) =>
+            supervisorSpawnMock(params) as ReturnType<SupervisorSpawnFn>,
+          cancel: vi.fn(),
+          cancelScope: vi.fn(),
+          getRecord: vi.fn(),
+        }),
+        onAssistantDelta: () => {},
+        cleanup: async () => {},
+      });
+      const runExpectation = expectRejectsWithFields(resultPromise, {
+        name: "FailoverError",
+        message: "CLI produced no output for 0s and was terminated.",
+      });
+
+      await runExpectation;
+      expect(diagnosticEvents).toContainEqual(
+        expect.objectContaining({
+          toolCallId: "tool-live-no-output",
+          terminalReason: "timed_out",
+        }),
+      );
+    } finally {
+      stopDiagnostics();
+    }
+  });
 
   it("answers Claude live control_request can_use_tool with deny when exec policy is restrictive", async () => {
     const diagnosticEvents: Array<Record<string, unknown>> = [];

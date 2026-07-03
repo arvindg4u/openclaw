@@ -37,9 +37,24 @@ export function createAgentRunRestartAbortError(): Error {
 }
 
 export function isAgentRunRestartAbortReason(value: unknown): boolean {
-  return (
-    value instanceof Error && "code" in value && value.code === AGENT_RUN_RESTART_ABORT_ERROR_CODE
-  );
+  try {
+    return (
+      value instanceof Error && "code" in value && value.code === AGENT_RUN_RESTART_ABORT_ERROR_CODE
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isAgentRunTimeoutAbortReason(value: unknown): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  try {
+    return "name" in value && value.name === "TimeoutError";
+  } catch {
+    return false;
+  }
 }
 
 export function resolveAgentRunAbortLifecycleFields(signal: AbortSignal | undefined): {
@@ -54,10 +69,7 @@ export function resolveAgentRunAbortLifecycleFields(signal: AbortSignal | undefi
   }
   const stopReason = isAgentRunRestartAbortReason(signal.reason)
     ? AGENT_RUN_RESTART_ABORT_STOP_REASON
-    : signal.reason &&
-        typeof signal.reason === "object" &&
-        "name" in signal.reason &&
-        signal.reason.name === "TimeoutError"
+    : isAgentRunTimeoutAbortReason(signal.reason)
       ? "timeout"
       : AGENT_RUN_ABORTED_STOP_REASON;
   return {

@@ -327,6 +327,23 @@ describe("agent activity audit projection", () => {
     expect(failed).not.toHaveProperty("error");
   });
 
+  it("redacts provider-controlled tool identities at the durable boundary", () => {
+    const secret = `secret-${"x".repeat(600)}`;
+    const projected = projectToolExecutionEventToAudit(
+      toolEvent({ toolName: secret, toolCallId: secret }),
+    );
+    const repeated = projectToolExecutionEventToAudit(
+      toolEvent({ toolName: secret, toolCallId: secret }),
+    );
+
+    expect(projected).toMatchObject({
+      toolName: "unknown",
+      toolCallId: expect.stringMatching(/^sha256:[a-f0-9]{64}$/u),
+    });
+    expect(repeated?.toolCallId).toBe(projected?.toolCallId);
+    expect(JSON.stringify(projected)).not.toContain(secret);
+  });
+
   it.each([
     [{ phase: "error", error: "raw failure" }, "failed", "run_failed"],
     [{ phase: "end", aborted: true }, "cancelled", "run_cancelled"],

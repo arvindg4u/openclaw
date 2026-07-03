@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveToolExecutionErrorKind } from "./tool-result-error.js";
+import {
+  resolveToolExecutionErrorKind,
+  resolveToolResultFailureKind,
+} from "./tool-result-error.js";
 
 describe("resolveToolExecutionErrorKind", () => {
   it("recognizes structured timeout identities", () => {
@@ -25,5 +28,29 @@ describe("resolveToolExecutionErrorKind", () => {
       },
     });
     expect(resolveToolExecutionErrorKind(hostile)).toBe("failed");
+  });
+});
+
+describe("resolveToolResultFailureKind", () => {
+  it("contains hostile structured result fields", () => {
+    const hostileDetails = new Proxy(
+      {},
+      {
+        has() {
+          throw new Error("details field check escaped");
+        },
+        get() {
+          throw new Error("details field getter escaped");
+        },
+      },
+    );
+    const hostileResult = Object.defineProperty({}, "details", {
+      get() {
+        throw new Error("details getter escaped");
+      },
+    });
+
+    expect(resolveToolResultFailureKind({ details: hostileDetails })).toBeUndefined();
+    expect(resolveToolResultFailureKind(hostileResult)).toBeUndefined();
   });
 });

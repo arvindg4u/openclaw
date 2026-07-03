@@ -2724,6 +2724,13 @@ describe("CodexAppServerEventProjector", () => {
           exitCode: null,
           durationMs: null,
         },
+        {
+          type: "imageGeneration",
+          id: "image-running-snapshot",
+          status: "in_progress",
+          revisedPrompt: null,
+          result: null,
+        },
       ]),
     );
 
