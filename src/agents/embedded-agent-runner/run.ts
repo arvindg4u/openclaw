@@ -43,6 +43,7 @@ import { resolveProviderAuthProfileId } from "../../plugins/provider-runtime.js"
 import { enqueueCommandInLane, getCommandLaneSnapshot } from "../../process/command-queue.js";
 import type { CommandQueueEnqueueOptions } from "../../process/command-queue.types.js";
 import { createAgentHarnessTaskRuntimeScope } from "../../tasks/agent-harness-task-runtime-scope.js";
+import { createTrajectoryRuntimeRecorder } from "../../trajectory/runtime.js";
 import { resolveUserPath } from "../../utils.js";
 import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js";
 import {
@@ -138,6 +139,7 @@ import {
 import { createAgentRunDirectAbortError } from "../run-termination.js";
 import { buildAgentRuntimeAuthPlan } from "../runtime-plan/auth.js";
 import { buildAgentRuntimePlan } from "../runtime-plan/build.js";
+import type { AgentRuntimePlan } from "../runtime-plan/types.js";
 import { ensureRuntimePluginsLoaded } from "../runtime-plugins.js";
 import {
   resolveSessionSuspensionReason,
@@ -258,6 +260,9 @@ import { createUsageAccumulator, mergeUsageIntoAccumulator } from "./usage-accum
 
 type ApiKeyInfo = ResolvedProviderAuth;
 
+const CODEX_HARNESS_ID = "codex";
+const OPENAI_RESPONSES_API = "openai-responses";
+const OPENAI_CODEX_RESPONSES_API = "openai-chatgpt-responses";
 const MAX_SAME_MODEL_IDLE_TIMEOUT_RETRIES = 1;
 const EMBEDDED_RUN_LANE_TIMEOUT_GRACE_MS = 30_000;
 const EMBEDDED_RUN_LANE_HEARTBEAT_MS = EMBEDDED_RUN_LANE_TIMEOUT_GRACE_MS / 2;
@@ -271,6 +276,38 @@ const BEFORE_AGENT_FINALIZE_RETRY_PROMPT_PREFIX =
 const MAX_BEFORE_AGENT_FINALIZE_REVISIONS = 3;
 type EmbeddedRunAttemptForRunner = Awaited<ReturnType<typeof runEmbeddedAttemptWithBackend>>;
 type RunEmbeddedAgentParamsWithSessionFile = RunEmbeddedAgentParams & { sessionFile: string };
+
+function normalizeRuntimeId(value: string | undefined): string {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+function resolveAttemptTrajectoryAttribution(params: {
+  model: { api?: string; provider?: string };
+  modelId: string;
+  provider: string;
+  runtimePlan: AgentRuntimePlan;
+}): { modelApi?: string; modelId: string; provider: string } {
+  const authProfileProvider = normalizeRuntimeId(
+    params.runtimePlan.auth.authProfileProviderForAuth,
+  );
+  if (
+    normalizeRuntimeId(params.runtimePlan.observability.harnessId) === CODEX_HARNESS_ID &&
+    authProfileProvider !== OPENAI_PROVIDER_ID &&
+    normalizeRuntimeId(params.model.provider) === OPENAI_PROVIDER_ID &&
+    normalizeRuntimeId(params.model.api) === OPENAI_RESPONSES_API
+  ) {
+    return {
+      modelApi: OPENAI_CODEX_RESPONSES_API,
+      modelId: params.modelId,
+      provider: OPENAI_PROVIDER_ID,
+    };
+  }
+  return {
+    ...(params.model.api ? { modelApi: params.model.api } : {}),
+    modelId: params.modelId,
+    provider: params.provider,
+  };
+}
 
 function buildContextEngineCompactionSessionTarget(params: {
   agentId: string;
@@ -2155,6 +2192,27 @@ async function runEmbeddedAgentInternal(
               fastMode: attemptFastMode,
             },
           });
+          const trajectoryAttribution = resolveAttemptTrajectoryAttribution({
+            model: effectiveModel,
+            modelId,
+            provider,
+            runtimePlan,
+          });
+          const hostTrajectoryRecorder =
+            agentHarness.id === "openclaw"
+              ? undefined
+              : createTrajectoryRuntimeRecorder({
+                  cfg: params.config,
+                  env: process.env,
+                  runId: params.runId,
+                  sessionId: activeSessionId,
+                  sessionKey: resolvedSessionKey,
+                  sessionFile: trajectorySessionFile,
+                  provider: trajectoryAttribution.provider,
+                  modelId: trajectoryAttribution.modelId,
+                  modelApi: trajectoryAttribution.modelApi,
+                  workspaceDir: resolvedWorkspace,
+                });
           if (!startupStagesEmitted) {
             startupStages.mark(EMBEDDED_RUN_ATTEMPT_DISPATCH_STAGE.runtimePlan);
             startupStages.mark(EMBEDDED_RUN_ATTEMPT_DISPATCH_STAGE.dispatch);
@@ -2259,6 +2317,7 @@ async function runEmbeddedAgentInternal(
             sessionFile: activeSessionFile,
             sessionTarget: activeSessionTarget,
             trajectorySessionFile,
+            trajectoryRecorder: hostTrajectoryRecorder,
             workspaceDir: resolvedWorkspace,
             cwd: params.cwd,
             agentDir,

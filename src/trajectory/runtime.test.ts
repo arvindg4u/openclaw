@@ -129,6 +129,53 @@ describe("trajectory runtime", () => {
     );
   });
 
+  it("stores bounded oversized runtime events in SQLite", async () => {
+    const tempDir = makeTempDir();
+    const storePath = path.join(tempDir, "agents", "main", "sessions", "sessions.json");
+    const sessionKey = "agent:main:main";
+    const usage = {
+      input: 384_954,
+      output: 5_624,
+      cacheRead: 333_824,
+      reasoningTokens: 2_038,
+      total: 724_402,
+    };
+    await replaceSessionEntry({ sessionKey, storePath }, { sessionId: "session-1", updatedAt: 10 });
+    const recorder = createTrajectoryRuntimeRecorder({
+      sessionId: "session-1",
+      sessionKey,
+      sessionFile: formatSqliteSessionFileMarker({
+        agentId: "main",
+        sessionId: "session-1",
+        storePath,
+      }),
+    });
+
+    const runtimeRecorder = expectTrajectoryRuntimeRecorder(recorder);
+    runtimeRecorder.recordEvent("model.completed", {
+      usage,
+      messagesSnapshot: Array.from({ length: 12 }, (_value, index) => ({
+        role: index % 2 === 0 ? "user" : "assistant",
+        content: `message-${index} ${"x".repeat(32_000)}`,
+      })),
+    });
+    await runtimeRecorder.flush();
+
+    const [event] = await loadSqliteTrajectoryRuntimeEvents({ sessionId: "session-1", storePath });
+    expect(event).toMatchObject({
+      type: "model.completed",
+      data: {
+        truncated: true,
+        reason: "trajectory-event-size-limit",
+        usage,
+      },
+    });
+    expect(event?.data?.messagesSnapshot).toBeUndefined();
+    expect(Buffer.byteLength(JSON.stringify(event), "utf8")).toBeLessThanOrEqual(
+      TRAJECTORY_RUNTIME_EVENT_MAX_BYTES,
+    );
+  });
+
   it("bounds large runtime event fields before serialization", () => {
     const writes: string[] = [];
     const recorder = createTrajectoryRuntimeRecorder({

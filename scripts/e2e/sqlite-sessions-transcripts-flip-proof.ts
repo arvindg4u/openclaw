@@ -22,8 +22,6 @@ import {
   getSessionEntry as getSdkSessionEntry,
   listSessionEntries as listSdkSessionEntries,
   loadTranscriptEventsSync as loadSdkTranscriptEventsSync,
-  appendTrajectoryRuntimeEvents,
-  type SessionStoreTrajectoryEvent,
 } from "../../src/plugin-sdk/session-store-runtime.js";
 import {
   appendSessionTranscriptMessageByIdentity,
@@ -114,9 +112,6 @@ type PluginSdkConsumerEvidence = {
   sessionId: string;
   sessionKey: string;
   storeTranscriptEvents: number;
-  trajectoryEventsAfterAppend: number;
-  trajectoryEventsBeforeAppend: number;
-  trajectoryEventType: string;
   transcriptEventsAfterAppend: number;
   transcriptEventsBeforeAppend: number;
 };
@@ -1340,39 +1335,6 @@ async function runPluginSdkConsumerProbe(
       `SDK transcript append did not increase event count for ${context.pluginSdkSessionKey}`,
     );
   }
-  const trajectoryEventsBeforeAppend = countSqliteTrajectoryRuntimeEvents(
-    context.agentDbPath,
-    sessionId,
-  );
-  const trajectoryEventType = "e2e.sdk.trajectory";
-  const trajectoryEvent: SessionStoreTrajectoryEvent = {
-    traceSchema: "openclaw-trajectory",
-    schemaVersion: 1,
-    traceId: sessionId,
-    source: "runtime",
-    type: trajectoryEventType,
-    ts: new Date().toISOString(),
-    seq: 1,
-    sourceSeq: 1,
-    sessionId,
-    sessionKey: context.pluginSdkSessionKey,
-    runId: "sqlite-flip-e2e-sdk",
-    data: { proof: "sqlite trajectory runtime row" },
-  };
-  appendTrajectoryRuntimeEvents({
-    ...scope,
-    events: [trajectoryEvent],
-  });
-  const trajectoryEventsAfterAppend = countSqliteTrajectoryRuntimeEvents(
-    context.agentDbPath,
-    sessionId,
-  );
-  if (trajectoryEventsAfterAppend <= trajectoryEventsBeforeAppend) {
-    throw new Error(
-      `SDK trajectory append did not increase event count for ${context.pluginSdkSessionKey}`,
-    );
-  }
-
   return {
     activeJsonlForSessionExists,
     activeTrajectoryPointerForSessionExists,
@@ -1387,9 +1349,6 @@ async function runPluginSdkConsumerProbe(
     sessionId,
     sessionKey: context.pluginSdkSessionKey,
     storeTranscriptEvents,
-    trajectoryEventsAfterAppend,
-    trajectoryEventsBeforeAppend,
-    trajectoryEventType,
     transcriptEventsAfterAppend,
     transcriptEventsBeforeAppend,
   };
@@ -2199,22 +2158,6 @@ function countSqliteTranscriptEvents(dbPath: string, sessionId: string): number 
     return scalarNumber(
       db,
       "SELECT COUNT(*) AS count FROM transcript_events WHERE session_id = ?",
-      [sessionId],
-    );
-  } finally {
-    db.close();
-  }
-}
-
-function countSqliteTrajectoryRuntimeEvents(dbPath: string, sessionId: string): number {
-  if (!fsSync.existsSync(dbPath)) {
-    return 0;
-  }
-  const db = new DatabaseSync(dbPath, { readOnly: true });
-  try {
-    return scalarNumber(
-      db,
-      "SELECT COUNT(*) AS count FROM trajectory_runtime_events WHERE session_id = ?",
       [sessionId],
     );
   } finally {

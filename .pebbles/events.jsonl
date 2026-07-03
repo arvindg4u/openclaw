@@ -1756,3 +1756,9 @@
 {"type":"rename","timestamp":"2026-07-03T17:48:33.915074Z","issue_id":"oc-065","payload":{"new_id":"oc-08c.10"}}
 {"type":"dep_add","timestamp":"2026-07-03T17:48:33.915074Z","issue_id":"oc-08c.10","payload":{"dep_type":"parent-child","depends_on":"oc-08c"}}
 {"type":"close","timestamp":"2026-07-03T17:50:34.006777Z","issue_id":"oc-08c.10","payload":{}}
+{"type":"create","timestamp":"2026-07-03T18:21:21.462598Z","issue_id":"oc-4ec","payload":{"description":"Thermonuclear review follow-up for AN-0009 trajectory SQLite migration. Remove the new public appendTrajectoryRuntimeEvents plugin SDK export, route Codex trajectory capture through a core/internal boundary instead of new SDK surface, and fix marker-backed SQLite recording so it stores the same bounded event payload that the JSONL path would have written. Scope deliberately excludes adding new redaction behavior to the SDK.","priority":"1","title":"AN-0009: remove trajectory append SDK seam and preserve bounded SQLite events","type":"bug"}}
+{"type":"status_update","timestamp":"2026-07-03T18:21:26.311225Z","issue_id":"oc-4ec","payload":{"status":"in_progress"}}
+{"type":"rename","timestamp":"2026-07-03T18:21:26.311225Z","issue_id":"oc-4ec","payload":{"new_id":"oc-08c.11"}}
+{"type":"dep_add","timestamp":"2026-07-03T18:21:26.311225Z","issue_id":"oc-08c.11","payload":{"dep_type":"parent-child","depends_on":"oc-08c"}}
+{"type":"dep_add","timestamp":"2026-07-03T18:21:26.864934Z","issue_id":"oc-08c","payload":{"dep_type":"blocks","depends_on":"oc-08c.11"}}
+{"type":"close","timestamp":"2026-07-03T18:33:42.147885Z","issue_id":"oc-08c.11","payload":{}}

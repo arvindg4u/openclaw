@@ -1411,6 +1411,7 @@ export async function runCodexAppServerAttempt(
     cwd: effectiveCwd,
     developerInstructions: buildRenderedCodexDeveloperInstructions(),
     prompt: codexTurnPromptText,
+    trajectoryRecorder: params.trajectoryRecorder,
     trajectorySessionFile: params.trajectorySessionFile,
     tools: toolBridge.availableSpecs,
   });

@@ -347,8 +347,9 @@ export function createTrajectoryRuntimeRecorder(
     if (!boundedLine) {
       return undefined;
     }
+    const boundedEvent = JSON.parse(boundedLine) as TrajectoryEvent;
     seq = nextSeq;
-    return { event, line: boundedLine };
+    return { event: boundedEvent, line: boundedLine };
   };
 
   return {

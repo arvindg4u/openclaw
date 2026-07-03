@@ -5,6 +5,7 @@ import path from "node:path";
 import { upsertSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadSqliteTrajectoryRuntimeEvents } from "../../../../src/trajectory/runtime-store.sqlite.js";
+import { createTrajectoryRuntimeRecorder } from "../../../../src/trajectory/runtime.js";
 import {
   createCodexTrajectoryRecorder,
   recordCodexTrajectoryCompletion,
@@ -103,6 +104,19 @@ describe("Codex trajectory recorder", () => {
         updatedAt: 10,
       },
     });
+    const hostRecorder = createTrajectoryRuntimeRecorder({
+      env: {},
+      modelApi: "responses",
+      modelId: "gpt-5.4",
+      provider: "openai",
+      sessionFile: trajectorySessionFile,
+      sessionId: "session-1",
+      sessionKey: "agent:main:session-1",
+      workspaceDir: tmpDir,
+    });
+    if (!hostRecorder) {
+      throw new Error("Expected host trajectory recorder");
+    }
     const recorder = createCodexTrajectoryRecorder({
       cwd: tmpDir,
       attempt: {
@@ -114,6 +128,7 @@ describe("Codex trajectory recorder", () => {
         modelId: "gpt-5.4",
         model: { api: "responses" },
       } as never,
+      trajectoryRecorder: hostRecorder,
       trajectorySessionFile,
       env: {},
     });

@@ -14,11 +14,7 @@ import {
   appendRegularFile,
   resolveRegularFileAppendFlags,
 } from "openclaw/plugin-sdk/security-runtime";
-import {
-  appendTrajectoryRuntimeEvents,
-  parseSqliteSessionFileMarker,
-  type SessionStoreTrajectoryEvent,
-} from "openclaw/plugin-sdk/session-store-runtime";
+import { parseSqliteSessionFileMarker } from "openclaw/plugin-sdk/session-store-runtime";
 import { resolveCodexLocalRuntimeAttribution } from "./local-runtime-attribution.js";
 import { flattenCodexDynamicToolFunctions, type CodexDynamicToolSpec } from "./protocol.js";
 
@@ -34,6 +30,7 @@ type CodexTrajectoryInit = {
   cwd: string;
   developerInstructions?: string;
   prompt?: string;
+  trajectoryRecorder?: EmbeddedRunAttemptParams["trajectoryRecorder"];
   trajectorySessionFile?: string;
   tools?: CodexDynamicToolSpec[];
   env?: NodeJS.ProcessEnv;
@@ -57,7 +54,14 @@ type CodexTrajectoryOpenFlagConstants = Pick<
 type CodexTrajectorySink = {
   filePath?: string;
   flush: () => Promise<void>;
-  write: (event: SessionStoreTrajectoryEvent) => void;
+  write: (event: CodexTrajectoryEvent) => void;
+};
+
+type CodexHostTrajectoryRecorder = NonNullable<EmbeddedRunAttemptParams["trajectoryRecorder"]>;
+
+type CodexTrajectoryEvent = Record<string, unknown> & {
+  data?: Record<string, unknown>;
+  type: string;
 };
 
 /** Resolves secure append flags for trajectory runtime files. */
@@ -89,13 +93,11 @@ async function safeAppendTrajectoryFile(filePath: string, line: string): Promise
   });
 }
 
-function boundedTrajectoryEvent(
-  event: Record<string, unknown>,
-): SessionStoreTrajectoryEvent | undefined {
+function boundedTrajectoryEvent(event: Record<string, unknown>): CodexTrajectoryEvent | undefined {
   const line = JSON.stringify(event);
   const bytes = Buffer.byteLength(line, "utf8");
   if (bytes <= TRAJECTORY_RUNTIME_EVENT_MAX_BYTES) {
-    return event as SessionStoreTrajectoryEvent;
+    return event as CodexTrajectoryEvent;
   }
 
   const originalData =
@@ -110,9 +112,7 @@ function boundedTrajectoryEvent(
     limitBytes: TRAJECTORY_RUNTIME_EVENT_MAX_BYTES,
     reason: "trajectory-event-size-limit",
   };
-  const buildTruncatedEvent = (
-    includeDroppedFields: boolean,
-  ): SessionStoreTrajectoryEvent | undefined => {
+  const buildTruncatedEvent = (includeDroppedFields: boolean): CodexTrajectoryEvent | undefined => {
     const data: Record<string, unknown> = { ...baseData };
     for (const key of TRAJECTORY_RUNTIME_OVERSIZE_PRESERVED_DATA_KEYS) {
       if (preservedDataKeys.has(key)) {
@@ -128,7 +128,7 @@ function boundedTrajectoryEvent(
     const truncatedEvent = { ...event, data };
     const truncated = JSON.stringify(truncatedEvent);
     if (Buffer.byteLength(truncated, "utf8") <= TRAJECTORY_RUNTIME_EVENT_MAX_BYTES) {
-      return truncatedEvent as SessionStoreTrajectoryEvent;
+      return truncatedEvent as CodexTrajectoryEvent;
     }
     return undefined;
   };
@@ -236,36 +236,15 @@ function createCodexFileTrajectorySink(params: {
   };
 }
 
-function createCodexSqliteTrajectorySink(params: {
-  env: NodeJS.ProcessEnv;
-  marker: NonNullable<ReturnType<typeof parseSqliteSessionFileMarker>>;
+function createCodexHostTrajectorySink(params: {
+  recorder: CodexHostTrajectoryRecorder;
 }): CodexTrajectorySink {
-  let queue = Promise.resolve();
-  let pendingEvents: SessionStoreTrajectoryEvent[] = [];
   return {
     write: (event) => {
-      pendingEvents.push(event);
+      params.recorder.recordEvent(event.type, event.data);
     },
     flush: async () => {
-      const events = pendingEvents;
-      pendingEvents = [];
-      if (events.length === 0) {
-        await queue;
-        return;
-      }
-      queue = queue
-        .then(() => {
-          appendTrajectoryRuntimeEvents({
-            agentId: params.marker.agentId,
-            env: params.env,
-            events,
-            maxRuntimeBytes: TRAJECTORY_RUNTIME_FILE_MAX_BYTES,
-            sessionId: params.marker.sessionId,
-            storePath: params.marker.storePath,
-          });
-        })
-        .catch(() => undefined);
-      await queue;
+      await params.recorder.flush();
     },
   };
 }
@@ -284,12 +263,17 @@ export function createCodexTrajectoryRecorder(
   const sqliteMarker = parseSqliteSessionFileMarker(sessionFile);
   const sink =
     sqliteMarker && sqliteMarker.sessionId === params.attempt.sessionId
-      ? createCodexSqliteTrajectorySink({ env, marker: sqliteMarker })
+      ? params.trajectoryRecorder
+        ? createCodexHostTrajectorySink({ recorder: params.trajectoryRecorder })
+        : null
       : createCodexFileTrajectorySink({
           env,
           sessionFile,
           sessionId: params.attempt.sessionId,
         });
+  if (!sink) {
+    return null;
+  }
   let seq = 0;
   const attribution = resolveCodexLocalRuntimeAttribution(params.attempt);
 
