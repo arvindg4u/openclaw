@@ -2,9 +2,7 @@
 set -euo pipefail
 
 # Render free tier entrypoint
-# Restores OpenClaw state from R2 on startup
-# Runs background backup loop
-# Initializes OpenClaw if first-run, then starts gateway
+# Restores state from R2, starts OpenClaw + code-server (VS Code), routes via Caddy
 
 R2_BUCKET="${R2_BUCKET:-openclaw-backup}"
 R2_PREFIX="${R2_PREFIX:-openclaw-state}"
@@ -31,24 +29,23 @@ if rclone_configured; then
       --exclude "node_modules/**" --exclude ".git/**"
     echo "==> State restore complete."
   else
-    echo "==> No existing backup found or R2 unreachable. Starting fresh."
+    echo "==> No existing backup found. Starting fresh."
   fi
-else
-  echo "==> R2 credentials not configured. Skipping restore."
 fi
 
 # Step 2: Create initial config if missing (required for first run)
+GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-render-$(openssl rand -hex 16)}"
+export GATEWAY_TOKEN CONFIG_FILE STATE_DIR
+mkdir -p "$STATE_DIR"
+
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "==> Creating initial OpenClaw config..."
-  mkdir -p "$STATE_DIR"
-  export GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-render-$(openssl rand -hex 16)}"
-  export CONFIG_FILE STATE_DIR
   node -e "
     const fs = require('fs');
     const config = {
       gateway: {
         mode: 'remote',
-        port: 8080,
+        port: 18789,
         bind: 'lan',
         auth: { mode: 'token', token: process.env.GATEWAY_TOKEN },
         controlUi: { enabled: true, allowInsecureAuth: true, dangerouslyDisableDeviceAuth: true, allowedOrigins: ['https://openclaw-cg79.onrender.com'] },
@@ -59,27 +56,74 @@ if [ ! -f "$CONFIG_FILE" ]; then
   echo "==> Initial config created."
 fi
 
-# Ensure allowedOrigins + dangerouslyDisableDeviceAuth are set (re-patch on every start)
-export CONFIG_FILE
+# Patch config on every start (ensure origin/device auth + internal port)
 node -e "
   const fs = require('fs');
   const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_FILE, 'utf-8'));
   const origin = 'https://openclaw-cg79.onrender.com';
-  const cu = cfg.gateway?.controlUi || {};
+  cfg.gateway = cfg.gateway || {};
+  cfg.gateway.port = 18789;
+  cfg.gateway.bind = 'lan';
+  const cu = cfg.gateway.controlUi || {};
   const origins = cu.allowedOrigins || [];
   if (!origins.includes(origin)) origins.push(origin);
-  cfg.gateway = cfg.gateway || {};
   cfg.gateway.controlUi = { ...cu, allowedOrigins: origins, allowInsecureAuth: true, dangerouslyDisableDeviceAuth: true };
   fs.writeFileSync(process.env.CONFIG_FILE, JSON.stringify(cfg, null, 2) + '\n');
 "
 
 # Step 3: Start background backup loop
 if rclone_configured; then
-  echo "==> Starting backup loop..."
+  echo "==> Starting R2 backup loop..."
   /app/scripts/r2-background-backup.sh &
-  echo "==> Backup loop running (PID $!)"
 fi
 
-# Step 4: Start OpenClaw gateway (foreground)
-echo "==> Starting OpenClaw gateway..."
-exec node /app/openclaw.mjs gateway --allow-unconfigured
+# Step 4: Start OpenClaw gateway (background, port 18789)
+echo "==> Starting OpenClaw gateway on port 18789..."
+node /app/openclaw.mjs gateway --allow-unconfigured &
+OPENCLAW_PID=$!
+
+# Wait for gateway ready
+for i in $(seq 1 30); do
+  if curl -sf http://127.0.0.1:18789/healthz >/dev/null 2>&1; then
+    echo "==> OpenClaw ready after ${i}s."
+    break
+  fi
+  sleep 1
+done
+
+# Step 5: Start code-server (VS Code in browser, port 9000, path /vscode)
+echo "==> Starting code-server..."
+export PASSWORD="${GATEWAY_TOKEN}"
+mkdir -p "$STATE_DIR/.code-server"
+code-server --bind-addr 127.0.0.1:9000 \
+  --base-path /vscode \
+  --auth password \
+  --data-dir "$STATE_DIR/.code-server" \
+  --disable-telemetry &
+CODESERVER_PID=$!
+echo "==> code-server PID $CODESERVER_PID"
+
+sleep 2
+
+# Step 6: Start Caddy reverse proxy (foreground, port 8080)
+echo "==> Starting Caddy reverse proxy on port 8080..."
+cat > /tmp/Caddyfile << 'CADDYEOF'
+:8080 {
+    handle_path /vscode/* {
+        reverse_proxy localhost:9000
+    }
+    handle /health {
+        header Content-Type "text/plain"
+        respond "OK" 200
+    }
+    handle /healthz {
+        header Content-Type "text/plain"
+        respond "OK" 200
+    }
+    handle {
+        reverse_proxy localhost:18789
+    }
+}
+CADDYEOF
+
+exec caddy run --config /tmp/Caddyfile --adapter caddyfile
