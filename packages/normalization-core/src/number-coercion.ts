@@ -50,6 +50,16 @@ export function asSafeIntegerInRange(
   return value;
 }
 
+/** Clamps a number to an inclusive min/max range. */
+export function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+/** Floors a number before clamping it to an inclusive min/max range. */
+export function clampInteger(value: number, min: number, max: number): number {
+  return clampNumber(Math.floor(value), min, max);
+}
+
 function normalizeNumericString(value: string): string | undefined {
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;

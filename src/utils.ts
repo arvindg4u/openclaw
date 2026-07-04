@@ -2,6 +2,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  clampInteger,
+  clampNumber as clampNumberValue,
+} from "@openclaw/normalization-core/number-coercion";
 import { pathExists as fsSafePathExists } from "./infra/fs-safe.js";
 import {
   resolveEffectiveHomeDir,
@@ -19,15 +23,15 @@ export async function ensureDir(dir: string) {
 
 /** Clamps a number to an inclusive min/max range. */
 export function clampNumber(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
+  return clampNumberValue(value, min, max);
 }
 
 /** Floors a number before clamping it to an inclusive min/max range. */
 export function clampInt(value: number, min: number, max: number): number {
-  return clampNumber(Math.floor(value), min, max);
+  return clampInteger(value, min, max);
 }
 
-/** Alias for clampNumber (shorter, more common name) */
+/** Alias for clampNumber (shorter, more common name). */
 export const clamp = clampNumber;
 
 /**

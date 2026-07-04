@@ -6,6 +6,8 @@ import {
   asFiniteNumberInRange,
   asSafeIntegerInRange,
   addTimerTimeoutGraceMs,
+  clampInteger,
+  clampNumber,
   clampPositiveTimerTimeoutMs,
   clampTimerTimeoutMs,
   finiteSecondsToTimerSafeMilliseconds,
@@ -56,6 +58,13 @@ describe("number-coercion", () => {
     expect(asSafeIntegerInRange(1.5, { min: -1, max: 10 })).toBeUndefined();
     expect(asSafeIntegerInRange(11, { min: -1, max: 10 })).toBeUndefined();
     expect(asSafeIntegerInRange(Number.NaN, { min: -1, max: 10 })).toBeUndefined();
+  });
+
+  test("clamp helpers apply inclusive bounds and integer flooring", () => {
+    expect(clampNumber(5, 1, 4)).toBe(4);
+    expect(clampNumber(-1, 0, 4)).toBe(0);
+    expect(clampNumber(5, 10, 4)).toBe(10);
+    expect(clampInteger(3.9, 1, 10)).toBe(3);
   });
 
   test("parseFiniteNumber accepts finite numbers and numeric strings", () => {

@@ -7,6 +7,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { URL } from "node:url";
 import { detectMime } from "@openclaw/media-core/mime";
+import { clampNumber } from "@openclaw/normalization-core/number-coercion";
 import { isWindowsDrivePath } from "../infra/archive-path.js";
 import { toErrorObject } from "../infra/errors.js";
 import {
@@ -75,10 +76,6 @@ const READ_CONTINUATION_NOTICE_RE =
   /\n\n\[(?:Showing lines [^\]]*?Use offset=\d+ to continue\.|\d+ more lines in file\. Use offset=\d+ to continue\.)\]\s*$/;
 const DAILY_MEMORY_PATH_RE = /^memory\/\d{4}-\d{2}-\d{2}\.md$/;
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
 function resolveAdaptiveReadMaxBytes(options?: OpenClawReadToolOptions): number {
   const contextWindowTokens = options?.modelContextWindowTokens;
   if (
@@ -91,7 +88,7 @@ function resolveAdaptiveReadMaxBytes(options?: OpenClawReadToolOptions): number 
   const fromContext = Math.floor(
     contextWindowTokens * CHARS_PER_TOKEN_ESTIMATE * ADAPTIVE_READ_CONTEXT_SHARE,
   );
-  return clamp(fromContext, DEFAULT_READ_PAGE_MAX_BYTES, MAX_ADAPTIVE_READ_MAX_BYTES);
+  return clampNumber(fromContext, DEFAULT_READ_PAGE_MAX_BYTES, MAX_ADAPTIVE_READ_MAX_BYTES);
 }
 
 function malformedXmlArgValuePathError(key: string): Error {

@@ -1,4 +1,5 @@
 // Control UI chat module implements grouped render behavior.
+import { asFiniteNumber, clampNumber } from "@openclaw/normalization-core/number-coercion";
 import { html, nothing } from "lit";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { until } from "lit/directives/until.js";
@@ -360,8 +361,7 @@ function extractImages(message: unknown): ImageBlock[] {
 }
 
 function readPairingQrExpiresAtMs(block: Record<string, unknown>): number | undefined {
-  const expiresAtMs = block.expiresAtMs;
-  return typeof expiresAtMs === "number" && Number.isFinite(expiresAtMs) ? expiresAtMs : undefined;
+  return asFiniteNumber(block.expiresAtMs);
 }
 
 function isExpiredPairingQrBlock(block: Record<string, unknown>, nowMs = Date.now()): boolean {
@@ -931,13 +931,6 @@ function resolveViewportBounds() {
   };
 }
 
-function clampDeleteConfirmPosition(value: number, min: number, max: number) {
-  if (max < min) {
-    return min;
-  }
-  return Math.min(Math.max(value, min), max);
-}
-
 function placeDeleteConfirmPopover(
   trigger: HTMLElement,
   popover: HTMLElement,
@@ -956,13 +949,13 @@ function placeDeleteConfirmPopover(
   const spaceBelow = viewport.bottom - triggerRect.bottom - margin - gap;
   const placeBelow = spaceAbove < popoverHeight && spaceBelow >= spaceAbove;
   const desiredLeft = side === "left" ? triggerRect.right - popoverWidth : triggerRect.left;
-  const left = clampDeleteConfirmPosition(
+  const left = clampNumber(
     desiredLeft,
     viewport.left + margin,
     viewport.right - margin - popoverWidth,
   );
   const desiredTop = placeBelow ? triggerRect.bottom + gap : triggerRect.top - gap - popoverHeight;
-  const top = clampDeleteConfirmPosition(
+  const top = clampNumber(
     desiredTop,
     viewport.top + margin,
     viewport.bottom - margin - popoverHeight,
