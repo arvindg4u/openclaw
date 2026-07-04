@@ -191,21 +191,18 @@ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,shar
     --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
     apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl git hostname lsof openssl procps python3 rclone tini && \
+      ca-certificates curl git hostname lsof openssl procps python3 rclone tini ttyd && \
     update-ca-certificates
 
-# Install caddy (reverse proxy) from caddyserver.com download API
-RUN arch=$(uname -m) && \
+# Install Caddy for reverse proxy (routes /terminal/ → ttyd, / → OpenClaw)
+RUN arch=$(uname -m); \
     case "$arch" in \
       x86_64) caddy_arch="amd64" ;; \
       aarch64) caddy_arch="arm64" ;; \
       *) exit 1 ;; \
-    esac && \
-    curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=${caddy_arch}&idempotency=1" -o /usr/local/bin/caddy && \
+    esac; \
+    curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=${caddy_arch}&idempotency=1" -o /usr/local/bin/caddy; \
     chmod +x /usr/local/bin/caddy
-
-# Install code-server (VS Code in browser) — full IDE with terminal + file explorer
-RUN curl -fsSL https://code-server.dev/install.sh | sh
 
 RUN chown node:node /app
 
