@@ -323,6 +323,7 @@ export async function appendAssistantMessageToSessionTranscript(params: {
   agentId?: string;
   sessionKey: string;
   expectedSessionId?: string;
+  expectedLifecycleRevision?: string;
   text?: string;
   mediaUrls?: string[];
   idempotencyKey?: string;
@@ -350,6 +351,9 @@ export async function appendAssistantMessageToSessionTranscript(params: {
     agentId: params.agentId,
     sessionKey,
     ...(params.expectedSessionId ? { expectedSessionId: params.expectedSessionId } : {}),
+    ...(params.expectedLifecycleRevision
+      ? { expectedLifecycleRevision: params.expectedLifecycleRevision }
+      : {}),
     storePath: params.storePath,
     idempotencyKey: params.idempotencyKey,
     updateMode: params.updateMode,
@@ -386,6 +390,7 @@ export async function appendExactAssistantMessageToSessionTranscript(params: {
   agentId?: string;
   sessionKey: string;
   expectedSessionId?: string;
+  expectedLifecycleRevision?: string;
   message: SessionTranscriptAssistantMessage;
   idempotencyKey?: string;
   storePath?: string;
@@ -411,6 +416,16 @@ export async function appendExactAssistantMessageToSessionTranscript(params: {
   const resolved = resolveSessionStoreEntry({ store, sessionKey });
   const entry = resolved.existing;
   if (params.expectedSessionId && entry?.sessionId !== params.expectedSessionId) {
+    return {
+      ok: false,
+      code: "session-rebound",
+      reason: `session rebound for sessionKey: ${sessionKey}`,
+    };
+  }
+  if (
+    params.expectedLifecycleRevision &&
+    entry?.lifecycleRevision !== params.expectedLifecycleRevision
+  ) {
     return {
       ok: false,
       code: "session-rebound",
@@ -464,6 +479,9 @@ export async function appendExactAssistantMessageToSessionTranscript(params: {
       {
         cwd: currentEntry.spawnedCwd,
         ...(params.expectedSessionId ? { expectedSessionId: params.expectedSessionId } : {}),
+        ...(params.expectedLifecycleRevision
+          ? { expectedLifecycleRevision: params.expectedLifecycleRevision }
+          : {}),
         ...(params.config ? { config: params.config } : {}),
         updateMode: params.updateMode ?? "inline",
         touchSessionEntry: true,

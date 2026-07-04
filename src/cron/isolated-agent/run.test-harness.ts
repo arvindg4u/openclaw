@@ -20,6 +20,7 @@ type CronSession = {
   storePath: string;
   store: Record<string, unknown>;
   sessionEntry: CronSessionEntry;
+  lifecycleRevision: string;
   systemSent: boolean;
   isNewSession: boolean;
   [key: string]: unknown;
@@ -60,6 +61,7 @@ export const lookupContextTokensMock = createMock();
 export const getCliSessionIdMock = createMock();
 export const clearCliSessionMock = createMock();
 export const updateSessionStoreMock = createMock();
+export const loadSessionEntryMock = createMock();
 export const resolveCronSessionMock = createMock();
 export const logWarnMock = createMock();
 export const countActiveDescendantRunsMock = createMock();
@@ -348,6 +350,7 @@ vi.mock("../../channels/plugins/index.js", () => ({
 }));
 
 vi.mock("./session.js", () => ({
+  loadCronSessionEntryLatest: loadSessionEntryMock,
   resolveCronSession: resolveCronSessionMock,
 }));
 
@@ -366,6 +369,8 @@ export function makeCronSession(overrides?: Record<string, unknown>): CronSessio
     storePath: "/tmp/store.json",
     store: {},
     sessionEntry: makeCronSessionEntry(),
+    lifecycleRevision: "test-lifecycle-revision",
+    initialSessionEntry: undefined,
     systemSent: false,
     isNewSession: true,
     ...overrides,
@@ -661,6 +666,8 @@ function resetRunOutcomeMocks(): void {
 }
 
 function resetRunSessionMocks(): void {
+  loadSessionEntryMock.mockReset();
+  loadSessionEntryMock.mockReturnValue(undefined);
   updateSessionStoreMock.mockReset();
   updateSessionStoreMock.mockResolvedValue(undefined);
   resolveCronSessionMock.mockReset();
