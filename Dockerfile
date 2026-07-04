@@ -194,17 +194,18 @@ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,shar
       ca-certificates curl git hostname lsof openssl procps python3 rclone tini && \
     update-ca-certificates
 
+# Install caddy (reverse proxy) from caddyserver.com download API
+RUN arch=$(uname -m) && \
+    case "$arch" in \
+      x86_64) caddy_arch="amd64" ;; \
+      aarch64) caddy_arch="arm64" ;; \
+      *) exit 1 ;; \
+    esac && \
+    curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=${caddy_arch}&idempotency=1" -o /usr/local/bin/caddy && \
+    chmod +x /usr/local/bin/caddy
+
 # Install code-server (VS Code in browser) — full IDE with terminal + file explorer
 RUN curl -fsSL https://code-server.dev/install.sh | sh
-
-# Install Caddy as reverse proxy (routes /vscode/ → code-server, / → OpenClaw)
-RUN arch=$(uname -m); \
-    case "$arch" in \
-      x86_64) arch="amd64" ;; \
-      aarch64) arch="arm64" ;; \
-      *) echo "Unsupported arch: $arch"; exit 1 ;; \
-    esac && \
-    curl -fsSL "https://github.com/caddyserver/caddy/releases/latest/download/caddy_linux_${arch}.tar.gz" | tar -xz -C /usr/local/bin caddy
 
 RUN chown node:node /app
 
