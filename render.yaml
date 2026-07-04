@@ -4,7 +4,6 @@ services:
     runtime: docker
     plan: free
     healthCheckPath: /health
-    startCommand: /app/scripts/render-entrypoint.sh
     envVars:
       - key: OPENCLAW_GATEWAY_PORT
         value: "8080"
