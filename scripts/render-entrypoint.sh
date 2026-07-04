@@ -87,6 +87,7 @@ sleep 1
 
 # Step 5: Start OpenClaw gateway (background, port 18789)
 echo "==> Starting OpenClaw gateway on port 18789..."
+export OPENCLAW_GATEWAY_PORT=18789
 node /app/openclaw.mjs gateway --allow-unconfigured &
 OPENCLAW_PID=$!
 
