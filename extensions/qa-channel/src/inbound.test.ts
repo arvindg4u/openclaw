@@ -118,6 +118,23 @@ describe("handleQaInbound", () => {
     );
   });
 
+  it("treats missing delivery metadata as final delivery", async () => {
+    const runtime = createPluginRuntimeMock();
+    setQaChannelRuntime(runtime);
+
+    await handleQaInbound(createQaInboundParams());
+
+    const assembled = firstRunAssembledParams(runtime);
+    await assembled.replyOptions?.onPartialReply?.({ text: "preview" });
+    await assembled.delivery.deliver({ text: "final answer" }, undefined);
+
+    expect(sendQaBusMessage).toHaveBeenCalledOnce();
+    expect(editQaBusMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: "preview-1", text: "final answer" }),
+    );
+    expect(deleteQaBusMessage).not.toHaveBeenCalled();
+  });
+
   it("keeps block deliveries separate and retains tool calls discovered after a preview", async () => {
     const runtime = createPluginRuntimeMock();
     setQaChannelRuntime(runtime);
