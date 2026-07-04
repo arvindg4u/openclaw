@@ -96,10 +96,9 @@ echo "==> Starting code-server..."
 export PASSWORD="${GATEWAY_TOKEN}"
 mkdir -p "$STATE_DIR/.code-server"
 code-server --bind-addr 127.0.0.1:9000 \
-  --base-path /vscode \
   --auth password \
   --data-dir "$STATE_DIR/.code-server" \
-  --disable-telemetry &
+  --disable-telemetry 2>&1 &
 CODESERVER_PID=$!
 echo "==> code-server PID $CODESERVER_PID"
 
@@ -110,7 +109,9 @@ echo "==> Starting Caddy reverse proxy on port 8080..."
 cat > /tmp/Caddyfile << 'CADDYEOF'
 :8080 {
     handle_path /vscode/* {
-        reverse_proxy localhost:9000
+        reverse_proxy localhost:9000 {
+            header_up X-Forwarded-Prefix /vscode
+        }
     }
     handle /health {
         header Content-Type "text/plain"
