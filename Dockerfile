@@ -191,8 +191,19 @@ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,shar
     --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
     apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl git hostname lsof openssl procps python3 rclone tini ttyd && \
+      ca-certificates curl git hostname lsof openssl procps python3 rclone tini && \
     update-ca-certificates
+
+# Install ttyd (web terminal) — not in bookworm repos, download static binary
+RUN TTYD_VERSION=1.7.4; \
+    arch=$(uname -m); \
+    case "$arch" in \
+      x86_64) ttyd_arch="x86_64" ;; \
+      aarch64) ttyd_arch="aarch64" ;; \
+      *) echo "Unsupported arch: $arch"; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.${ttyd_arch}" -o /usr/local/bin/ttyd; \
+    chmod +x /usr/local/bin/ttyd
 
 # Install Caddy for reverse proxy (routes /terminal/ → ttyd, / → OpenClaw)
 RUN arch=$(uname -m); \
