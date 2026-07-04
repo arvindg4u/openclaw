@@ -12,7 +12,7 @@ import { formatToolDetail, resolveToolDisplay } from "../tool-display.ts";
 import type { ToolCard } from "../types/chat-types.ts";
 import { extractTextCached } from "./message-extract.ts";
 import { isToolResultMessage } from "./role-normalizer.ts";
-import { formatToolOutputForSidebar, getTruncatedPreview } from "./tool-helpers.ts";
+import { formatToolOutputForSidebar } from "./tool-helpers.ts";
 
 export type ToolPreview = NonNullable<ToolCard["preview"]>;
 
@@ -534,39 +534,22 @@ export function renderRawOutputToggle(text: string) {
         <span class="chat-tool-card__raw-toggle-icon">${icons.chevronDown}</span>
       </button>
       <div class="chat-tool-card__raw-body" hidden>
-        ${renderToolDataBlock({
-          label: "Tool output",
-          text,
-          expanded: true,
-        })}
+        ${renderToolDataBlock({ label: "Tool output", text })}
       </div>
     </div>
   `;
 }
 
-function renderToolDataBlock(params: {
-  label: string;
-  text: string;
-  expanded: boolean;
-  empty?: boolean;
-}) {
-  const { label, text, expanded, empty } = params;
+function renderToolDataBlock(params: { label: string; text: string }) {
+  const { label, text } = params;
   const codeClass = isMarkdownBlockArtText(text) ? "markdown-block-art" : "";
   return html`
-    <div class="chat-tool-card__block ${expanded ? "chat-tool-card__block--expanded" : ""}">
+    <div class="chat-tool-card__block">
       <div class="chat-tool-card__block-header">
         <span class="chat-tool-card__block-icon">${icons.zap}</span>
         <span class="chat-tool-card__block-label">${label}</span>
       </div>
-      ${empty
-        ? html`<div class="chat-tool-card__block-empty muted">${text}</div>`
-        : expanded
-          ? html`<pre
-              class="chat-tool-card__block-content"
-            ><code class=${codeClass}>${text}</code></pre>`
-          : html`<div class="chat-tool-card__block-preview mono">
-              ${getTruncatedPreview(text)}
-            </div>`}
+      <pre class="chat-tool-card__block-content"><code class=${codeClass}>${text}</code></pre>
     </div>
   `;
 }
@@ -728,7 +711,7 @@ export function renderExpandedToolCardContent(
     : nothing;
 
   return html`
-    <div class="chat-tool-card chat-tool-card--expanded ${isError ? "chat-tool-card--error" : ""}">
+    <div class="chat-tool-card ${isError ? "chat-tool-card--error" : ""}">
       <div class="chat-tool-card__header">
         <div class="chat-tool-card__title">
           <span class="chat-tool-card__icon">${icons[display.icon]}</span>
@@ -760,7 +743,6 @@ export function renderExpandedToolCardContent(
         ? renderToolDataBlock({
             label: "Tool input",
             text: card.inputText!,
-            expanded: true,
           })
         : nothing}
       ${hasOutput
@@ -769,109 +751,7 @@ export function renderExpandedToolCardContent(
           : renderToolDataBlock({
               label: isError ? "Tool error" : "Tool output",
               text: card.outputText!,
-              expanded: true,
             })
-        : nothing}
-    </div>
-  `;
-}
-
-export function renderToolCardSidebar(
-  card: ToolCard,
-  onOpenSidebar?: (content: SidebarContent) => void,
-  canvasPluginSurfaceUrl?: string | null,
-  embedSandboxMode: EmbedSandboxMode = "scripts",
-  options?: { sessionKey?: string; agentId?: string },
-) {
-  const display = resolveToolDisplay({ name: card.name, args: card.args });
-  const detail = formatToolDetail(display);
-  const preview = card.preview;
-  const hasText = Boolean(card.outputText?.trim());
-  const hasPreview = Boolean(preview);
-  const isError = isToolCardError(card);
-  const fullMessageRequest = buildToolSidebarFullMessageRequest(card, options?.sessionKey);
-  const sidebarContent =
-    preview?.kind === "canvas"
-      ? buildPreviewSidebarContent(preview, card.outputText, { fullMessageRequest })
-      : buildSidebarContent(buildToolCardSidebarContent(card), {
-          fullMessageRequest,
-          rawText: card.outputText ?? null,
-        });
-  const actionContent =
-    sidebarContent ??
-    buildSidebarContent(buildToolCardSidebarContent(card), {
-      fullMessageRequest,
-      rawText: card.outputText ?? null,
-    });
-  const canClick = Boolean(onOpenSidebar);
-  const handleClick = canClick ? () => onOpenSidebar?.(actionContent) : undefined;
-  const isShort = hasText && !hasPreview && (card.outputText?.length ?? 0) <= 240;
-  const showCollapsed = hasText && !hasPreview && !isShort;
-  const showInline = hasText && !hasPreview && isShort;
-  const isEmpty = !hasText && !hasPreview;
-  const statusIcon = isError ? icons.x : icons.check;
-
-  return html`
-    <div
-      class="chat-tool-card ${canClick ? "chat-tool-card--clickable" : ""} ${isError
-        ? "chat-tool-card--error"
-        : ""}"
-      @click=${handleClick}
-      role=${canClick ? "button" : nothing}
-      tabindex=${canClick ? "0" : nothing}
-      @keydown=${canClick
-        ? (e: KeyboardEvent) => {
-            if (e.key !== "Enter" && e.key !== " ") {
-              return;
-            }
-            e.preventDefault();
-            handleClick?.();
-          }
-        : nothing}
-    >
-      <div class="chat-tool-card__header">
-        <div class="chat-tool-card__title">
-          <span class="chat-tool-card__icon">${icons[display.icon]}</span>
-          <span>${display.label}</span>
-        </div>
-        ${canClick
-          ? html`<span
-              class="chat-tool-card__action ${isError ? "chat-tool-card__action--error" : ""}"
-              >${isError ? "View error" : hasText || hasPreview ? "View" : ""} ${statusIcon}</span
-            >`
-          : nothing}
-        ${isEmpty && !canClick
-          ? html`<span
-              class="chat-tool-card__status ${isError ? "chat-tool-card__status--error" : ""}"
-              >${statusIcon}</span
-            >`
-          : nothing}
-      </div>
-      ${detail ? html`<div class="chat-tool-card__detail">${detail}</div>` : nothing}
-      ${isEmpty
-        ? html`<div
-            class="chat-tool-card__status-text ${isError
-              ? "chat-tool-card__status-text--error"
-              : "muted"}"
-          >
-            ${isError ? "Failed" : "Completed"}
-          </div>`
-        : nothing}
-      ${preview
-        ? html`${renderToolPreview(preview, "chat_tool", {
-            onOpenSidebar,
-            rawText: card.outputText,
-            canvasPluginSurfaceUrl,
-            embedSandboxMode,
-          })}`
-        : nothing}
-      ${showCollapsed
-        ? html`<div class="chat-tool-card__preview mono">
-            ${getTruncatedPreview(card.outputText!)}
-          </div>`
-        : nothing}
-      ${showInline
-        ? html`<div class="chat-tool-card__inline mono">${card.outputText}</div>`
         : nothing}
     </div>
   `;
