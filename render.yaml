@@ -5,6 +5,8 @@ services:
     plan: free
     healthCheckPath: /health
     envVars:
+      - key: OPENCLAW_GATEWAY_PORT
+        value: "18789"
       - key: OPENCLAW_STATE_DIR
         value: /home/node/.openclaw
       - key: OPENCLAW_WORKSPACE_DIR
