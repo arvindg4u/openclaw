@@ -41,29 +41,21 @@ fi
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "==> Creating initial OpenClaw config..."
   mkdir -p "$STATE_DIR"
-  cat > "$CONFIG_FILE" << 'CONFIGEOF'
-{
-  "gateway": {
-    "mode": "remote",
-    "port": 8080,
-    "bind": "lan",
-    "auth": {
-      "mode": "token",
-      "token": "__GATEWAY_TOKEN__"
-    },
-    "controlUi": {
-      "enabled": true,
-      "allowInsecureAuth": true
-    }
-  }
-}
-CONFIGEOF
-  # Substitute the actual gateway token
-  if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
-    sed -i "s/__GATEWAY_TOKEN__/${OPENCLAW_GATEWAY_TOKEN}/" "$CONFIG_FILE"
-  else
-    sed -i "s/__GATEWAY_TOKEN__/render-$(openssl rand -hex 16)/" "$CONFIG_FILE"
-  fi
+  export GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-render-$(openssl rand -hex 16)}"
+  export CONFIG_FILE STATE_DIR
+  node -e "
+    const fs = require('fs');
+    const config = {
+      gateway: {
+        mode: 'remote',
+        port: 8080,
+        bind: 'lan',
+        auth: { mode: 'token', token: process.env.GATEWAY_TOKEN },
+        controlUi: { enabled: true, allowInsecureAuth: true }
+      }
+    };
+    fs.writeFileSync(process.env.CONFIG_FILE, JSON.stringify(config, null, 2) + '\n');
+  "
   echo "==> Initial config created."
 fi
 
