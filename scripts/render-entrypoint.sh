@@ -2,13 +2,14 @@
 set -euo pipefail
 
 # Render free tier entrypoint
-# Restores OpenClaw state from R2 on startup (handles Render's ephemeral disk on redeploy)
-# Runs background backup loop for periodic sync to R2
-# Then starts the OpenClaw gateway
+# Restores OpenClaw state from R2 on startup
+# Runs background backup loop
+# Initializes OpenClaw if first-run, then starts gateway
 
 R2_BUCKET="${R2_BUCKET:-openclaw-backup}"
 R2_PREFIX="${R2_PREFIX:-openclaw-state}"
 STATE_DIR="${OPENCLAW_STATE_DIR:-/home/node/.openclaw}"
+CONFIG_FILE="${STATE_DIR}/openclaw.json"
 
 # Ensure rclone is available
 if ! command -v rclone &>/dev/null; then
@@ -36,13 +37,43 @@ else
   echo "==> R2 credentials not configured. Skipping restore."
 fi
 
-# Step 2: Start background backup loop
+# Step 2: Create initial config if missing (required for first run)
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "==> Creating initial OpenClaw config..."
+  mkdir -p "$STATE_DIR"
+  cat > "$CONFIG_FILE" << 'CONFIGEOF'
+{
+  "gateway": {
+    "mode": "remote",
+    "port": 8080,
+    "bind": "lan",
+    "auth": {
+      "mode": "token",
+      "token": "__GATEWAY_TOKEN__"
+    },
+    "controlUi": {
+      "enabled": true,
+      "allowInsecureAuth": true
+    }
+  }
+}
+CONFIGEOF
+  # Substitute the actual gateway token
+  if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
+    sed -i "s/__GATEWAY_TOKEN__/${OPENCLAW_GATEWAY_TOKEN}/" "$CONFIG_FILE"
+  else
+    sed -i "s/__GATEWAY_TOKEN__/render-$(openssl rand -hex 16)/" "$CONFIG_FILE"
+  fi
+  echo "==> Initial config created."
+fi
+
+# Step 3: Start background backup loop
 if rclone_configured; then
   echo "==> Starting backup loop..."
   /app/scripts/r2-background-backup.sh &
   echo "==> Backup loop running (PID $!)"
 fi
 
-# Step 3: Start OpenClaw gateway (foreground)
+# Step 4: Start OpenClaw gateway (foreground)
 echo "==> Starting OpenClaw gateway..."
-exec node /app/openclaw.mjs gateway
+exec node /app/openclaw.mjs gateway --allow-unconfigured
