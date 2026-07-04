@@ -51,13 +51,30 @@ if [ ! -f "$CONFIG_FILE" ]; then
         port: 8080,
         bind: 'lan',
         auth: { mode: 'token', token: process.env.GATEWAY_TOKEN },
-        controlUi: { enabled: true, allowInsecureAuth: true }
+        controlUi: { enabled: true, allowInsecureAuth: true, allowedOrigins: ['https://openclaw-cg79.onrender.com'] },
       }
     };
     fs.writeFileSync(process.env.CONFIG_FILE, JSON.stringify(config, null, 2) + '\n');
   "
   echo "==> Initial config created."
 fi
+
+# Ensure allowedOrigins includes the Render URL (re-patch on every start)
+export CONFIG_FILE
+node -e "
+  const fs = require('fs');
+  const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_FILE, 'utf-8'));
+  const origin = 'https://openclaw-cg79.onrender.com';
+  const origins = cfg.gateway?.controlUi?.allowedOrigins || [];
+  if (!origins.includes(origin)) {
+    origins.push(origin);
+    if (!cfg.gateway) cfg.gateway = {};
+    if (!cfg.gateway.controlUi) cfg.gateway.controlUi = {};
+    cfg.gateway.controlUi.allowedOrigins = origins;
+    fs.writeFileSync(process.env.CONFIG_FILE, JSON.stringify(cfg, null, 2) + '\n');
+    console.log('==> Added allowed origin:', origin);
+  }
+"
 
 # Step 3: Start background backup loop
 if rclone_configured; then
