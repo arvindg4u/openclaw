@@ -1,3 +1,12 @@
+---
+title: OpenClaw
+emoji: 🐱
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+---
+
 # 🦞 OpenClaw — Personal AI Assistant
 
 <p align="center">

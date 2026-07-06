@@ -24,7 +24,10 @@ while true; do
       --exclude "node_modules/**" \
       --exclude ".git/**" \
       --exclude "*.log" \
-      --exclude ".cache/**" 2>&1; then
+      --exclude ".cache/**" \
+      --exclude "*.sqlite-shm" \
+      --exclude "*.sqlite-wal" \
+      --retries-sleep 5s 2>&1; then
       log "Backup complete."
     else
       log "Backup failed (will retry)."

@@ -1,8 +1,22 @@
 #!/bin/bash
 set -euo pipefail
 
-# Render free tier entrypoint
+# Render / Hugging Face Spaces entrypoint
 # Restores state from R2, starts ttyd web terminal + OpenClaw, routes via Caddy
+
+# Auto-detect Hugging Face Spaces (SPACE_HOST is pre-set by HF)
+if [ -n "${SPACE_HOST:-}" ]; then
+  echo "==> Detected Hugging Face Spaces ($SPACE_HOST)"
+  HF_SPACE=1
+  CADDY_PORT=7860
+  EXTERNAL_URL="https://${SPACE_HOST}"
+  TOKEN_PREFIX="hf"
+else
+  HF_SPACE=0
+  CADDY_PORT=8080
+  EXTERNAL_URL="https://openclaw-cg79.onrender.com"
+  TOKEN_PREFIX="render"
+fi
 
 R2_BUCKET="${R2_BUCKET:-openclaw-backup}"
 R2_PREFIX="${R2_PREFIX:-openclaw-state}"
@@ -34,8 +48,12 @@ if rclone_configured; then
 fi
 
 # Step 2: Create / patch OpenClaw config
-GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-render-$(openssl rand -hex 16)}"
-export GATEWAY_TOKEN CONFIG_FILE STATE_DIR
+if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
+  GATEWAY_TOKEN="$OPENCLAW_GATEWAY_TOKEN"
+else
+  GATEWAY_TOKEN="${TOKEN_PREFIX}-$(openssl rand -hex 16)"
+fi
+export GATEWAY_TOKEN CONFIG_FILE STATE_DIR EXTERNAL_URL
 mkdir -p "$STATE_DIR"
 
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -48,7 +66,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
         port: 18789,
         bind: 'lan',
         auth: { mode: 'token', token: process.env.GATEWAY_TOKEN },
-        controlUi: { enabled: true, allowInsecureAuth: true, dangerouslyDisableDeviceAuth: true, allowedOrigins: ['https://openclaw-cg79.onrender.com'] },
+        controlUi: { enabled: true, allowInsecureAuth: true, dangerouslyDisableDeviceAuth: true, allowedOrigins: [process.env.EXTERNAL_URL || 'https://openclaw-cg79.onrender.com'] },
       }
     };
     fs.writeFileSync(process.env.CONFIG_FILE, JSON.stringify(config, null, 2) + '\n');
@@ -60,7 +78,7 @@ fi
 node -e "
   const fs = require('fs');
   const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_FILE, 'utf-8'));
-  const origin = 'https://openclaw-cg79.onrender.com';
+  const origin = process.env.EXTERNAL_URL || 'https://openclaw-cg79.onrender.com';
   cfg.gateway = cfg.gateway || {};
   cfg.gateway.port = 18789;
   cfg.gateway.bind = 'lan';
@@ -100,10 +118,10 @@ for i in $(seq 1 30); do
   sleep 1
 done
 
-# Step 6: Start Caddy reverse proxy (foreground, port 8080)
-echo "==> Starting Caddy reverse proxy on port 8080..."
-cat > /tmp/Caddyfile << 'CADDYEOF'
-:8080 {
+# Step 6: Start Caddy reverse proxy (foreground, port ${CADDY_PORT})
+echo "==> Starting Caddy reverse proxy on port ${CADDY_PORT}..."
+cat > /tmp/Caddyfile << CADDYEOF
+:${CADDY_PORT} {
     handle_path /terminal/* {
         reverse_proxy localhost:7681
     }
